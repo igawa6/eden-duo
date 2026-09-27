@@ -1,0 +1,251 @@
+<?xml version="1.0"?>
+<!-- This is the ES-DE find rules configuration file for Android -->
+<ruleList>
+    <emulator name="ARMSX1">
+        <!-- Sony PlayStation emulator ARMSX1-->
+        <rule type="androidpackage">
+            <entry>com.nanodata.armsx/com.armsx2.Main</entry>
+        </rule>
+    </emulator>
+	<emulator name="ARMSX3">
+        <!-- Sony PlayStation 3 emulator ARMSX3-->
+        <rule type="androidpackage">
+            <entry>com.armsx3/com.armsx2.Main</entry>
+        </rule>
+    </emulator>
+	<emulator name="BACHATAS4">
+        <!-- Sony PlayStation 4 emulator BachataS4 -->
+        <rule type="androidpackage">
+            <entry>com.bachatas4.android/.DirectLaunchActivity</entry>
+        </rule>
+    </emulator>
+	<emulator name="BENJI-SC">
+        <!-- Nintendo Switch emulator Benji-SC -->
+        <rule type="androidpackage">
+            <entry>org.benjisc.android/org.kenjinx.android.MainActivity</entry>
+        </rule>
+    </emulator>
+    <emulator name="BORKED3DS">
+        <!-- Nintendo 3DS emulator Borked3DS -->
+        <rule type="androidpackage">
+            <entry>io.github.borked3ds.android/.activities.EmulationActivity</entry>
+        </rule>
+    </emulator>
+    <emulator name="CEMU-FORK">
+        <!-- Nintendo Wii U emulator Cemu -->
+        <rule type="androidpackage">
+            <entry>info.cemu.cemu.debug/info.cemu.cemu.emulation.EmulationActivity</entry>
+        </rule>
+    </emulator>
+    <emulator name="CITRA-ENHANCED">
+        <!-- Nintendo 3DS emulator Citra Enhanced -->
+        <rule type="androidpackage">
+            <entry>org.gamerytb.citra.canary/org.citra.citra_emu.ui.main.MainActivity</entry>
+        </rule>
+    </emulator>
+    <emulator name="EDEN-DUO">
+        <!-- Nintendo Switch emulator Eden Duo (dual-screen fork of Eden) -->
+        <rule type="androidpackage">
+            <entry>dev.igawa6.edenduo/org.yuzu.yuzu_emu.activities.EmulationActivity</entry>
+        </rule>
+    </emulator>
+    <emulator name="EDEN-DUO-DEV">
+        <!-- Nintendo Switch emulator Eden Duo, development build -->
+        <rule type="androidpackage">
+            <entry>dev.igawa6.edenduo.dev/org.yuzu.yuzu_emu.activities.EmulationActivity</entry>
+        </rule>
+    </emulator>
+    <emulator name="CITRON">
+        <!-- Nintendo Switch emulator Citron -->
+        <rule type="androidpackage">
+            <entry>org.citron.citron_emu/.activities.EmulationActivity</entry>
+            <entry>org.citron.citron_emu.ea/org.citron.citron_emu.activities.EmulationActivity</entry>
+            <entry>com.antutu.ABenchMark/org.citron.citron_emu.activities.EmulationActivity</entry>
+            <entry>com.miHoYo.Yuanshen/org.citron.citron_emu.activities.EmulationActivity</entry>
+        </rule>
+    </emulator>
+    <emulator name="CYTRUS">
+        <!-- Nintendo 3DS emulator Cytrus -->
+        <rule type="androidpackage">
+            <entry>org.cytrus.cytrus_emu/.activities.EmulationActivity</entry>
+        </rule>
+    </emulator>
+    <emulator name="DOLPHINCS">
+        <!-- Nintendo GameCube and Wii emulator DolphinCS fork with external storage -->
+        <rule type="androidpackage">
+            <entry>com.joeyos.dolphinemu/org.dolphinemu.dolphinemu.ui.main.MainActivity</entry>
+        </rule>
+    </emulator>
+    <emulator name="DOLPHIN-ENHANCED">
+        <!-- Nintendo GameCube and Wii emulator Dolphin Enhanced -->
+        <rule type="androidpackage">
+            <entry>org.mm.j/org.dolphinemu.dolphinemu.ui.main.MainActivity</entry>
+        </rule>
+    </emulator>
+    <emulator name="DOLPHIN-PRIMEHACK">
+        <!-- Nintendo GameCube and Wii emulator Dolphin -->
+        <rule type="androidpackage">
+            <entry>org.dolphinemu.primehack/org.dolphinemu.dolphinemu.ui.main.MainActivity</entry>
+			<entry>org.shiiion.primehack/org.dolphinemu.dolphinemu.ui.main.MainActivity</entry>
+        </rule>
+    </emulator>
+	<emulator name="EMUCOREC">
+        <!-- Sony PlayStation 3 emulator EmuCoreC -->
+        <rule type="androidpackage">
+            <entry>com.sbro.emucorec/.core.ps3.Emulator</entry>
+        </rule>
+    </emulator>
+    <emulator name="EMUCOREV">
+        <!-- Sony PlayStation Vita emulator EmuCoreV -->
+        <rule type="androidpackage">
+            <entry>com.sbro.emucorev/com.sbro.emucorev.core.vita.Emulator</entry>
+        </rule>
+    </emulator>
+	<emulator name="EMUCOREX">
+        <!-- Sony PlayStation 2 emulator EmuCoreX -->
+        <rule type="androidpackage">
+            <entry>com.sbro.emucorex/.MainActivity</entry>
+        </rule>
+    </emulator>
+	<emulator name="ARMSX2R">
+        <!-- Sony PlayStation 2 emulator ARMSX2 Refresh-->
+        <rule type="androidpackage">
+            <entry>com.armsx2/.Main</entry>
+        </rule>
+    </emulator>	
+	<emulator name="MELONDUALDS">
+        <!-- Nintendo DS and DSi emulator melonDS (Nightly build) -->
+        <rule type="androidpackage">
+			<entry>me.magnum.melondualds/me.magnum.melonds.ui.emulator.EmulatorActivity</entry>
+			<entry>me.magnum.melonds.dev/me.magnum.melonds.ui.emulator.EmulatorActivity</entry>
+        </rule>
+    </emulator>
+	<emulator name="NETHERSX2-TURNIP">
+		<!-- Sony PlayStation 2 emulator NetherSX2-Turnip -->
+		<rule type="androidpackage">
+			<entry>xyz.aethersx2.tturnip/xyz.aethersx2.android.EmulationActivity</entry>
+		</rule>
+	</emulator>
+	<emulator name="NETHERSX2-TURNIP-CLASSIC">
+		<!-- Sony PlayStation 2 emulator NetherSX2-Turnip -->
+		<rule type="androidpackage">
+			<entry>xyz.aethersx2.cturnip/xyz.aethersx2.android.EmulationActivity</entry>
+		</rule>
+	</emulator>
+    <emulator name="NYUSHU">
+        <!-- Nintendo Switch emulator Nyushu -->
+        <rule type="androidpackage">
+            <entry>com.andromeda.androbench2/org.suyu.suyu_emu.activities.EmulationActivity</entry>
+        </rule>
+    </emulator>
+	<emulator name="SEEDLESSDS">
+        <!-- Nintendo DS and DSi emulator SeedlessDS -->
+        <rule type="androidpackage">
+			<entry>com.seedlessds.app/com.seedlessds.app.LaunchGame</entry>
+        </rule>
+	</emulator>
+    <emulator name="SUDACHI">
+        <!-- Nintendo Switch emulator Sudachi -->
+        <rule type="androidpackage">
+            <entry>org.sudachi.sudachi_emu/org.sudachi.sudachi_emu.activities.EmulationActivity</entry>
+            <entry>org.sudachi.sudachi_emu.ea/org.sudachi.sudachi_emu.activities.EmulationActivity</entry>
+        </rule>
+    </emulator>
+    <emulator name="SUMI">
+        <!-- Nintendo Switch emulator Sumi -->
+        <rule type="androidpackage">
+            <entry>com.sumi.SumiEmulator/org.sumi.sumi_emu.activities.EmulationActivity</entry>
+            <entry>com.antutu.ABenchMark/org.sumi.sumi_emu.activities.EmulationActivity</entry>
+        </rule>
+    </emulator>
+    <emulator name="SUYU">
+        <!-- Nintendo Switch emulator Suyu -->
+        <rule type="androidpackage">
+            <entry>org.suyu.suyu_emu/org.suyu.suyu_emu.activities.EmulationActivity</entry>
+            <entry>dev.suyu.suyu_emu.relWithDebInfo/dev.suyu.suyu_emu.activities.EmulationActivity</entry>
+            <entry>dev.suyu.suyu_emu/dev.suyu.suyu_emu.activities.EmulationActivity</entry>
+        </rule>
+    </emulator>
+    <emulator name="UZUY">
+        <!-- Nintendo Switch emulator Uzuy -->
+        <rule type="androidpackage">
+            <entry>org.uzuy.uzuy_emu/.activities.EmulationActivity</entry>
+            <entry>org.uzuy.uzuy_emu.ea/org.uzuy.uzuy_emu.activities.EmulationActivity</entry>
+            <entry>org.uzuy.uzuy_emu.mmjr/org.uzuy.uzuy_emu.activities.EmulationActivity</entry>
+            <entry>com.antutu.ABenchMark.ea/org.uzuy.uzuy_emu.activities.EmulationActivity</entry>
+            <entry>com.antutu.ABenchMark/org.uzuy.uzuy_emu.activities.EmulationActivity</entry>
+        </rule>
+    </emulator>
+	<emulator name="VITA3KPLUS">
+        <!-- Sony PlayStation Vita emulator Vita3K+ -->
+        <rule type="androidpackage">
+            <entry>org.vita3kplus.emulator/org.vita3k.emulator.Emulator</entry>
+        </rule>
+    </emulator>
+    <emulator name="VITA3KZX">
+        <!-- Sony PlayStation Vita emulator Vita3K ZX -->
+        <rule type="androidpackage">
+            <entry>org.vita3k.emulator.ikhoeyZX/org.vita3k.emulator.Emulator</entry>
+        </rule>
+    </emulator>
+	<emulator name="WINLATOR-LUDASHI">
+        <!-- Microsoft Windows emulator Winlator Cmod -->
+        <rule type="androidpackage">
+            <entry>com.winlator.vanilla/com.winlator.cmod.XServerDisplayActivity</entry>
+			<entry>com.ludashi.benchmark/com.winlator.cmod.XServerDisplayActivity</entry>
+			<entry>com.miHoYo.GenshinImpact/com.winlator.cmod.XServerDisplayActivity</entry>
+        </rule>
+    </emulator>
+	<emulator name="WINNATIVE">
+        <!-- Microsoft Windows emulator Winlator Cmod -->
+        <rule type="androidpackage">
+            <entry>com.winnative.cmod/com.winlator.cmod.runtime.display.XServerDisplayActivity</entry>
+			<entry>com.antutu.ABenchMark/com.winlator.cmod.runtime.display.XServerDisplayActivity</entry>
+			<entry>com.ludashi.benchmark/com.winlator.cmod.runtime.display.XServerDisplayActivity</entry>
+			<entry>com.tencent.ig/com.winlator.cmod.runtime.display.XServerDisplayActivity</entry>
+        </rule>
+    </emulator>
+	<emulator name="X360MOBILE">
+        <!-- Microsoft Xbox 360 emulator X360 Mobile -->
+        <rule type="androidpackage">
+            <entry>emu.x360.mobile/emu.x360.mobile.X360MobileGameLaunchActivity</entry>
+        </rule>
+    </emulator>
+	<emulator name="XBPLAY">
+        <!-- Xbox Game Streaming XBPlay -->
+        <rule type="androidpackage">
+            <entry>com.studio08.xbgamestream/com.studio08.xbgamestream.PWAMainMenuActivity</entry>
+        </rule>
+    </emulator>
+	<emulator name="XENDROID">
+        <!-- Microsoft Xbox 360 emulator XenDroid -->
+        <rule type="androidpackage">
+            <entry>xendroid.compose/.EmulatorHostActivity</entry>
+        </rule>
+    </emulator>
+	<emulator name="XENRA">
+        <!-- Microsoft Xbox and Xbox 360 emulator Xenra -->
+        <rule type="androidpackage">
+            <entry>Ali.Xanite/Ali.Xanite.LauncherActivity</entry>
+			<entry>Ali.Xanite.green/Ali.Xanite.LauncherActivity</entry>
+        </rule>
+    </emulator>
+    <emulator name="YUZU">
+        <!-- Nintendo Switch emulator Yuzu -->
+        <rule type="androidpackage">
+            <entry>org.yuzu.yuzu_emu/org.yuzu.yuzu_emu.activities.EmulationActivity</entry>
+        </rule>
+    </emulator>
+    <emulator name="YUZU-EA">
+        <!-- Nintendo Switch emulator Yuzu (Early Access) -->
+        <rule type="androidpackage">
+            <entry>org.yuzu.yuzu_emu.ea/org.yuzu.yuzu_emu.activities.EmulationActivity</entry>
+        </rule>
+    </emulator>
+    <emulator name="ZIUNX">
+        <!-- Nintendo Switch emulator Ziunx -->
+        <rule type="androidpackage">
+            <entry>org.Ziunx.Ziunx_emu.ea/org.yuzu.yuzu_emu.activities.EmulationActivity</entry>
+        </rule>
+    </emulator>
+</ruleList>
