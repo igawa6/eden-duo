@@ -62,6 +62,44 @@ Ready-made configuration files in [`dist/frontends/`](dist/frontends/) add Eden 
 
 These are the upstream files from [CocoonFE](https://github.com/inssekt/CocoonFE/blob/main/platforms/NintendoSwitch.json) and [es-de-android-custom-systems](https://github.com/GlazedBelmont/es-de-android-custom-systems), with only the Eden Duo entries added.
 
+## Making a Companion for Another Game
+
+Eden Duo is not limited to the games above. Anyone can write a companion for another game and ship it as a `.dsmod.zip`, without changing or rebuilding the emulator.
+
+**What the runtime gives you (runtime 12, Eden Duo 1.0.0):**
+
+| Layer | What you get |
+|-------|--------------|
+| Package (JSON) | Pages built from 8 widget types: rect, label, value, bar, button, pips, image and map. Widgets support bindings, derived values, flags, page transitions, scroll lists and repeat templates. There are 10 action kinds: write, button, page, call, sequence, flag, view reset, module, slot write and map select. Game art is referenced from the player's own files (`romfs:`), so a package never ships game assets. |
+| Memory points | Pointer chains, static fields, pattern scans and per-build address tables, all checked against the game's build ID before loading. |
+| Native module (C ABI) | For data too complex for JSON. Modules get bounded memory reads and writes, the player's romfs, and publishing of values and map frames. Five optional extensions add actions and module images, font decoding, save-file reads, atomic write batches, and module-generated data. |
+| Compatibility | `min_runtime` in the package makes an older Eden Duo show an "update" page instead of failing. |
+
+**What helps you reverse engineer a game:**
+
+- **Desktop development build.** `eden-cli` runs a game with its companion headlessly (`--aux-virtual`, or `--aux-window` for a real second window) and captures both screens (`--screenshot-prefix`). It can be scripted with button presses and taps.
+- **Live memory console.** Set `EDEN_DSMOD_CMD` to enable it. Commands:
+  - value search and change tracking: `findi`, `findf`, `sfind`, `snap`, `diff`;
+  - pointer search: `ptrto`;
+  - memory: `watch`, `hexdump`, `readi`, `writeb`;
+  - object and manager finders: `objfind`, `mgrfind`;
+  - companion control: `value`, `tap`, `drag`, `page`;
+  - image dumps: `imgdump`.
+- **GDB stub** for breakpoints and memory watches on the running game.
+- **Guest function calls** (desktop CPU backend) for research, and `EDEN_DSMOD_NO_GUEST_BRIDGE=1` to test under the same conditions as an Android handheld.
+- **`EDEN_DSMOD_PROFILE=1`** for per-stage cost, so a companion stays cheap on handheld hardware.
+
+**Start here:** the step-by-step method, from dumping the game and finding its state through validating against the game's own screens to packaging, is in [**Porting a Game**](https://github.com/igawa6/eden-duo-companions/blob/main/docs/PORTING_A_GAME.md). Also useful:
+
+- [Package Format](https://github.com/igawa6/eden-duo-companions/blob/main/docs/PACKAGE_FORMAT.md)
+- [Module Guide](https://github.com/igawa6/eden-duo-companions/blob/main/docs/MODULE_GUIDE.md)
+- [Architecture](https://github.com/igawa6/eden-duo-companions/blob/main/docs/ARCHITECTURE.md)
+- The [three published packages](https://github.com/igawa6/eden-duo-companions/tree/main/packages), as working examples.
+
+Module sources live in this repository under [`src/core/mods/modules/`](src/core/mods/modules/).
+
+**AI assistance is welcome.** Building a companion is mostly careful reverse engineering and repetitive verification, and AI coding assistants are good at both. Give your assistant the docs above and an existing package as a template. Let it drive the headless desktop build, the memory console and the screenshots. Then verify every value it finds against the game's own screens before you trust it. Companions made with AI help are welcome here.
+
 ## Build
 
 Requirements: JDK 17, Android SDK 36, NDK 28.2.13676358, CMake 3.31.6.
