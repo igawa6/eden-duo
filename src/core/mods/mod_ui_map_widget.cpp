@@ -205,6 +205,8 @@ public:
           rw{ctx.rw}, rh{ctx.rh}, area{area_}, geo{geo_} {}
 
     void Draw();
+    /// FrameView alone (ProbeMapView): the view this draw would use, into the record fields.
+    bool ProbeView(MapDrawRecord& out);
 
 private:
     // Phases, in draw order.
@@ -282,6 +284,13 @@ private:
     s32 ItemIconSize{}, DoorIconSize{};
     float item_blink{};
     s32 PlayerIcon{};
+    // For the record (MapDrawRecord's change-tracking fields): where the live marker painted,
+    // whether anything else was drawn from the clock, and which pictures were used.
+    std::array<s32, 4> marker_px{};
+    bool uses_clock = false;
+    u64 content = 0;
+    void add_marker_px(s32 bx, s32 by, s32 bw, s32 bh);
+    void add_content(const void* picture);
 };
 
 void GeometryMapDraw::Draw() {
@@ -305,6 +314,50 @@ void GeometryMapDraw::Draw() {
     if (!image_mode && widget.area_label) {
         canvas.DrawText(x + 12, y + rh - 24, area, widget.text_scale, widget.color);
     }
+    if (record != nullptr) {
+        add_content(atlas.get());
+        record->marker_box = marker_px;
+        record->clock_dependent = uses_clock;
+        record->content_id = content;
+    }
+}
+
+bool GeometryMapDraw::ProbeView(MapDrawRecord& out) {
+    if (!FrameView()) {
+        return false;
+    }
+    out.page_id = page.id;
+    out.widget_index = widget_index;
+    out.area = area;
+    out.rect = {x, y, rw, rh};
+    out.cx = cx;
+    out.cy = cy;
+    out.ppw = ppw;
+    out.min_x = min_x;
+    out.min_y = min_y;
+    out.max_x = max_x;
+    out.max_y = max_y;
+    return true;
+}
+
+void GeometryMapDraw::add_marker_px(s32 bx, s32 by, s32 bw, s32 bh) {
+    if (bw <= 0 || bh <= 0) {
+        return;
+    }
+    if (marker_px[2] <= 0 || marker_px[3] <= 0) {
+        marker_px = {bx, by, bw, bh};
+        return;
+    }
+    const s32 x0 = std::min(marker_px[0], bx), y0 = std::min(marker_px[1], by);
+    const s32 x1 = std::max(marker_px[0] + marker_px[2], bx + bw);
+    const s32 y1 = std::max(marker_px[1] + marker_px[3], by + bh);
+    marker_px = {x0, y0, x1 - x0, y1 - y0};
+}
+
+void GeometryMapDraw::add_content(const void* picture) {
+    content = (content ^ static_cast<u64>(reinterpret_cast<uintptr_t>(picture))) *
+                  0x100000001B3ULL +
+              0x9E3779B97F4A7C15ULL;
 }
 
 bool GeometryMapDraw::FrameView() {
@@ -565,6 +618,7 @@ bool GeometryMapDraw::DrawBaseLayer() {
     // map before taking the GPU branch, defeating the purpose of the fade texture.
     const std::shared_ptr<const Image> drawn =
         draw_list == nullptr && images ? images(key) : nullptr;
+    add_content(drawn.get());
     // A composite with extra levels is one packed picture: sample the level nearest the
     // on-screen scale (the smallest one still >= 0.8 source px per screen px).
     CompositeLevel level{0, 0, 0, 0, 1.0f};
@@ -644,6 +698,7 @@ bool GeometryMapDraw::DrawBaseLayer() {
                     if (const auto f = snapshot.ints.find("@fade:" + composite_name);
                         f != snapshot.ints.end() && f->second < 1000) {
                         const std::shared_ptr<const Image> prev = images(key + "#prev");
+                        add_content(prev.get());
                         if (prev != nullptr && prev->w == drawn->w && prev->h == drawn->h) {
                             canvas.DrawImageRegion(static_cast<s32>(vl), static_cast<s32>(vt),
                                                    static_cast<s32>(vr - vl),
@@ -669,6 +724,7 @@ bool GeometryMapDraw::DrawBaseLayer() {
                 const std::shared_ptr<const Image> pulse =
                     draw_list == nullptr && images ? images(pulse_key) : nullptr;
                 if (draw_list != nullptr || (pulse != nullptr && pulse->Valid())) {
+                    uses_clock = true; // BlinkAlpha(snapshot.tick) below
                     // Period and peak come from the package (map.style.marker_pulse_period
                     // / _peak, default 90 ticks and 0.7); see MapStyle.
                     const float pa =
@@ -764,6 +820,7 @@ void GeometryMapDraw::BeginRecord() {
         r.min_y = min_y;
         r.max_x = max_x;
         r.max_y = max_y;
+        r.render_serial = CurrentRenderSerial();
         record = &r;
     }
 }
@@ -1037,6 +1094,9 @@ void GeometryMapDraw::DrawAreaMarkers() {
             }
         }
         const float alpha = collectible && !marker.collected ? item_blink : 1.0f;
+        if (collectible && !marker.collected) {
+            uses_clock = true;
+        }
         emit_atlas(ux, uy, uw, uh, qx, qy, qw, qh, alpha * marker_alpha);
     }
 }
@@ -1211,12 +1271,24 @@ void GeometryMapDraw::DrawLivePlayer() {
         if (cell != manifest.icon_cells.end()) {
             float ux, uy;
             cell_uv(cell->second, ux, uy);
-            emit_atlas(ux, uy, cp, cp, mx - static_cast<float>(PlayerIcon) * 0.5f,
-                       my - static_cast<float>(PlayerIcon) * 0.5f, static_cast<float>(PlayerIcon),
-                       static_cast<float>(PlayerIcon), BlinkAlpha(snapshot.tick, 48, 0.55f));
+            const float qx = mx - static_cast<float>(PlayerIcon) * 0.5f;
+            const float qy = my - static_cast<float>(PlayerIcon) * 0.5f;
+            const float qs = static_cast<float>(PlayerIcon);
+            // emit_atlas_tinted's own clip to the widget; the blit covers [s32(l), s32(r)).
+            const float l = std::max(qx, static_cast<float>(x));
+            const float t = std::max(qy, static_cast<float>(y));
+            const float r = std::min(qx + qs, static_cast<float>(x + rw));
+            const float b = std::min(qy + qs, static_cast<float>(y + rh));
+            if (r > l && b > t) {
+                const s32 bx = static_cast<s32>(std::floor(l)), by = static_cast<s32>(std::floor(t));
+                add_marker_px(bx, by, static_cast<s32>(std::ceil(r)) - bx,
+                              static_cast<s32>(std::ceil(b)) - by);
+            }
+            emit_atlas(ux, uy, cp, cp, qx, qy, qs, qs, BlinkAlpha(snapshot.tick, 48, 0.55f));
         } else if (visible(mx, my) && widget.marker_src.empty()) {
             // (a marker_src picture is drawn below instead of the diamond)
             const s32 cxm = static_cast<s32>(mx), cym = static_cast<s32>(my);
+            add_marker_px(cxm - 23, cym - 23, 47, 47);
             const auto diamond = [&](s32 r, u32 col) {
                 canvas.FillTriangle(cxm, cym - r, cxm + r, cym, cxm, cym + r, col);
                 canvas.FillTriangle(cxm, cym - r, cxm, cym + r, cxm - r, cym, col);
@@ -1255,6 +1327,7 @@ void GeometryMapDraw::DrawSecondActor() {
                 const float ph = BlinkAlpha(snapshot.tick, pulse_period_ticks, 0.0f);
                 const float es =
                     static_cast<float>(PlayerIcon) * (1.3f + widget.actor_pulse_scale * ph);
+                uses_clock = true; // the breathing size
                 emit_atlas(ux, uy, cp, cp, emx - es * 0.5f, emy - es * 0.5f, es, es, 1.0f);
             }
         }
@@ -1267,6 +1340,7 @@ void GeometryMapDraw::DrawSecondActor() {
 void GeometryMapDraw::DrawMarkerPicture() {
     if (have_player && !geo->second.no_pin && !widget.marker_src.empty()) {
         const std::shared_ptr<const Image> mk = images ? images(widget.marker_src) : nullptr;
+        add_content(mk.get());
         const bool slot_free = manifest.icon_atlas.empty() || manifest.icon_cell <= 0;
         if (mk != nullptr && mk->Valid()) {
             const float mw =
@@ -1288,6 +1362,10 @@ void GeometryMapDraw::DrawMarkerPicture() {
                 } else {
                     const float fw = static_cast<float>(mk->w);
                     const float fh = static_cast<float>(mk->h);
+                    add_marker_px(
+                        static_cast<s32>(std::lround(l)), static_cast<s32>(std::lround(t)),
+                        static_cast<s32>(std::lround(r)) - static_cast<s32>(std::lround(l)),
+                        static_cast<s32>(std::lround(b)) - static_cast<s32>(std::lround(t)));
                     canvas.DrawImageRegion(
                         static_cast<s32>(std::lround(l)), static_cast<s32>(std::lround(t)),
                         static_cast<s32>(std::lround(r)) - static_cast<s32>(std::lround(l)),
@@ -1311,6 +1389,7 @@ void GeometryMapDraw::DrawPinFallback() {
         const float my = to_y(wy_player);
         if (visible(mx, my)) {
             const s32 cxm = static_cast<s32>(mx), cym = static_cast<s32>(my);
+            add_marker_px(cxm - 23, cym - 23, 47, 47);
             const auto diamond = [&](s32 r, u32 col) {
                 canvas.FillTriangle(cxm, cym - r, cxm + r, cym, cxm, cym + r, col);
                 canvas.FillTriangle(cxm, cym - r, cxm, cym + r, cxm - r, cym, col);
@@ -1391,6 +1470,151 @@ void DrawRoomBoxes(const WidgetDrawContext& ctx, const std::string& area,
 }
 
 } // namespace
+
+std::optional<MapDrawRecord> ProbeMapView(const Manifest& manifest, const Page& page,
+                                          const StateSnapshot& snapshot, const Widget& widget,
+                                          size_t widget_index, const ViewState& views,
+                                          const MapFollowState& follow) {
+    // The Map case of RenderPage up to the end of FrameView, on copies: the follow state is
+    // advanced exactly as a draw would (glide step, pan correction) but in `scratch`, and nothing
+    // is drawn or reported.
+    if (widget.type != WidgetType::Map || widget.rect[2] <= 0 || widget.rect[3] <= 0) {
+        return std::nullopt;
+    }
+    static thread_local Canvas unused_canvas;
+    MapFollowState scratch = follow;
+    ViewTransform view{};
+    if (widget.pan_zoom) {
+        const std::string key =
+            widget.id.empty() ? page.id + "#" + std::to_string(widget_index) : widget.id;
+        if (const auto found = views.find(key); found != views.end()) {
+            view = found->second;
+        }
+    }
+    s32 x = widget.rect[0];
+    s32 y = widget.rect[1];
+    bool settling = false;
+    const ImageProvider no_images;
+    const TextProvider no_texts;
+    const VisitReporter no_report;
+    const VisitedQuery no_query;
+    const WidgetDrawContext ctx{.canvas = unused_canvas,
+                                .manifest = manifest,
+                                .page = page,
+                                .snapshot = snapshot,
+                                .images = no_images,
+                                .texts = no_texts,
+                                .draw_list = nullptr,
+                                .follow_state = &scratch,
+                                .report_visit = no_report,
+                                .is_visited = no_query,
+                                .map_records = nullptr,
+                                .follow_state_mutex = nullptr,
+                                .manifest_markers_mutex = nullptr,
+                                .settling = settling,
+                                .widget = widget,
+                                .widget_index = widget_index,
+                                .view = view,
+                                .x = x,
+                                .y = y,
+                                .rw = widget.rect[2],
+                                .rh = widget.rect[3],
+                                .value = 0,
+                                .maximum = 0};
+    std::string area;
+    std::string current_room;
+    SelectMapArea(ctx, area, current_room);
+    const auto geo = manifest.map_areas.find(area);
+    if (geo == manifest.map_areas.end()) {
+        return std::nullopt;
+    }
+    MapDrawRecord out;
+    if (!GeometryMapDraw{ctx, area, geo}.ProbeView(out)) {
+        return std::nullopt;
+    }
+    return out;
+}
+
+std::array<s32, 4> PredictMapMarkerBox(const Manifest& manifest, const Widget& widget,
+                                       const StateSnapshot& snapshot, const MapDrawRecord& view,
+                                       const ImageProvider& images) {
+    // Mirrors GeometryMapDraw's live-marker draws (DrawLivePlayer, DrawMarkerPicture,
+    // DrawPinFallback) for the view the record holds: the same position lookup (FrameView) and
+    // the same world -> canvas mapping (to_x / to_y). Each box is widened a little and drawn
+    // unconditionally where its draw has a further condition, so this is a superset of the real
+    // box; the caller checks the draw's own marker_box against it anyway.
+    if (widget.marker_x_bind.empty() || widget.marker_y_bind.empty() || view.ppw <= 0.0f) {
+        return {};
+    }
+    const auto fx = snapshot.floats.find(widget.marker_x_bind);
+    const auto fy = snapshot.floats.find(widget.marker_y_bind);
+    if (fx == snapshot.floats.end() || fy == snapshot.floats.end()) {
+        return {};
+    }
+    const float wx = static_cast<float>(fx->second) * widget.marker_scale;
+    const float wy = static_cast<float>(fy->second) * widget.marker_scale;
+    if (!std::isfinite(wx) || !std::isfinite(wy)) {
+        return {};
+    }
+    const auto geo = manifest.map_areas.find(view.area);
+    if (geo == manifest.map_areas.end() || geo->second.no_pin) {
+        return {};
+    }
+    const s32 x = view.rect[0], y = view.rect[1], rw = view.rect[2], rh = view.rect[3];
+    const float cxpix = static_cast<float>(x) + static_cast<float>(rw) * 0.5f;
+    const float cypix = static_cast<float>(y) + static_cast<float>(rh) * 0.5f;
+    const float mx = cxpix + (wx - view.cx) * view.ppw;
+    const float my = cypix - (wy - view.cy) * view.ppw;
+    constexpr s32 Pad = 2;
+    std::array<s32, 4> box{};
+    const auto add = [&box](float l, float t, float r, float b) {
+        const s32 bx0 = static_cast<s32>(std::floor(l)) - Pad;
+        const s32 by0 = static_cast<s32>(std::floor(t)) - Pad;
+        const s32 bx1 = static_cast<s32>(std::ceil(r)) + Pad;
+        const s32 by1 = static_cast<s32>(std::ceil(b)) + Pad;
+        if (bx1 <= bx0 || by1 <= by0) {
+            return;
+        }
+        if (box[2] <= 0 || box[3] <= 0) {
+            box = {bx0, by0, bx1 - bx0, by1 - by0};
+            return;
+        }
+        const s32 x0 = std::min(box[0], bx0), y0 = std::min(box[1], by0);
+        const s32 x1 = std::max(box[0] + box[2], bx1), y1 = std::max(box[1] + box[3], by1);
+        box = {x0, y0, x1 - x0, y1 - y0};
+    };
+    // A glyph or picture is clipped to the widget before it is drawn.
+    const auto add_clipped = [&](float qx, float qy, float qw, float qh) {
+        const float l = std::max(qx, static_cast<float>(x));
+        const float t = std::max(qy, static_cast<float>(y));
+        const float r = std::min(qx + qw, static_cast<float>(x + rw));
+        const float b = std::min(qy + qh, static_cast<float>(y + rh));
+        if (r > l && b > t) {
+            add(l, t, r, b);
+        }
+    };
+    if (!widget.marker_icon.empty()) {
+        const float p = static_cast<float>(manifest.map_style.marker_icon);
+        add_clipped(mx - p * 0.5f, my - p * 0.5f, p, p);
+    }
+    if (widget.marker_src.empty()) {
+        // The diamond (either path), not clipped to the widget: radius 22 about the truncated
+        // centre.
+        add(std::floor(mx) - 23.0f, std::floor(my) - 23.0f, std::floor(mx) + 24.0f,
+            std::floor(my) + 24.0f);
+    } else if (images) {
+        const std::shared_ptr<const Image> mk = images(widget.marker_src);
+        if (mk != nullptr && mk->Valid()) {
+            const float mw =
+                widget.marker_size[0] > 0.0f ? widget.marker_size[0] : static_cast<float>(mk->w);
+            const float mh =
+                widget.marker_size[1] > 0.0f ? widget.marker_size[1] : static_cast<float>(mk->h);
+            add_clipped(mx - widget.marker_anchor[0] * mw, my - widget.marker_anchor[1] * mh, mw,
+                        mh);
+        }
+    }
+    return box;
+}
 
 void DrawMap(const WidgetDrawContext& ctx) {
     Canvas& canvas = ctx.canvas;

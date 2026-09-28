@@ -392,10 +392,54 @@ void EmulationSession::SetAppletId(int applet_id) {
         static_cast<Service::AM::AppletId>(m_applet_id));
 }
 
+namespace {
+// Developer builds only: an Android app inherits no shell environment, so the EDEN_DSMOD_*
+// switches the desktop takes from the environment (profiling, self-checks, kill switches) are read from
+// <user dir>/dsmod_env.txt instead -- one KEY=VALUE per line, '#' starts a comment. Applied before
+// each game starts; variables read once per process keep their first value until the app restarts.
+void ApplyDsmodEnvFile() {
+#if EDEN_DSMOD_BUILD_DEV_TOOLS
+    const auto path = Common::FS::GetEdenPath(Common::FS::EdenPath::EdenDir) / "dsmod_env.txt";
+    std::FILE* const file = std::fopen(path.string().c_str(), "r");
+    if (file == nullptr) {
+        return;
+    }
+    const auto trim = [](std::string text) {
+        constexpr const char* space = " \t\r\n";
+        const auto first = text.find_first_not_of(space);
+        if (first == std::string::npos) {
+            return std::string{};
+        }
+        return text.substr(first, text.find_last_not_of(space) - first + 1);
+    };
+    char line[512];
+    while (std::fgets(line, sizeof(line), file) != nullptr) {
+        const std::string text = trim(line);
+        if (text.empty() || text[0] == '#') {
+            continue;
+        }
+        const auto eq = text.find('=');
+        if (eq == std::string::npos) {
+            continue;
+        }
+        const std::string key = trim(text.substr(0, eq));
+        const std::string value = trim(text.substr(eq + 1));
+        if (key.empty()) {
+            continue;
+        }
+        setenv(key.c_str(), value.c_str(), 1);
+        LOG_INFO(Frontend, "DSMod env file: {}={}", key, value);
+    }
+    std::fclose(file);
+#endif
+}
+} // namespace
+
 Core::SystemResultStatus EmulationSession::InitializeEmulation(const std::string& filepath,
                                                                const std::size_t program_index,
                                                                const bool frontend_initiated) {
     std::scoped_lock lock(m_mutex);
+    ApplyDsmodEnvFile();
 
     // Create the render window.
     m_window = std::make_unique<EmuWindow_Android>(m_native_window, m_vulkan_library);

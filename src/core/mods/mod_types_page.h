@@ -27,7 +27,7 @@ namespace Core::Mods {
 /// several events land in one tick the largest value is played.
 enum class HapticStrength : u8 { Off = 0, Light, Click, Confirm, Heavy, Reject };
 /// What raised a haptic; indexes HapticsConfig::strength.
-enum class HapticKind : u8 { Tap, Write, Select, Drag, Drop, Marker, Refused, Count };
+enum class HapticKind : u8 { Tap, Write, Select, Drag, Drop, Marker, Refused, Hold, Count };
 struct HapticsConfig {
     bool enabled{false};
     /// The frontend honours the system's own touch-feedback setting.
@@ -40,6 +40,7 @@ struct HapticsConfig {
         HapticStrength::Confirm, // drop
         HapticStrength::Light,   // marker
         HapticStrength::Off,     // refused
+        HapticStrength::Heavy,   // hold (runtime 13: a fired press-and-hold)
     };
 };
 /// A per-widget / per-action override: -1 = none, else a HapticStrength value.
@@ -224,6 +225,10 @@ struct Widget {
     s32 frame{2};       ///< Rect: outline thickness in px when `color` is set
     bool pulse{false};  ///< Rect: the outline's alpha breathes (a warning frame)
     std::string on_tap; ///< action name
+    /// Runtime 13: action run once when a single finger rests on this widget for `hold_ms`
+    /// (press-and-hold). The lift that ends a fired hold is not a tap (mod_input_hold.h).
+    std::string on_hold;
+    s32 hold_ms{0}; ///< hold time in ms; <= 0 = DefaultHoldMs (600)
     /// Names this widget so a gesture can be remembered against it across frames. Optional:
     /// a widget without one falls back to its index on the page.
     std::string id;

@@ -610,7 +610,14 @@ void DrawButton(const WidgetDrawContext& ctx) {
     }
 }
 
+thread_local u64 render_serial_now = 0;
+std::atomic<u64> render_serial_next{0};
+
 } // namespace
+
+u64 CurrentRenderSerial() {
+    return render_serial_now;
+}
 
 bool RenderPage(Canvas& canvas, const Manifest& manifest, const Page& page,
                 const StateSnapshot& snapshot, const ImageProvider& images, const ViewState& views,
@@ -639,6 +646,7 @@ bool RenderPage(Canvas& canvas, const Manifest& manifest, const Page& page,
     // `continue` just below (a Map widget that just became hidden -- reachable here on a partial
     // pass only when its own dependency hash changed, i.e. it IS inside this pass's dirty rect --
     // must not leave a now-invalid record a tap could still hit).
+    render_serial_now = render_serial_next.fetch_add(1, std::memory_order_relaxed) + 1;
     const bool whole_canvas_draw =
         extras == nullptr || extras->clip[2] <= 0 || extras->clip[3] <= 0;
     if (map_records != nullptr && whole_canvas_draw) {
@@ -656,6 +664,7 @@ bool RenderPage(Canvas& canvas, const Manifest& manifest, const Page& page,
     canvas.SetLayerOpacity(1.0f);
     const std::array<s32, 4> frame_clip = canvas.Clip();
     bool settling = false; // a follow-view glide is still in flight: caller must redraw again
+    bool clear_pending = false;
     if (draw_list != nullptr) {
         // GPU composite: the canvas is only the HUD overlay (map/icons/marker are emitted as
         // quads). Clear it fully transparent each frame so the composited map shows through where
@@ -670,7 +679,9 @@ bool RenderPage(Canvas& canvas, const Manifest& manifest, const Page& page,
         // from the background. A full-canvas fill is ~0.3 ms; the stale-pixel bugs it prevents
         // (old digits under new ones, a hidden picture peeking out around the panels) are not
         // worth saving it.
-        canvas.Clear(manifest.background);
+        // Deferred to just before the widget loop, where it can leave out what an opaque Map
+        // widget repaints anyway (see static_occluders).
+        clear_pending = true;
     }
 
     bool any_repeat = false;
@@ -723,13 +734,24 @@ bool RenderPage(Canvas& canvas, const Manifest& manifest, const Page& page,
             expanded_storage.push_back(std::move(ghost));
         }
         ++expanded_count;
-    } else if (any_repeat) {
-        expanded_count = ExpandWidgetsInto(page, snapshot, expanded_storage);
     }
-    const std::span<const Widget> expanded =
-        any_repeat || ghost_source != nullptr
-            ? std::span<const Widget>{expanded_storage.data(), expanded_count}
-            : std::span<const Widget>{page.widgets};
+    // The widgets to draw, by reference: a page widget itself where the expansion would only copy
+    // it (no repeat, no x_bind/y_bind -- most of them), else its expanded copy. Copying every
+    // Widget of a ~900-widget page per pass because a few of them move cost ~0.35 ms.
+    static thread_local std::vector<const Widget*> expanded_refs;
+    expanded_refs.clear();
+    if (ghost_source != nullptr) {
+        for (size_t i = 0; i < expanded_count; ++i) {
+            expanded_refs.push_back(&expanded_storage[i]);
+        }
+    } else if (any_repeat) {
+        ExpandWidgetRefsInto(page, snapshot, expanded_storage, expanded_refs);
+    } else {
+        for (const Widget& w : page.widgets) {
+            expanded_refs.push_back(&w);
+        }
+    }
+    const std::span<const Widget* const> expanded{expanded_refs};
 
     // Selection / drop-hover highlights are painted after every widget (so an icon drawn over a
     // cell cannot hide its cell's frame) and before the ghost.
@@ -850,7 +872,7 @@ bool RenderPage(Canvas& canvas, const Manifest& manifest, const Page& page,
     std::vector<std::pair<size_t, std::array<s32, 4>>> static_occluders;
     if (draw_list == nullptr) {
         for (size_t oi = 0; oi < expanded.size(); ++oi) {
-            const Widget& ow = expanded[oi];
+            const Widget& ow = *expanded[oi];
             if (ow.type != WidgetType::Map || ow.anim || manifest.map_style.opacity < 1.0f ||
                 ((ow.bg >> 24) & 0xFFu) != 0xFFu) {
                 continue;
@@ -865,9 +887,29 @@ bool RenderPage(Canvas& canvas, const Manifest& manifest, const Page& page,
             static_occluders.emplace_back(oi, std::array<s32, 4>{ox0, oy0, ox1 - ox0, oy1 - oy0});
         }
     }
+    if (clear_pending) {
+        // The background fill under the first occluder is overwritten, opaque, by that Map
+        // widget's own background before anything reads it (every canvas operation reads only the
+        // pixel it writes, and a widget skipped or blended there is repainted the same way), so
+        // only the rest of the clip is cleared. Not with the chrome cache: a capture taken before
+        // the map draws would keep the unfilled pixels and replay them on a later frame.
+        const auto& occ = static_occluders.empty() ? std::array<s32, 4>{} : static_occluders.front().second;
+        if (static_occluders.empty() || GetChromeCacheState().chrome_cache_enabled ||
+            expanded[static_occluders.front().first]->scroll_clip[2] > 0) {
+            canvas.Clear(manifest.background);
+        } else {
+            const s32 cx0 = frame_clip[0], cy0 = frame_clip[1];
+            const s32 cx1 = frame_clip[0] + frame_clip[2], cy1 = frame_clip[1] + frame_clip[3];
+            const s32 ox0 = occ[0], oy0 = occ[1], ox1 = occ[0] + occ[2], oy1 = occ[1] + occ[3];
+            canvas.ClearRect(cx0, cy0, cx1 - cx0, oy0 - cy0, manifest.background); // above
+            canvas.ClearRect(cx0, oy1, cx1 - cx0, cy1 - oy1, manifest.background); // below
+            canvas.ClearRect(cx0, oy0, ox0 - cx0, oy1 - oy0, manifest.background); // left
+            canvas.ClearRect(ox1, oy0, cx1 - ox1, oy1 - oy0, manifest.background); // right
+        }
+    }
     Widget anim_moved; ///< a widget of a sliding group, at this frame's offset
     for (size_t widget_index = 0; widget_index < expanded.size(); ++widget_index) {
-        const Widget* widget_ptr = &expanded[widget_index];
+        const Widget* widget_ptr = expanded[widget_index];
         const RenderAnimGroup* anim_group = nullptr;
         if (extras != nullptr && widget_ptr->anim) {
             anim_group = extras->Find(widget_ptr->anim->key);
@@ -916,6 +958,18 @@ bool RenderPage(Canvas& canvas, const Manifest& manifest, const Page& page,
                     canvas.SetDrawOpacity(1.0f);
                 }
             }
+        }
+        // Hidden is decided first: a hidden widget draws nothing, so the pre-reject's text
+        // measuring and the occlusion test below are wasted on it (LA's map page hides ~500 of its
+        // ~900 widgets while outdoors). Only a Map widget has something to do when hidden (its
+        // record, at the `hidden` check further down) -- it still goes through the rejects first,
+        // exactly as before.
+        const bool hidden = anim_group != nullptr
+                                ? !anim_group->shown ||
+                                      WidgetHiddenHolding(widget, snapshot, widget.anim->gate.point)
+                                : WidgetHidden(widget, snapshot);
+        if (hidden && widget.type != WidgetType::Map) {
+            continue;
         }
         // Where this widget is currently looking, if the user has dragged or pinched it.
         ViewTransform view{};
@@ -1034,10 +1088,6 @@ bool RenderPage(Canvas& canvas, const Manifest& manifest, const Page& page,
             }
         }
         const s64 value = widget.bind.empty() ? 0 : snapshot.GetInt(widget.bind);
-        const bool hidden = anim_group != nullptr
-                                ? !anim_group->shown ||
-                                      WidgetHiddenHolding(widget, snapshot, widget.anim->gate.point)
-                                : WidgetHidden(widget, snapshot);
         if (hidden) {
             // A Map widget reaches this `continue` on a partial pass only when its OWN dependency
             // hash changed (otherwise the bbox pre-reject above already skipped it without ever

@@ -95,15 +95,32 @@ dsmod_add_module(dsmod-dread EXCLUDE_FROM_ALL
     INCLUDE_DIRECTORIES "${EDEN_FMT_INCLUDE_DIR}" "${EDEN_NLOHMANN_JSON_INCLUDE_DIR}"
     COMPILE_DEFINITIONS FMT_HEADER_ONLY=1)
 
-set(MK8D_MODULE_SOURCES
-    0100152000022000.cpp
+# MK8D: ABI glue (0100152000022000.cpp), the reader (mk8d_reader + its generated code pins:
+# mk8d_pins.inc for 4.0.0, mk8d_pins303.inc + mk8d_pins303_ctgp.inc for 3.0.3 and CTGP-DX), the
+# asset side (mk8d_assets: romfs art, map cameras, message text, font advances) and the
+# id -> name rules (mk8d_ids).
+set(MK8D_ASSET_SOURCES
     mk8d_assets.cpp
     mk8d_assets.h
     "${EDEN_SOURCE_ROOT}/externals/bc_decoder/bc_decoder.cpp")
+set(MK8D_READER_SOURCES
+    mk8d_reader.cpp
+    mk8d_reader.h
+    mk8d_pins.inc
+    mk8d_pins303.inc
+    mk8d_pins303_ctgp.inc
+    mk8d_ids.cpp
+    mk8d_ids.h)
+set(MK8D_MODULE_SOURCES
+    0100152000022000.cpp
+    ${MK8D_READER_SOURCES}
+    ${MK8D_ASSET_SOURCES})
+# The minimap projection reproduces the game's float math; keep arm64 and x86-64 identical.
+set_source_files_properties(mk8d_assets.cpp PROPERTIES COMPILE_OPTIONS -ffp-contract=off)
 dsmod_add_module(dsmod-mk8d
     TITLE 0100152000022000
     SOURCES ${MK8D_MODULE_SOURCES}
-    EXPORTS eden_dsmod_get_module eden_dsmod_get_extensions
+    EXPORTS eden_dsmod_get_module eden_dsmod_get_extensions eden_dsmod_get_write_extensions
     INCLUDE_DIRECTORIES "${EDEN_SOURCE_ROOT}/externals/bc_decoder")
 
 # P5R: the ABI glue (01005CA01580E000.cpp) plus the Reader's area files (p5r_reader.h lists them).
@@ -223,8 +240,24 @@ if(BUILD_TESTING AND NOT ANDROID)
     dsmod_add_test(dsmod-mk8d-reader KEEP_ASSERTS
         SOURCES 0100152000022000_test.cpp ${MK8D_MODULE_SOURCES}
         INCLUDE_DIRECTORIES "${EDEN_SOURCE_ROOT}/externals/bc_decoder")
+    # Synthetic checks always; the real-data checks run when MK8D_ROMFS names your own 4.0.0
+    # romfs dump (environment, or this cache variable for ctest) and, for the CTGP-DX course
+    # files, when MK8D_CTGP_ROMFS (environment) names the plugin's romfs. MK8D_CONTACT_DIR (same
+    # two routes as MK8D_ROMFS) writes contact-sheet PNGs for local visual review; they are never
+    # packaged.
     dsmod_add_test(dsmod-mk8d-assets KEEP_ASSERTS
-        SOURCES mk8d_assets_test.cpp mk8d_assets.cpp mk8d_assets.h
-            "${EDEN_SOURCE_ROOT}/externals/bc_decoder/bc_decoder.cpp"
+        SOURCES mk8d_assets_test.cpp ${MK8D_ASSET_SOURCES}
         INCLUDE_DIRECTORIES "${EDEN_SOURCE_ROOT}/externals/bc_decoder")
+    set(MK8D_ROMFS "" CACHE PATH "Local MK8D 4.0.0 romfs dump for dsmod-mk8d-assets (optional)")
+    set(MK8D_CONTACT_DIR "" CACHE PATH "Where dsmod-mk8d-assets writes contact sheets (optional)")
+    set(mk8d_test_env)
+    if(MK8D_ROMFS)
+        list(APPEND mk8d_test_env "MK8D_ROMFS=${MK8D_ROMFS}")
+    endif()
+    if(MK8D_CONTACT_DIR)
+        list(APPEND mk8d_test_env "MK8D_CONTACT_DIR=${MK8D_CONTACT_DIR}")
+    endif()
+    if(mk8d_test_env)
+        set_tests_properties(dsmod-mk8d-assets PROPERTIES ENVIRONMENT "${mk8d_test_env}")
+    endif()
 endif()

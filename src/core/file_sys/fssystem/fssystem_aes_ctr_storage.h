@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <mutex>
 #include <optional>
 
 #include "core/crypto/aes_util.h"
@@ -37,6 +38,9 @@ private:
     VirtualFile m_base_storage;
     std::array<u8, KeySize> m_key;
     std::array<u8, IvSize> m_iv;
+    // The cipher holds per-call state (SetIV + Transcode on one OpenSSL context), so concurrent
+    // reads of the same storage must not interleave on it; see Read().
+    mutable std::mutex m_cipher_mutex;
     mutable std::optional<Core::Crypto::AESCipher<Core::Crypto::Key128>> m_cipher;
 };
 

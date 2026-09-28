@@ -113,6 +113,30 @@ void Canvas::DrawImageRegion(s32 x, s32 y, s32 rw, s32 rh, const Image& image, s
     if (run1 <= run0) {
         return; // nothing of the image falls inside the clip
     }
+    // Untinted, unflipped: the drawn columns split into spans whose source columns are
+    // consecutive (the whole row at 1:1, a few texels long when scaling). A span of opaque texels
+    // is stored exactly as the per-pixel loop would store it, so it is copied whole; a span holding
+    // any other alpha takes the per-pixel path below. (A 1:1 map blit is one copy per row.)
+    struct Span {
+        s32 col, src_x, len;
+    };
+    static thread_local std::vector<Span> spans;
+    spans.clear();
+    const bool use_spans = plain && !flip_x;
+    if (use_spans) {
+        for (s32 col = run0; col < run1; ++col) {
+            const s32 src_x = col_src[static_cast<size_t>(col)];
+            if (src_x < 0) {
+                continue;
+            }
+            if (!spans.empty() && spans.back().col + spans.back().len == col &&
+                spans.back().src_x + spans.back().len == src_x) {
+                ++spans.back().len;
+            } else {
+                spans.push_back({col, src_x, 1});
+            }
+        }
+    }
     const s32 row0 = std::max(0, clip_y0 - y);
     const s32 row1 = std::min(rh, clip_y1 - y);
     for (s32 row = row0; row < row1; ++row) {
@@ -147,6 +171,32 @@ void Canvas::DrawImageRegion(s32 x, s32 y, s32 rw, s32 rh, const Image& image, s
             continue;
         }
         bool opaque_row = true;
+        if (use_spans) {
+            for (const Span& span : spans) {
+                const u32* const s = src + span.src_x;
+                u32* const d = dst + x + span.col;
+                u32 alpha_and = 0xFF000000u;
+                for (s32 i = 0; i < span.len; ++i) {
+                    alpha_and &= s[i];
+                }
+                if ((alpha_and >> 24) == 0xFF) {
+                    std::memcpy(d, s, static_cast<size_t>(span.len) * sizeof(u32));
+                    continue;
+                }
+                for (s32 i = 0; i < span.len; ++i) {
+                    const u32 texel = s[i];
+                    if ((texel >> 24) == 0xFF) {
+                        d[i] = texel;
+                    } else {
+                        d[i] = Blend(d[i], texel);
+                        opaque_row = false;
+                    }
+                }
+            }
+            reuse_src_y = opaque_row ? src_y : -1;
+            reuse_row = opaque_row ? dst : nullptr;
+            continue;
+        }
         for (s32 col = 0; col < rw; ++col) {
             const s32 src_x = col_src[static_cast<size_t>(col)];
             if (src_x < 0) {

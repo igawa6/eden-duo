@@ -33,6 +33,7 @@
 #include "core/file_sys/patch_manager.h"
 #include "core/file_sys/registered_cache.h"
 #include "core/file_sys/romfs.h"
+#include "core/file_sys/romfs_factory.h"
 #include "core/file_sys/vfs/vfs.h"
 #include "core/file_sys/vfs/vfs_types.h"
 #include "core/hle/kernel/k_process.h"
@@ -121,7 +122,15 @@ FileSys::VirtualFile OpenPrivateRomFS(Core::System& system, u64 program_id) {
             packed_update = nullptr;
         }
         const auto& provider = system.GetContentProvider();
-        const auto base_nca = provider.GetEntry(program_id, FileSys::ContentRecordType::Program);
+        std::shared_ptr<FileSys::NCA> base_nca =
+            provider.GetEntry(program_id, FileSys::ContentRecordType::Program);
+        if (base_nca == nullptr) {
+            // Booted from a file no content provider knows (eden-cli with a loose NSP): take the
+            // base Program NCA from the game file itself, as a fresh object of our own, or the
+            // update would be skipped and this chain would serve the base romfs only.
+            base_nca = FileSys::OpenProgramNcaFromGameFile(system.GetAppLoader().GetFile(),
+                                                           program_id);
+        }
         const FileSys::PatchManager patch_manager{program_id, system.GetFileSystemController(),
                                                   provider};
         romfs = patch_manager.PatchRomFS(base_nca.get(), base, FileSys::ContentRecordType::Program,

@@ -59,9 +59,14 @@ size_t AesCtrStorage::Read(u8* buffer, size_t size, size_t offset) const {
     std::memcpy(ctr.data(), m_iv.data(), IvSize);
     AddCounter(ctr.data(), IvSize, offset / BlockSize);
 
-    // Decrypt.
-    m_cipher->SetIV(ctr);
-    m_cipher->Transcode(buffer, size, buffer, Core::Crypto::Op::Decrypt);
+    // Decrypt. SetIV + Transcode must be atomic with respect to other readers of this storage:
+    // the cipher context is shared, and another thread setting its counter in between makes
+    // this read decrypt with the wrong keystream (wrong bytes, no error).
+    {
+        std::scoped_lock lk{m_cipher_mutex};
+        m_cipher->SetIV(ctr);
+        m_cipher->Transcode(buffer, size, buffer, Core::Crypto::Op::Decrypt);
+    }
 
     return size;
 }
@@ -95,8 +100,11 @@ size_t AesCtrStorage::Write(const u8* buffer, size_t size, size_t offset) {
     while (remaining > 0) {
         const size_t write_size = std::min<std::size_t>(pooled_buffer.size(), remaining);
 
-        m_cipher->SetIV(ctr);
-        m_cipher->Transcode(cur, write_size, pooled_buffer.data(), Core::Crypto::Op::Encrypt);
+        {
+            std::scoped_lock lk{m_cipher_mutex};
+            m_cipher->SetIV(ctr);
+            m_cipher->Transcode(cur, write_size, pooled_buffer.data(), Core::Crypto::Op::Encrypt);
+        }
         m_base_storage->Write(pooled_buffer.data(), write_size, current_offset);
 
         cur += write_size;

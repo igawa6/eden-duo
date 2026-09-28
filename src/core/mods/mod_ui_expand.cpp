@@ -172,6 +172,7 @@ size_t ExpandTemplateInto(const Page& page, const Widget& source, const StateSna
             substitute(clone.src_bind);
             substitute(clone.fill_bind);
             substitute(clone.on_tap);
+            substitute(clone.on_hold);
             substitute(clone.id);
             substitute(clone.hide_bind);
             substitute(clone.need_bind);
@@ -238,6 +239,42 @@ size_t ExpandWidgetsInto(const Page& page, const StateSnapshot& snapshot,
         count = ExpandTemplateInto(page, source, snapshot, slots, count, &memo);
     }
     return count;
+}
+
+void ExpandWidgetRefsInto(const Page& page, const StateSnapshot& snapshot,
+                          std::vector<Widget>& slots, std::vector<const Widget*>& refs) {
+    // ExpandWidgetsInto, except that a widget the expansion would copy unchanged (no repeat, no
+    // x_bind/y_bind: ResolveBindOffset returns the base for an empty bind) is referenced in place.
+    // Slots are filled first and referenced after, as the vector may grow while filling.
+    ScrollMemo memo;
+    memo.Reset(page.scrolls.size());
+    static thread_local std::vector<std::pair<const Widget*, size_t>> plan;
+    plan.clear();
+    size_t count = 0;
+    for (const auto& source : page.widgets) {
+        if (source.repeat <= 0) {
+            if (source.x_bind.empty() && source.y_bind.empty()) {
+                plan.emplace_back(&source, 0);
+                continue;
+            }
+            Widget& w = count < slots.size() ? slots[count] : slots.emplace_back();
+            w = source;
+            w.rect[0] = ResolveBindOffset(source.rect[0], source.x_bind, source.x_scale, snapshot);
+            w.rect[1] = ResolveBindOffset(source.rect[1], source.y_bind, source.y_scale, snapshot);
+            plan.emplace_back(nullptr, count++);
+            continue;
+        }
+        const size_t before = count;
+        count = ExpandTemplateInto(page, source, snapshot, slots, count, &memo);
+        for (size_t k = before; k < count; ++k) {
+            plan.emplace_back(nullptr, k);
+        }
+    }
+    refs.clear();
+    refs.reserve(plan.size());
+    for (const auto& [ptr, k] : plan) {
+        refs.push_back(ptr != nullptr ? ptr : &slots[k]);
+    }
 }
 
 std::vector<Widget> ExpandWidgets(const Page& page, const StateSnapshot& snapshot) {

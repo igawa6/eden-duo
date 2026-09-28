@@ -565,3 +565,73 @@ TEST_CASE("DSMod follow picture map shows its centre before the first position",
     REQUIRE(RenderPage(gpu, manifest, page, missing, images, {}, &follow_state, {}, {}, &fit_list));
     REQUIRE(has_map_quad(fit_list));
 }
+
+TEST_CASE("DSMod redraw: drag ghost and scrollbar gates count as whole-page inputs",
+          "[dsmod][ui]") {
+    // PublishUi skips a redraw when the signature moved but no widget's dependency hash did,
+    // unless UncoveredDrawInputsHash moved too: these inputs paint outside every widget's rect.
+    StateSnapshot s;
+    s.ints["item.count"] = 12;
+    s.ints["@scroll_on:items"] = 0;
+    const u64 idle = UncoveredDrawInputsHash(s);
+
+    // A value only widgets read does not count.
+    s.ints["item.count"] = 13;
+    REQUIRE(UncoveredDrawInputsHash(s) == idle);
+
+    // A scrollbar appearing or going away does.
+    s.ints["@scroll_on:items"] = 1;
+    const u64 bar_on = UncoveredDrawInputsHash(s);
+    REQUIRE(bar_on != idle);
+    s.ints["@scroll_on:items"] = 0;
+    REQUIRE(UncoveredDrawInputsHash(s) == idle);
+
+    // A drag in flight, the ghost moving, and the drop (or a cancelled drag) that removes it.
+    s.drag.active = true;
+    s.drag.x = 100;
+    s.drag.y = 200;
+    s.ints["@drag"] = 1;
+    const u64 dragging = UncoveredDrawInputsHash(s);
+    REQUIRE(dragging != idle);
+    s.drag.x = 140;
+    REQUIRE(UncoveredDrawInputsHash(s) != dragging);
+    s.drag.hover = 3;
+    const u64 hovering = UncoveredDrawInputsHash(s);
+    s.drag.hover = -1;
+    REQUIRE(UncoveredDrawInputsHash(s) != hovering);
+    s.drag = {};
+    s.ints["@drag"] = 0;
+    REQUIRE(UncoveredDrawInputsHash(s) != dragging);
+}
+
+TEST_CASE("DSMod redraw: a dropped drag ghost is gone from the next whole-page draw",
+          "[dsmod][ui]") {
+    constexpr u32 Bg = 0xFF000000u;
+    constexpr u32 Slot = 0xFF0000FFu;
+    Manifest manifest;
+    manifest.background = Bg;
+    Page page;
+    Widget slot;
+    slot.type = WidgetType::Rect;
+    slot.rect = {10, 10, 20, 20};
+    slot.bg = Slot;
+    slot.color = 0;
+    page.widgets.push_back(slot);
+    StateSnapshot s;
+    s.drag.active = true;
+    s.drag.widget = slot;
+    s.drag.widget.drag_scale = 1.0f;
+    s.drag.x = 70;
+    s.drag.y = 70;
+    Canvas canvas;
+    canvas.Resize(100, 100);
+    REQUIRE(RenderPage(canvas, manifest, page, s));
+    const auto px = [&](s32 x, s32 y) { return canvas.Pixels()[static_cast<size_t>(y) * 100 + x]; };
+    REQUIRE(px(72, 72) != Bg); // the ghost under the finger
+    const u64 dragging = UncoveredDrawInputsHash(s);
+    s.drag = {}; // dropped outside any target: nothing a widget reads changed
+    REQUIRE(UncoveredDrawInputsHash(s) != dragging);
+    REQUIRE(RenderPage(canvas, manifest, page, s));
+    REQUIRE(px(72, 72) == Bg);
+    REQUIRE(px(15, 15) == Slot);
+}

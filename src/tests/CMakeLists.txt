@@ -106,6 +106,7 @@ endif()
 add_executable(dsmod_min_runtime_test
     core/mods/min_runtime.cpp
     core/mods/map_areas_src.cpp
+    core/mods/runtime13.cpp
 )
 create_target_directory_groups(dsmod_min_runtime_test)
 target_link_libraries(dsmod_min_runtime_test PRIVATE common core input_common frontend_common video_core)
@@ -119,3 +120,12 @@ if (NOT MSVC)
         $<$<COMPILE_LANGUAGE:C,CXX>:-Wno-unused-parameter>
         $<$<COMPILE_LANGUAGE:C,CXX>:-Wno-missing-field-initializers>)
 endif()
+
+# Offline check of the merged base + update (BKTR patch) romfs read through Eden's NCA stack
+# against a reference dump. Not a unit test (needs the user's own game files); run by hand.
+add_executable(bktr_romfs_check
+    core/file_sys/bktr_romfs_check.cpp
+)
+create_target_directory_groups(bktr_romfs_check)
+target_link_libraries(bktr_romfs_check PRIVATE common core)
+target_link_libraries(bktr_romfs_check PRIVATE ${PLATFORM_LIBRARIES} Threads::Threads)

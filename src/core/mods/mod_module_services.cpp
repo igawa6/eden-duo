@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstring>
 #include <chrono>
+#include <cstdlib>
 #include <limits>
 
 #include <nlohmann/json.hpp>
@@ -40,6 +41,14 @@ T* MailboxPointer(const EdenDsmodHostExtensions& extension, const EdenDsmodHostA
     return reinterpret_cast<T*>(const_cast<u8*>(bytes));
 }
 constexpr size_t ImageBudget = 64 * 1024 * 1024;
+/// EDEN_DSMOD_IMAGE_TIMING=1: log when each module image lands (queue -> decoded -> drained).
+bool ImageTimingEnabled() {
+    static const bool on = [] {
+        const char* v = std::getenv("EDEN_DSMOD_IMAGE_TIMING");
+        return v != nullptr && std::strcmp(v, "0") != 0;
+    }();
+    return on;
+}
 constexpr size_t MaxImageBytes = 16 * 1024 * 1024;
 
 template <typename T>
@@ -342,10 +351,14 @@ void ModRuntime::StartModuleAssetWorker() {
             }
             std::scoped_lock lock{module_asset_mutex};
             if (result.Valid()) {
+                if (ImageTimingEnabled()) {
+                    module_asset_times[key].second = std::chrono::steady_clock::now();
+                }
                 module_asset_completed.insert_or_assign(key, std::move(result));
             } else {
                 module_asset_pending.erase(key);
                 module_asset_failed.insert(key);
+                module_asset_times.erase(key); // no "landed" line for a failed image
             }
         }
     });
@@ -358,6 +371,22 @@ void ModRuntime::DrainModuleImages() {
         ready.swap(module_asset_completed);
         for (const auto& [key, image] : ready)
             module_asset_pending.erase(key);
+        if (ImageTimingEnabled()) {
+            const auto now = std::chrono::steady_clock::now();
+            const auto ms = [](auto d) {
+                return std::chrono::duration_cast<std::chrono::milliseconds>(d).count();
+            };
+            for (const auto& [key, image] : ready) {
+                if (const auto t = module_asset_times.find(key); t != module_asset_times.end()) {
+                    LOG_INFO(Core,
+                             "DSMod: module image '{}' landed: queue->decoded {} ms, "
+                             "decoded->drained {} ms (queue {} left)",
+                             key, ms(t->second.second - t->second.first),
+                             ms(now - t->second.second), module_asset_queue.size());
+                    module_asset_times.erase(t);
+                }
+            }
+        }
     }
     if (ready.empty())
         return;
@@ -448,6 +477,9 @@ std::shared_ptr<const Image> ModRuntime::GetModuleImage(const std::string& key) 
         module_asset_failed.contains(key) || !module_asset_pending.insert(key).second)
         return nullptr;
     module_asset_queue.push_back(key);
+    if (ImageTimingEnabled()) {
+        module_asset_times[key].first = std::chrono::steady_clock::now();
+    }
     module_asset_cv.notify_one();
     return nullptr;
 }

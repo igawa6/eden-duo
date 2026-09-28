@@ -27,7 +27,8 @@ public:
         const Device& device,
         Scheduler& scheduler,
         u32 width,
-        u32 height);
+        u32 height,
+        bool dsmod_aux = false);
     ~Swapchain();
 
     /// Creates (or recreates) the swapchain with a given size.
@@ -111,6 +112,10 @@ public:
 
 private:
     void CreateSwapchain(const VkSurfaceCapabilitiesKHR& capabilities);
+
+    /// The DSMod second screen: stamp every present slightly ahead (see Present).
+    bool explicit_present_time{};
+    u32 present_id{};
     void CreateSemaphores();
     void CreateImageViews();
 

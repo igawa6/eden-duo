@@ -36,7 +36,9 @@ private:
     std::array<u8, KeySize> m_key;
     std::array<u8, IvSize> m_iv;
     const size_t m_block_size;
-    std::mutex m_mutex;
+    // Guards m_cipher: SetIV + Transcode on the shared context must not interleave between
+    // concurrent readers.
+    mutable std::mutex m_mutex;
     mutable std::optional<Core::Crypto::AESCipher<Core::Crypto::Key256>> m_cipher;
 };
 

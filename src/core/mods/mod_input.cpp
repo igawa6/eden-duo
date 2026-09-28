@@ -124,6 +124,15 @@ bool ModRuntime::GlideViews() {
     return moving;
 }
 
+namespace {
+/// Milliseconds on the steady clock (press-and-hold timing).
+s64 SteadyMs() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+               std::chrono::steady_clock::now().time_since_epoch())
+        .count();
+}
+} // namespace
+
 void ModRuntime::UpdateGestures(const StateSnapshot& snapshot,
                                 std::span<const VideoCore::DSMod::AuxTouchPoint> points,
                                 size_t count, u32 panel_w, u32 panel_h, u32 canvas_w,
@@ -218,6 +227,27 @@ void ModRuntime::UpdateGestures(const StateSnapshot& snapshot,
                                 picked.payload);
                 }
             }
+        }
+        // Press-and-hold (runtime 13): an on_hold widget under the first finger arms the hold.
+        // Like a tap (not a pan or drag), a hold reaches on_hold widgets drawn above an
+        // input_block and never those beneath one.
+        hold_action.clear();
+        {
+            bool has_hold = false;
+            s32 need_ms = 0;
+            if (!gesture_ignored && !drag_state.candidate && current_page < manifest.pages.size()) {
+                const auto expanded = ExpandWidgets(manifest.pages[current_page], snapshot);
+                const s64 hold_hit = HitTestIndex(
+                    expanded, snapshot, gesture_down_x, gesture_down_y,
+                    [](const Widget& w) { return !w.on_hold.empty() || w.input_block; });
+                if (hold_hit >= 0 && !expanded[static_cast<size_t>(hold_hit)].on_hold.empty()) {
+                    const Widget& hw = expanded[static_cast<size_t>(hold_hit)];
+                    hold_action = hw.on_hold;
+                    need_ms = hw.hold_ms;
+                    has_hold = true;
+                }
+            }
+            hold_tracker.Down(SteadyMs(), has_hold, need_ms, current_page);
         }
         // A scrollable list under the finger owns a gesture no draggable widget claimed: a
         // vertical drag scrolls it (never pans a map beneath), a still finger is still a tap on
@@ -321,6 +351,17 @@ void ModRuntime::UpdateGestures(const StateSnapshot& snapshot,
     if (!scroll_target.empty() && !now.empty()) {
         UpdateScrollGesture(snapshot, now.size(), now.front().y, gesture_moved, false);
     }
+    // Press-and-hold: fires once, on the tick the still single finger reaches hold_ms.
+    if (!now.empty() &&
+        hold_tracker.Update(SteadyMs(), gesture_moved || now.size() > 1 || drag_state.active ||
+                                            gesture_ignored || page_anim.active ||
+                                            page_anim_request.has_value(),
+                            current_page)) {
+        const PendingTap hold{gesture_down_x, gesture_down_y, hold_action};
+        LOG_INFO(Core, "DSMod: aux hold at canvas({},{}) -> '{}'", hold.x, hold.y, hold_action);
+        std::scoped_lock lk{tap_mutex};
+        pending_taps.push_back(hold);
+    }
 
     if (drag_state.candidate && now.size() == 1) {
         drag_state.x = now.front().x;
@@ -380,6 +421,9 @@ void ModRuntime::UpdateGestures(const StateSnapshot& snapshot,
         } else if (gesture_ignored) {
             LOG_INFO(Core, "DSMod: aux gesture from canvas({},{}) dropped (page transition)",
                      gesture_down_x, gesture_down_y);
+        } else if (hold_tracker.Fired()) {
+            LOG_INFO(Core, "DSMod: aux hold at canvas({},{}) released (no tap)", gesture_down_x,
+                     gesture_down_y);
         } else if (!gesture_moved) {
             const PendingTap tap{gesture_down_x, gesture_down_y};
             LOG_INFO(Core, "DSMod: aux tap at canvas({},{})", tap.x, tap.y);
@@ -394,6 +438,8 @@ void ModRuntime::UpdateGestures(const StateSnapshot& snapshot,
             LOG_INFO(Core, "DSMod: aux gesture on '{}' ended: zoom {:.2f} pan ({:.0f},{:.0f})",
                      gesture_target, v.zoom, v.pan_x, v.pan_y);
         }
+        hold_tracker.Up();
+        hold_action.clear();
         gesture_target.clear();
         gesture_moved = false;
         gesture_blocked = false;
@@ -618,6 +664,7 @@ void ModRuntime::PublishScroll(StateSnapshot& snapshot, bool advance) {
 
 void ModRuntime::ApplyViewCorrections() {
     std::scoped_lock lk{view_mutex};
+    ++follow_state_epoch;
     for (auto it = map_follow_state.begin(); it != map_follow_state.end();) {
         if (!it->first.ends_with("#pan")) {
             ++it;
@@ -844,6 +891,18 @@ void ModRuntime::DrainTaps(const StateSnapshot& snapshot) {
             // A tap just started a page transition: the rest of this tick's taps would land on the
             // page sliding in, which input does not reach until the transition ends.
             out_line(fmt::format("DSMod tap ({},{}) dropped (page transition)", tap.x, tap.y));
+            continue;
+        }
+        if (!tap.hold_action.empty()) {
+            // A fired press-and-hold (runtime 13): the on_hold widget's action, no hit test; the
+            // hold haptic (manifest haptics "hold", strength "heavy" by default) when it ran.
+            const Ran ran = run_named(tap.hold_action, std::nullopt, "hold", tap.x, tap.y);
+            if (ran.result == ActionResult::Done) {
+                // The hold's own strength (not the action's tap haptic): stronger than a tap.
+                QueueHaptic(HapticKind::Hold, -1, -1, "hold '" + tap.hold_action + "'");
+            } else if (ran.result == ActionResult::Refused) {
+                QueueHaptic(HapticKind::Refused, -1, -1, "hold '" + tap.hold_action + "'");
+            }
             continue;
         }
         if (map_page) {

@@ -58,6 +58,7 @@
 #include "core/hle/kernel/svc_types.h"
 #include "core/mods/dsmod_module_abi.h"
 #include "core/mods/dsmod_module_extensions.h"
+#include "core/mods/mod_input_hold.h"
 #include "core/mods/mod_module.h"
 #include "core/mods/mod_types.h"
 #include "core/mods/mod_ui.h"
@@ -100,7 +101,39 @@ namespace Core::Mods {
 ///          full repaint when module images land (asset-free packages), min_runtime gating
 ///   12     module data extension: "module:" byte sources (ReadAssetBytes, e.g. map geometry)
 ///          + map.areas_src (the module generates the map areas from the game's romfs)
-inline constexpr u32 DualScreenRuntimeVersion = 12;
+///   13     press-and-hold (widget "on_hold" / "hold_ms", DrainTaps "hold"), hold haptic
+///          (HapticKind::Hold, manifest haptics "hold"); redraw worker: a job superseded by a
+///          newer dispatch still publishes (redraw_authority_generation) + UnpublishedRegions,
+///          an anim group's settle frame cleared on the dispatch path; EDEN_DSMOD_IMAGE_TIMING
+inline constexpr u32 DualScreenRuntimeVersion = 13;
+
+/// Regions a redraw-worker job painted into its canvas but did not publish because it went stale
+/// (runtime 13). Before runtime 13 a job already running when the next was dispatched finished
+/// stale, and the newer partial job repainted and published only its own clip -- so the stale
+/// job's region stayed unpublished (rows moved by y_bind stuck on screen: MK8D rank table during
+/// overtakes). Since redraw_authority_generation, only a tick-thread takeover (page transition,
+/// synchronous carve-out) makes a job stale, and those sites also force the next dispatch to be a
+/// full redraw, so this is a safety net: RunRedrawJob notes a stale job here and the next
+/// published job publishes the noted regions too (or publishes full).
+struct UnpublishedRegions {
+    /// More noted rects than this and the next publish is simply full.
+    static constexpr size_t MaxRects = 64;
+    std::vector<std::array<s32, 4>> rects;
+    bool full{false}; ///< a skipped full (non-partial) redraw: the next publish must be full
+    /// A stale job: remember what it painted.
+    void Note(const RenderExtras& extras, bool partial);
+    /// The next job to publish: merge the notes into its (partial) extras and clear them. Returns
+    /// false when that publish must be full instead (a skipped full redraw); true otherwise.
+    bool Apply(RenderExtras& extras, s32 canvas_w, s32 canvas_h);
+    void Clear() {
+        rects.clear();
+        full = false;
+    }
+    bool Empty() const {
+        return rects.empty() && !full;
+    }
+};
+
 /// The runtime a package asks for: the larger "min_runtime" of `manifest` and `package` (either
 /// may be null / not an object). 0 when neither declares one. Reads only that key, so it works on
 /// any JSON a newer package format might bring. A present but malformed value (not a
@@ -124,6 +157,8 @@ class ModRuntime;
 struct PendingTap {
     s32 x{};
     s32 y{};
+    /// Runtime 13: not a tap but a fired press-and-hold; runs this action (the on_hold widget's).
+    std::string hold_action;
 };
 
 class ModRuntime {
@@ -629,6 +664,11 @@ private:
     std::unordered_set<std::string> module_asset_pending;
     std::unordered_set<std::string> module_asset_failed;
     std::unordered_map<std::string, Image> module_asset_completed;
+    /// EDEN_DSMOD_IMAGE_TIMING=1: when each module image was queued / decoded (steady clock), for
+    /// the per-image "landed" log line in DrainModuleImages. Guarded by module_asset_mutex.
+    std::unordered_map<std::string, std::pair<std::chrono::steady_clock::time_point,
+                                              std::chrono::steady_clock::time_point>>
+        module_asset_times;
     std::unordered_map<std::string, u64> module_asset_used;
     size_t module_asset_bytes{};
     std::mutex module_romfs_mutex;
@@ -1104,6 +1144,9 @@ private:
     /// Cheap change-signature over everything the aux page draws from; when unchanged we
     /// skip RenderPage + the aux copy + GPU re-upload (the page is idle).
     u64 UiSignature(const StateSnapshot& snapshot, u32 target_w, u32 target_h) const;
+    /// Hashes of the page-draw inputs the per-widget dependency hashes do not cover
+    /// ({hard, soft}; see its definition in mod_redraw.cpp).
+    std::pair<u64, u64> UncoveredSignature(const StateSnapshot& snapshot) const;
     // mod_map.cpp
     /// A Map widget whose resolved area is a fixed, prerendered picture (no geometry redraw, no
     /// self-animation) -- shared by UiSignature's `animating` flag and WidgetDependencyHash so both
@@ -1114,6 +1157,10 @@ private:
     [[nodiscard]] std::string ResolveMapArea(const Widget& w, const StateSnapshot& s) const;
     u64 last_ui_signature{0};
     bool ui_signature_valid{false};
+    /// UncoveredSignature at the last redraw decision (PublishUi; tick thread).
+    u64 last_uncovered_hard{0};
+    u64 last_uncovered_soft{0};
+    bool uncovered_valid{false};
     // Dirty-region redraw: a second, cheaper level under
     // UiSignature. UiSignature stays the unchanged top-level "did anything change at all" gate;
     // these hold, per SOURCE widget of the current page (manifest.pages[current_page].widgets --
@@ -1343,10 +1390,18 @@ private:
     s32 gesture_down_x{};
     s32 gesture_down_y{};
     bool gesture_moved{false}; ///< travelled far enough to stop being a tap
+    /// Press-and-hold of this gesture (runtime 13, "on_hold"): the tracker, and the action the
+    /// on_hold widget under the first finger names.
+    HoldTracker hold_tracker;
+    std::string hold_action;
     float gesture_span{0.0f};  ///< finger separation last frame, for pinch
     mutable std::mutex view_mutex;
     ViewState view_state;
     MapFollowState map_follow_state;
+    /// Bumped (under view_mutex) whenever map_follow_state is reset or its pan corrections are
+    /// consumed; the redraw worker's marker-only redraw restores a saved follow state only while
+    /// this is unchanged.
+    u64 follow_state_epoch{0};
     /// When a finger last rested on each pannable widget (view_idle_ms return home).
     std::unordered_map<std::string, std::chrono::steady_clock::time_point> view_touched;
     /// Glides home every view whose widget asks for it (view_idle_ms) once left alone that long.
@@ -1475,6 +1530,7 @@ private:
     // uses.
     struct RedrawJob {
         u64 generation{};
+        u64 authority{}; ///< redraw_authority_generation at dispatch (runtime 13)
         /// Shared, immutable copy of the page (made once per page, not per job).
         std::shared_ptr<const Page> page_copy;
         StateSnapshot snapshot;
@@ -1541,6 +1597,15 @@ private:
     /// whenever it happens to finish, silently overwriting whatever the transition already
     /// correctly put on screen).
     std::atomic<u64> redraw_dispatch_generation{0};
+    /// Runtime 13: bumped ONLY where the tick thread takes authority over the screen (a page
+    /// transition, the synchronous carve-out) -- the sites that also bump
+    /// redraw_dispatch_generation, minus DispatchRedraw itself. RunRedrawJob's staleness check uses
+    /// this: a job that was merely superseded by a newer DISPATCH is not stale (the single worker
+    /// finishes jobs in order, so publishing its region first is correct). Before, every dispatch
+    /// made the running job stale: with a slow page (an anim group repainting a big box every
+    /// tick) every job went stale and nothing was published until the page settled -- the MK8D
+    /// row-format anim never showed.
+    std::atomic<u64> redraw_authority_generation{0};
     std::atomic<u64> redraw_completed_generation{0}; ///< bumped by the worker after each job;
                                                      ///< observability only (how far behind the
                                                      ///< worker is), nothing gates on it
@@ -1552,6 +1617,8 @@ private:
     /// `will_dispatch` branch. `ModRuntime::canvas` (the tick thread's own) is the synchronous
     /// carve-out's canvas (debug page, page transitions, GPU_COMPOSITE).
     Canvas worker_canvas;
+    /// Worker-thread only: see UnpublishedRegions (RunRedrawJob).
+    UnpublishedRegions worker_unpublished;
     /// The worker's own persistent `MapDrawRecords` scratch buffer, mirroring
     /// `worker_canvas`'s own reasoning immediately above -- a partial redraw only repaints (and
     /// only re-records) whatever is inside this tick's dirty rect, so whatever `RenderPage` is

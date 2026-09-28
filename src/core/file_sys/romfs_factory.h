@@ -33,6 +33,13 @@ enum class StorageId : u8 {
     SdCard = 5,
 };
 
+/// Opens a fresh (unshared) NCA object for the base Program content `program_id` inside a bootable
+/// game file (NCA, NSP or XCI). This is the base that PatchRomFS needs to layer an update over when
+/// the booted file is not registered with any content provider. Returns null when the file holds no
+/// valid, non-update Program NCA for that title.
+[[nodiscard]] std::shared_ptr<NCA> OpenProgramNcaFromGameFile(const VirtualFile& file,
+                                                              u64 program_id);
+
 /// File system interface to the RomFS archive
 class RomFSFactory {
 public:
@@ -50,8 +57,15 @@ public:
                                                 ContentRecordType type) const;
 
 private:
+    /// The base program NCA to layer an update over: the content provider's entry, or, when the
+    /// game was booted from a file no content provider knows about, the NCA that was loaded.
+    [[nodiscard]] std::shared_ptr<NCA> GetBaseProgramNca(u64 title_id) const;
+
     VirtualFile file;
     VirtualFile packed_update_raw;
+
+    /// The program NCA the loader booted (null unless this factory was made by the NCA loader).
+    std::shared_ptr<NCA> loaded_program_nca;
 
     VirtualFile base;
 

@@ -45,16 +45,21 @@ struct RuntimeStageStats {
     u64 calls{}, over_budget{};
 };
 
+/// EDEN_DSMOD_PROFILE: the periodic CPU stage summaries (on unless set to 0/false).
+inline bool RuntimeProfileEnabled() {
+    static const bool enabled = [] {
+        const char* value = std::getenv("EDEN_DSMOD_PROFILE");
+        return !value || (std::strcmp(value, "0") != 0 && std::strcmp(value, "false") != 0 &&
+                          std::strcmp(value, "FALSE") != 0);
+    }();
+    return enabled;
+}
+
 class RuntimeStageTimer {
 public:
     RuntimeStageTimer(RuntimeStageStats& stats_, const char* stage_)
         : stats{stats_}, stage{stage_} {
-        static const bool enabled = [] {
-            const char* value = std::getenv("EDEN_DSMOD_PROFILE");
-            return !value || (std::strcmp(value, "0") != 0 && std::strcmp(value, "false") != 0 &&
-                              std::strcmp(value, "FALSE") != 0);
-        }();
-        active = enabled;
+        active = RuntimeProfileEnabled();
         if (active) {
             start = RuntimeStageStats::Clock::now();
         }
@@ -96,7 +101,7 @@ constexpr u32 MaxTextLength = 256;
 constexpr std::array<const char*, 6> HapticStrengthNames{"off",     "light", "click",
                                                          "confirm", "heavy", "reject"};
 constexpr std::array<const char*, static_cast<size_t>(HapticKind::Count)> HapticKindNames{
-    "tap", "write", "select", "drag", "drop", "marker", "refused"};
+    "tap", "write", "select", "drag", "drop", "marker", "refused", "hold"};
 } // namespace
 
 InputCommon::VirtualGamepad::VirtualButton ParseButton(const std::string& name, bool& ok);

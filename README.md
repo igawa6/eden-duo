@@ -21,8 +21,9 @@ Companions are separate, installable **`.dsmod.zip` packages**, one per game, so
 | 1 | [Persona 5 Royal](https://github.com/igawa6/eden-duo-companions#persona-5-royal) | `01005CA01580E000` | 1.0.2 |
 | 2 | [Metroid Dread](https://github.com/igawa6/eden-duo-companions#metroid-dread) | `010093801237C000` | 2.1.0 |
 | 3 | [The Legend of Zelda: Link's Awakening](https://github.com/igawa6/eden-duo-companions#the-legend-of-zelda-links-awakening) | `01006BB00C6F0000` | 1.0.1 |
+| 4 | [Mario Kart 8 Deluxe](https://github.com/igawa6/eden-duo-companions#mario-kart-8-deluxe) | `0100152000022000` | 4.0.0, 3.0.3 (also with CTGP-DX v1.1.1) |
 
-Compatibility is intentionally strict. Each companion is written for one exact game build and checks the running build before it loads. On any other version it does not load and shows a notice, instead of reading memory it does not understand.
+Compatibility is intentionally strict. Each companion is written for exact game builds and checks the running build before it loads. On any other version it does not load and shows a notice, instead of reading memory it does not understand.
 
 Details, screenshots and downloads for each companion: **[Eden Duo Companions](https://github.com/igawa6/eden-duo-companions)**.
 
@@ -32,7 +33,12 @@ Details, screenshots and downloads for each companion: **[Eden Duo Companions](h
 - **Live game state.** Companions read the running game's memory every frame. There are no save-file snapshots and no polling delays.
 - **Installable packages.** Add a companion from the game's *Add-ons* menu with its `.dsmod.zip`. Packages are validated (title, build, file layout and module checksums) before they are installed.
 - **Native companion modules.** A package can carry a small native module for games whose data is too complex for a declarative manifest. Modules talk to the emulator through a small, versioned C interface and never ship inside the APK.
+- **Touch that feels native.** Taps, press-and-hold gestures, drag and drop, animated page and layout changes, and haptic feedback on the second screen.
 - **Built for handhelds.** Change-driven partial redraws, tile-based texture uploads and an optional GPU compositor keep the second screen at full frame rate without costing the game frames.
+
+## What's New
+
+See the [changelog](CHANGELOG.md).
 
 ## Requirements
 
@@ -68,11 +74,11 @@ These are the upstream files from [CocoonFE](https://github.com/inssekt/CocoonFE
 
 Eden Duo is not limited to the games above. Anyone can write a companion for another game and ship it as a `.dsmod.zip`, without changing or rebuilding the emulator.
 
-**What the runtime gives you (runtime 12, Eden Duo 1.0.0):**
+**What the runtime gives you (runtime 13, Eden Duo 1.0.1):**
 
 | Layer | What you get |
 |-------|--------------|
-| Package (JSON) | Pages built from 8 widget types: rect, label, value, bar, button, pips, image and map. Widgets support bindings, derived values, flags, page transitions, scroll lists and repeat templates. There are 10 action kinds: write, button, page, call, sequence, flag, view reset, module, slot write and map select. Game art is referenced from the player's own files (`romfs:`), so a package never ships game assets. |
+| Package (JSON) | Pages built from 8 widget types: rect, label, value, bar, button, pips, image and map. Widgets support bindings, derived values, flags, page transitions, animations, scroll lists, repeat templates, taps and press-and-hold gestures with haptic feedback. There are 10 action kinds: write, button, page, call, sequence, flag, view reset, module, slot write and map select. Game art is referenced from the player's own files (`romfs:`), so a package never ships game assets. |
 | Memory points | Pointer chains, static fields, pattern scans and per-build address tables, all checked against the game's build ID before loading. |
 | Native module (C ABI) | For data too complex for JSON. Modules get bounded memory reads and writes, the player's romfs, and publishing of values and map frames. Five optional extensions add actions and module images, font decoding, save-file reads, atomic write batches, and module-generated data. |
 | Compatibility | `min_runtime` in the package makes an older Eden Duo show an "update" page instead of failing. |
@@ -96,7 +102,7 @@ Eden Duo is not limited to the games above. Anyone can write a companion for ano
 - [Package Format](https://github.com/igawa6/eden-duo-companions/blob/main/docs/PACKAGE_FORMAT.md)
 - [Module Guide](https://github.com/igawa6/eden-duo-companions/blob/main/docs/MODULE_GUIDE.md)
 - [Architecture](https://github.com/igawa6/eden-duo-companions/blob/main/docs/ARCHITECTURE.md)
-- The [three published packages](https://github.com/igawa6/eden-duo-companions/tree/main/packages), as working examples.
+- The [four published packages](https://github.com/igawa6/eden-duo-companions/tree/main/packages), as working examples.
 
 Module sources live in this repository under [`src/core/mods/modules/`](src/core/mods/modules/).
 

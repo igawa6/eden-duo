@@ -57,6 +57,17 @@ void Canvas::FillRect(s32 x, s32 y, s32 rw, s32 rh, u32 argb) {
     const s32 x1 = std::min<s32>(clip_x1, x + rw);
     const s32 y1 = std::min<s32>(clip_y1, y + rh);
     const u32 color = ApplyDrawOpacity(argb);
+    if (x1 <= x0) {
+        return;
+    }
+    if ((color >> 24) == 0xFF) {
+        // Blend() returns an opaque source unchanged: a plain fill, without reading the row.
+        for (s32 py = y0; py < y1; ++py) {
+            std::fill_n(pixels.data() + static_cast<size_t>(py) * w + static_cast<size_t>(x0),
+                        static_cast<size_t>(x1 - x0), color);
+        }
+        return;
+    }
     for (s32 py = y0; py < y1; ++py) {
         u32* row = pixels.data() + static_cast<size_t>(py) * w;
         for (s32 px = x0; px < x1; ++px) {

@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <limits>
 #include <vector>
 
@@ -122,11 +123,17 @@ Swapchain::Swapchain(
     const Device& device_,
     Scheduler& scheduler_,
     u32 width_,
-    u32 height_)
+    u32 height_,
+    bool dsmod_aux)
     : surface(surface_)
     , device{device_}
     , scheduler{scheduler_}
 {
+#ifdef __ANDROID__
+    explicit_present_time = dsmod_aux;
+#else
+    (void)dsmod_aux;
+#endif
     Create(surface, width_, height_);
 }
 
@@ -216,9 +223,40 @@ bool Swapchain::AcquireNextImage() {
 
 void Swapchain::Present(VkSemaphore render_semaphore) {
     const auto present_queue{device.GetPresentQueue()};
+    // The DSMod second screen stamps each present 1 ms ahead (VK_GOOGLE_display_timing -> the
+    // ANativeWindow buffer timestamp). Some Android builds hook a frame pacer into
+    // BufferQueueProducer::queueBuffer (AYN Thor: libpenguin_impl.so, vendor.perf.framepacing.enable)
+    // that paces every SurfaceView layer of a game to the PRIMARY panel's vsync by sleeping in
+    // queueBuffer; it leaves a layer alone when its buffer carries an explicit timestamp that is
+    // still in the future at queue time. Paced, the second screen's irregular ~30 Hz presents slept
+    // 4-5 ms on average and up to 25 ms each inside vkQueuePresentKHR, holding the queue lock the
+    // game's submits and its own present need, and the game lost 5-15 fps while the map scrolled.
+    // SurfaceFlinger shows a buffer at the first vsync whose expected present time is at or after
+    // its timestamp; that time is at least a frame ahead when it composes, so 1 ms ahead shows at
+    // the same vsync an automatic timestamp would.
+    // The stamp is taken under the queue lock, right before the present: a wait for the lock
+    // must not use up the 1 ms.
+    std::scoped_lock lock{scheduler.submit_mutex};
+    VkPresentTimeGOOGLE present_time{};
+    VkPresentTimesInfoGOOGLE present_times{};
+    const bool stamp = explicit_present_time && device.IsGoogleDisplayTimingEnabled();
+    if (stamp) {
+        present_time.presentID = ++present_id;
+        present_time.desiredPresentTime = static_cast<u64>(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(
+                (std::chrono::steady_clock::now() + std::chrono::milliseconds{1})
+                    .time_since_epoch())
+                .count());
+        present_times = VkPresentTimesInfoGOOGLE{
+            .sType = VK_STRUCTURE_TYPE_PRESENT_TIMES_INFO_GOOGLE,
+            .pNext = nullptr,
+            .swapchainCount = 1,
+            .pTimes = &present_time,
+        };
+    }
     const VkPresentInfoKHR present_info{
         .sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
-        .pNext = nullptr,
+        .pNext = stamp ? &present_times : nullptr,
         .waitSemaphoreCount = render_semaphore ? 1U : 0U,
         .pWaitSemaphores = &render_semaphore,
         .swapchainCount = 1,
@@ -226,7 +264,6 @@ void Swapchain::Present(VkSemaphore render_semaphore) {
         .pImageIndices = &image_index,
         .pResults = nullptr,
     };
-    std::scoped_lock lock{scheduler.submit_mutex};
     switch (const VkResult result = present_queue.Present(present_info)) {
     case VK_SUCCESS:
         break;

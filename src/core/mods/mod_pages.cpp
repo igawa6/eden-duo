@@ -343,6 +343,7 @@ bool ModRuntime::DrivePageTransition(const StateSnapshot& snapshot, u64 sig, u32
         // call below, outside the dispatch mailbox -- bump so a worker job already in flight for
         // the page being LEFT cannot land its stale publish after this transition's.
         redraw_dispatch_generation.fetch_add(1, std::memory_order_relaxed);
+        redraw_authority_generation.fetch_add(1, std::memory_order_relaxed);
         ApplyViewCorrections();
         page_anim = {};
         page_anim.active = true;
@@ -397,6 +398,7 @@ bool ModRuntime::DrivePageTransition(const StateSnapshot& snapshot, u64 sig, u32
         // already in flight for whatever was showing before can't publish over whatever gets shown
         // next.
         redraw_dispatch_generation.fetch_add(1, std::memory_order_relaxed);
+        redraw_authority_generation.fetch_add(1, std::memory_order_relaxed);
         return false;
     }
     static thread_local RuntimeStageStats stats;

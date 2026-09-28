@@ -271,6 +271,16 @@ struct CompositeLive {
     std::vector<float> posted;
     u64 serial{};
     u32 pending_fade_ms{}; ///< flat: a layer appeared; cross-fade when its picture lands
+    /// Per layer, the show/hide binds pre-split into (key, negated), built once per `def`, so the
+    /// per-tick visibility pass looks the snapshot up without building a key string per layer.
+    struct Bind {
+        std::string key;
+        bool present{}; ///< the layer has this bind at all
+        bool negate{};
+    };
+    std::vector<Bind> show;
+    std::vector<Bind> hide;
+    std::vector<float> alpha; ///< per-tick scratch, kept so its storage is reused tick to tick
 };
 
 /// A layer's alpha resampled onto the composite, trimmed to where it is non-zero (flat mode keeps
@@ -444,9 +454,9 @@ void EmitConsole(const std::string& line) {
     }
 }
 
-bool BindNonZero(const StateSnapshot& snapshot, std::string_view bind) {
-    const bool negate = !bind.empty() && bind.front() == '!';
-    const std::string key{negate ? bind.substr(1) : bind};
+/// Is a layer bind non-zero, with its '!' (negation) already split off (CompositeLive::Bind).
+/// Looks the key up in ints first, then floats; a key in neither counts as zero.
+bool BindKeyNonZero(const StateSnapshot& snapshot, const std::string& key, bool negate) {
     bool value = false;
     if (const auto it = snapshot.ints.find(key); it != snapshot.ints.end()) {
         value = it->second != 0;
@@ -456,10 +466,22 @@ bool BindNonZero(const StateSnapshot& snapshot, std::string_view bind) {
     return negate ? !value : value;
 }
 
-bool LayerVisible(const CompositeLayer& layer, const StateSnapshot& snapshot) {
-    const bool show = layer.show_bind.empty() || BindNonZero(snapshot, layer.show_bind);
-    const bool hide = !layer.hide_bind.empty() && BindNonZero(snapshot, layer.hide_bind);
-    return show && !hide;
+CompositeLive::Bind SplitBind(const std::string& bind) {
+    CompositeLive::Bind out;
+    out.present = !bind.empty();
+    out.negate = out.present && bind.front() == '!';
+    out.key = out.negate ? bind.substr(1) : bind;
+    return out;
+}
+
+/// Whether layer `i` of a live composite is visible: its show bind (if any) is non-zero and its
+/// hide bind (if any) is not, read through the pre-split binds.
+bool LiveLayerVisible(const CompositeLive& live, size_t i, const StateSnapshot& snapshot) {
+    const auto& show = live.show[i];
+    const auto& hide = live.hide[i];
+    const bool shown = !show.present || BindKeyNonZero(snapshot, show.key, show.negate);
+    const bool hidden = hide.present && BindKeyNonZero(snapshot, hide.key, hide.negate);
+    return shown && !hidden;
 }
 
 } // namespace
@@ -1882,17 +1904,24 @@ void ModRuntime::PumpNxAssets(const StateSnapshot& snapshot) {
         }
         const auto& def = found->second;
         const size_t n = def->layers.size();
-        if (live.def != def) {
+        if (live.def != def || live.show.size() != n) {
             live = {};
             live.wanted = true;
             live.def = def;
             live.shown.assign(n, 0);
             live.shown_at.assign(n, now);
+            live.show.reserve(n);
+            live.hide.reserve(n);
+            for (const auto& layer : def->layers) {
+                live.show.push_back(SplitBind(layer.show_bind));
+                live.hide.push_back(SplitBind(layer.hide_bind));
+            }
         }
-        std::vector<float> alpha(n, 0.0f);
+        auto& alpha = live.alpha;
+        alpha.assign(n, 0.0f);
         for (size_t i = 0; i < n; ++i) {
             const auto& layer = def->layers[i];
-            const bool visible = LayerVisible(layer, snapshot);
+            const bool visible = LiveLayerVisible(live, i, snapshot);
             if (!live.initialized) {
                 live.shown[i] = visible; // what is visible at first sight does not fade in
                 live.shown_at[i] = now - std::chrono::hours{1};
@@ -1934,7 +1963,7 @@ void ModRuntime::PumpNxAssets(const StateSnapshot& snapshot) {
             std::scoped_lock lock{s.queue_mutex};
             auto& request = s.requests[name];
             request.def = def;
-            request.alpha = std::move(alpha);
+            request.alpha = alpha;
             request.serial = live.serial;
             request.roots = {romfs_root, manifest.asset_dir};
             request.generation = s.generation;

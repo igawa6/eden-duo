@@ -91,6 +91,7 @@ VK_DEFINE_HANDLE(VmaAllocator)
     EXTENSION(EXT, SHADER_VIEWPORT_INDEX_LAYER, shader_viewport_index_layer)                       \
     EXTENSION(EXT, TOOLING_INFO, tooling_info)                                                     \
     EXTENSION(EXT, VERTEX_ATTRIBUTE_DIVISOR, vertex_attribute_divisor)                             \
+    EXTENSION(GOOGLE, DISPLAY_TIMING, display_timing)                                              \
     EXTENSION(KHR, CREATE_RENDERPASS_2, create_renderpass2)                                        \
     EXTENSION(KHR, DEPTH_STENCIL_RESOLVE, depth_stencil_resolve)                                   \
     EXTENSION(KHR, DRAW_INDIRECT_COUNT, draw_indirect_count)                                       \
@@ -556,6 +557,11 @@ FN_MAX_LIMIT_LIST
     /// Returns true if VK_KHR_pipeline_executable_properties is enabled.
     bool IsKhrPipelineExecutablePropertiesEnabled() const {
         return extensions.pipeline_executable_properties;
+    }
+
+    /// Returns true if VK_GOOGLE_display_timing is enabled.
+    bool IsGoogleDisplayTimingEnabled() const {
+        return extensions.display_timing;
     }
 
     /// Returns true if VK_KHR_swapchain_mutable_format is enabled.

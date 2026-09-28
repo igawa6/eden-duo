@@ -354,7 +354,14 @@ public:
     ///    fix: `PublishComposite` sets `ui_composite_pending`; the next call here consumes it and
     ///    forces one full resync, after which the row-copy invariant holds again.
     void PublishUiPartial(u32 w, u32 h, std::span<const u32> pixels, std::array<s32, 4> dirty) {
-        if (pixels.size() != static_cast<size_t>(w) * h) {
+        PublishUiPartialRects(w, h, pixels, std::span<const std::array<s32, 4>>{&dirty, 1});
+    }
+
+    /// PublishUiPartial for several dirty rects at once: one lock and one serial for all of them,
+    /// so the renderer never takes a frame with only some of the rects copied.
+    void PublishUiPartialRects(u32 w, u32 h, std::span<const u32> pixels,
+                               std::span<const std::array<s32, 4>> rects) {
+        if (pixels.size() != static_cast<size_t>(w) * h || rects.empty()) {
             return; // a truncated canvas would let the copy read past the buffer
         }
         std::scoped_lock lk{ui_mutex};
@@ -372,27 +379,47 @@ public:
             ui_tiles.all = true;
             ui_dirty = FullRect(w, h);
         } else if (UiDiffEnabled()) {
-            // Tile diff: diff inside the dirty rect (or, after a composite run, the whole canvas --
-            // a diff against ui_pixels finds exactly what the quad-path ticks left stale).
-            const auto rect = composite_resync ? FullRect(w, h) : ClampRect(dirty, w, h);
-            std::array<s32, 4> changed{};
-            TimeAuxCopy([&] { changed = DiffCopyRect(pixels, ui_pixels, w, rect, ui_tiles); });
-            if (changed[2] <= 0 || changed[3] <= 0) {
+            // Tile diff: diff inside the dirty rects (or, after a composite run, the whole canvas
+            // -- a diff against ui_pixels finds exactly what the quad-path ticks left stale).
+            bool any = false;
+            const auto diff_rect = [&](std::array<s32, 4> rect) {
+                std::array<s32, 4> changed{};
+                TimeAuxCopy([&] { changed = DiffCopyRect(pixels, ui_pixels, w, rect, ui_tiles); });
+                if (changed[2] > 0 && changed[3] > 0) {
+                    ui_dirty = UnionRect(ui_dirty, changed);
+                    any = true;
+                }
+            };
+            if (composite_resync) {
+                diff_rect(FullRect(w, h));
+            } else {
+                for (const auto& dirty : rects) {
+                    const auto rect = ClampRect(dirty, w, h);
+                    if (rect[2] > 0 && rect[3] > 0) {
+                        diff_rect(rect);
+                    }
+                }
+            }
+            if (!any) {
                 ui_present.store(true, std::memory_order_release);
                 return; // the redraw produced the pixels already held: nothing to upload
             }
-            ui_dirty = UnionRect(ui_dirty, changed);
         } else {
-            const auto [x0, y0, cw, ch] = ClampRect(dirty, w, h);
-            TimeAuxCopy([&] {
-                for (s32 y = y0; y < y0 + ch; ++y) {
-                    const size_t row = static_cast<size_t>(y) * w + static_cast<size_t>(x0);
-                    std::copy_n(pixels.data() + row, static_cast<size_t>(cw),
-                                ui_pixels.data() + row);
+            for (const auto& dirty : rects) {
+                const auto [x0, y0, cw, ch] = ClampRect(dirty, w, h);
+                if (cw <= 0 || ch <= 0) {
+                    continue;
                 }
-            });
-            ui_tiles.MarkRect(x0, y0, cw, ch);
-            ui_dirty = UnionRect(ui_dirty, {x0, y0, cw, ch});
+                TimeAuxCopy([&] {
+                    for (s32 y = y0; y < y0 + ch; ++y) {
+                        const size_t row = static_cast<size_t>(y) * w + static_cast<size_t>(x0);
+                        std::copy_n(pixels.data() + row, static_cast<size_t>(cw),
+                                    ui_pixels.data() + row);
+                    }
+                });
+                ui_tiles.MarkRect(x0, y0, cw, ch);
+                ui_dirty = UnionRect(ui_dirty, {x0, y0, cw, ch});
+            }
         }
         ui_serial++;
         ui_present.store(true, std::memory_order_release);

@@ -32,6 +32,10 @@ if (ENABLE_UPDATE_CHECKER)
     target_compile_definitions(yuzu-android PUBLIC ENABLE_UPDATE_CHECKER)
 endif()
 
+# Developer builds read EDEN_DSMOD_* switches from <user dir>/dsmod_env.txt (native.cpp).
+target_compile_definitions(yuzu-android PRIVATE
+    EDEN_DSMOD_BUILD_DEV_TOOLS=$<BOOL:${EDEN_DSMOD_BUILD_DEV_TOOLS}>)
+
 set(CPACK_PACKAGE_EXECUTABLES ${CPACK_PACKAGE_EXECUTABLES} yuzu-android)
 
 target_link_options(yuzu-android PRIVATE "-Wl,-Bsymbolic")

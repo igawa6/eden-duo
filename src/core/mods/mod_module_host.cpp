@@ -113,6 +113,7 @@ void ModRuntime::ShutdownGameModule() {
         module_asset_pending.clear();
         module_asset_failed.clear();
         module_asset_completed.clear();
+        module_asset_times.clear();
     }
     {
         // Shutdown-path writer of image_cache -- guarded for consistency even

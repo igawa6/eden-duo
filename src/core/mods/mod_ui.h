@@ -13,6 +13,7 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <span>
 #include <string>
 #include <vector>
@@ -250,6 +251,11 @@ struct MapDrawRecord {
         float vx{}, vy{}; ///< the slot's own point values
     };
     std::vector<Hit> hits; ///< visible, on-screen dynamic markers of this draw
+    // Change tracking for the redraw worker's marker-only redraw (not used by taps).
+    std::array<s32, 4> marker_box{}; ///< canvas px the live marker painted ({0,0,0,0}: none)
+    u64 content_id{};     ///< identity of the pictures this draw used (base, fade, atlas)
+    u64 render_serial{};  ///< the RenderPage call that made this record (CurrentRenderSerial)
+    bool clock_dependent{}; ///< something other than the live marker was drawn from the clock
     [[nodiscard]] float WorldX(float sx) const {
         return cx + (sx - (static_cast<float>(rect[0]) + static_cast<float>(rect[2]) * 0.5f)) / ppw;
     }
@@ -270,6 +276,14 @@ struct RenderAnimGroup {
     bool moving{false}; ///< mid-animation (clip + offset apply)
 };
 
+/// A Map widget the redraw worker may repaint marker-only (RenderExtras::maps).
+struct RenderMapCandidate {
+    size_t index{};            ///< widget index (the page's own = the expanded one)
+    std::array<s32, 4> rect{}; ///< the widget's rect
+    u64 view_hash{};           ///< its dependency hash without the live marker's position
+    bool dirty{};              ///< its rect is in this redraw's dirty set
+};
+
 /// Optional per-frame state of a RenderPage call (animations).
 struct RenderExtras {
     /// Draw only inside this rect ({x, y, w, h}; w or h <= 0 = the whole canvas).
@@ -279,6 +293,18 @@ struct RenderExtras {
     /// itself only reads `clip`.
     std::vector<std::array<s32, 4>> clips;
     std::vector<RenderAnimGroup> groups;
+    /// Marker-only redraw (the runtime's redraw worker; RenderPage reads none of this). `maps`
+    /// lists the page's Map widgets that qualify (see ModRuntime::BuildRenderExtras) with the hash
+    /// of everything they draw from except the live marker's position; `other_clips` is `clips`
+    /// without the rects of the `dirty` ones, so the worker can swap a map's whole rect for the
+    /// marker's old and new boxes when nothing else about that map changed. Empty `maps`: no
+    /// narrowing, `clips` as it is.
+    std::vector<RenderMapCandidate> maps;
+    std::vector<std::array<s32, 4>> other_clips;
+    /// Bookkeeping ModRuntime::PublishUi keeps in its own render_extras between publishes (not
+    /// read by RenderPage): a follow-view glide is still in flight, so the page's Map widgets must
+    /// be redrawn on the next publish even when nothing bound changed.
+    bool glide_owed{false};
     [[nodiscard]] const RenderAnimGroup* Find(const std::string& key) const {
         for (const auto& g : groups) {
             if (g.key == key) {
@@ -367,6 +393,32 @@ bool RenderPage(Canvas& canvas, const Manifest& manifest, const Page& page,
                 const RenderExtras* extras = nullptr, std::mutex* follow_state_mutex = nullptr,
                 std::recursive_mutex* manifest_markers_mutex = nullptr);
 
+/// A hash of what a page draw paints outside every widget's own rect, which no per-widget
+/// dependency hash sees: the drag ghost and drop-target highlight (snapshot.drag, "@drag*") and
+/// the scroll regions' bar gates ("@scroll_on:*"). A change needs a whole-page redraw.
+u64 UncoveredDrawInputsHash(const StateSnapshot& snapshot);
+
+/// A number unique to the RenderPage call running on this thread (0 before the first one); the
+/// MapDrawRecords a call makes carry it (MapDrawRecord::render_serial).
+u64 CurrentRenderSerial();
+
+/// The view (area, rect, cx / cy / ppw, extent; the MapDrawRecord fields) a draw of Map widget
+/// `widget` (page widget index `widget_index`) would use for this snapshot, these views and this
+/// follow state, without drawing anything or changing `follow`. nullopt when the widget would not
+/// draw a geometry view (no map data for its area, no position yet).
+std::optional<MapDrawRecord> ProbeMapView(const Manifest& manifest, const Page& page,
+                                          const StateSnapshot& snapshot, const Widget& widget,
+                                          size_t widget_index, const ViewState& views,
+                                          const MapFollowState& follow);
+
+/// A conservative box (canvas px, clipped to the widget) of every pixel the live player marker of
+/// Map widget `widget` would paint for `snapshot` if the map were drawn with exactly the view in
+/// `view` (a record of that widget's last draw). {0,0,0,0} when it would paint nothing. The
+/// caller checks the real draw's MapDrawRecord::marker_box against it afterwards.
+std::array<s32, 4> PredictMapMarkerBox(const Manifest& manifest, const Widget& widget,
+                                       const StateSnapshot& snapshot, const MapDrawRecord& view,
+                                       const ImageProvider& images);
+
 /// Draws a generated page listing every data point with its resolved address and value, so a
 /// broken pointer chain is obvious on the device instead of silently reading zero.
 void RenderDebugPage(Canvas& canvas, const Manifest& manifest, const StateSnapshot& snapshot);
@@ -385,6 +437,10 @@ struct ScrollMemo;
 /// over whatever Widgets were there (their strings keep their capacity), later slots are leftovers.
 size_t ExpandWidgetsInto(const Page& page, const StateSnapshot& snapshot,
                          std::vector<Widget>& slots);
+/// ExpandWidgetsInto by reference: `refs` gets one pointer per expanded widget, into `page` for a
+/// widget the expansion leaves as it is, else into `slots` (valid until `slots` or `page` change).
+void ExpandWidgetRefsInto(const Page& page, const StateSnapshot& snapshot,
+                          std::vector<Widget>& slots, std::vector<const Widget*>& refs);
 /// ExpandRepeatTemplate into reusable storage (slots [0, returned count)). With `slot_index` (the
 /// element index each slot was last built for, kept by the caller alongside `slots` for this one
 /// template and cleared whenever the template may have changed), a slot already holding element i

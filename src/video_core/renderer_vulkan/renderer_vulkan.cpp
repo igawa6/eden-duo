@@ -432,7 +432,8 @@ void RendererVulkan::SyncAuxWindow() {
             return;
         }
         const auto& layout = wanted->GetFramebufferLayout();
-        aux_swapchain.emplace(**aux_surface, device, scheduler, layout.width, layout.height);
+        aux_swapchain.emplace(**aux_surface, device, scheduler, layout.width, layout.height,
+                              /*dsmod_aux=*/true);
         aux_present_manager.emplace(instance, *wanted, device, memory_allocator, scheduler,
                                     *aux_swapchain, *aux_surface, /*allow_present_thread=*/true,
                                     /*force_present_thread=*/true);

@@ -53,6 +53,9 @@ size_t AesXtsStorage::Read(u8* buffer, size_t size, size_t offset) const {
     ASSERT(Common::IsAligned(offset, AesBlockSize) && Common::IsAligned(size, AesBlockSize));
     m_base_storage->Read(buffer, size, offset);
 
+    // The cipher context is shared by every reader of this storage.
+    std::scoped_lock lk{m_mutex};
+
     // Setup the counter.
     std::array<u8, IvSize> ctr;
     std::memcpy(ctr.data(), m_iv.data(), IvSize);

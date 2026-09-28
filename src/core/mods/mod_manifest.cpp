@@ -1333,6 +1333,9 @@ void ParseManifestJson(const nlohmann::json& json, Manifest& manifest) {
                     widget.bg = ParseColor(w, "bg", ToPixelOrder(widget.bg));
                     widget.text_scale = static_cast<s32>(w.value("text_scale", 3));
                     widget.on_tap = w.value("on_tap", std::string{});
+                    widget.on_hold = w.value("on_hold", std::string{});
+                    widget.hold_ms = static_cast<s32>(
+                        w.contains("hold_ms") ? ParseNumber(w.at("hold_ms")) : 0);
                     widget.id = w.value("id", std::string{});
                     widget.repeat = w.contains("repeat") ? ParseNumber(w.at("repeat")) : 0;
                     widget.repeat_bind = w.value("repeat_bind", std::string{});
@@ -2322,6 +2325,7 @@ void ModRuntime::ReloadManifest() {
         std::scoped_lock view_lock{view_mutex};
         view_state.clear();
         map_follow_state.clear();
+        ++follow_state_epoch;
     }
     if (!manifest.pages.empty() && current_page >= manifest.pages.size())
         current_page = manifest.pages.size() - 1;
