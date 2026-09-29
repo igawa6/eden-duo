@@ -16,12 +16,12 @@ Companions are separate, installable **`.dsmod.zip` packages**, one per game, so
 
 ## Supported Games
 
-| No | Supporter | Game | Title ID | Patch Version |
-|---:|:---------:|------|----------|---------------|
-| 1 | 🥇<sup>1</sup> | [Persona 5 Royal](https://github.com/igawa6/eden-duo-companions#persona-5-royal) | `01005CA01580E000` | 1.0.2 |
-| 2 | | [Metroid Dread](https://github.com/igawa6/eden-duo-companions#metroid-dread) | `010093801237C000` | 2.1.0 |
-| 3 | | [The Legend of Zelda: Link's Awakening](https://github.com/igawa6/eden-duo-companions#the-legend-of-zelda-links-awakening) | `01006BB00C6F0000` | 1.0.1 |
-| 4 | | [Mario Kart 8 Deluxe](https://github.com/igawa6/eden-duo-companions#mario-kart-8-deluxe) | `0100152000022000` | 4.0.0, 3.0.3 (also with CTGP-DX v1.1.1) |
+| No | Game | Title ID | Patch Version | Supporter |
+|---:|------|----------|---------------|:---------:|
+| 1 | [Persona 5 Royal](https://github.com/igawa6/eden-duo-companions#persona-5-royal) | `01005CA01580E000` | 1.0.2 | 🥇<sup>1</sup> |
+| 2 | [Metroid Dread](https://github.com/igawa6/eden-duo-companions#metroid-dread) | `010093801237C000` | 2.1.0 | |
+| 3 | [The Legend of Zelda: Link's Awakening](https://github.com/igawa6/eden-duo-companions#the-legend-of-zelda-links-awakening) | `01006BB00C6F0000` | 1.0.1 | |
+| 4 | [Mario Kart 8 Deluxe](https://github.com/igawa6/eden-duo-companions#mario-kart-8-deluxe) | `0100152000022000` | 4.0.0, 3.0.3 (also with CTGP-DX v1.1.1) | |
 
 <sup>1</sup> 🥇 Thanks to [u/gymgooner123](https://www.reddit.com/user/gymgooner123), who commissioned the Persona 5 Royal companion.
 
