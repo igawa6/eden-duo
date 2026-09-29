@@ -98,7 +98,7 @@ dsmod_add_module(dsmod-dread EXCLUDE_FROM_ALL
 # MK8D: ABI glue (0100152000022000.cpp), the reader (mk8d_reader + its generated code pins:
 # mk8d_pins.inc for 4.0.0, mk8d_pins303.inc + mk8d_pins303_ctgp.inc for 3.0.3 and CTGP-DX), the
 # asset side (mk8d_assets: romfs art, map cameras, message text, font advances) and the
-# id -> name rules (mk8d_ids).
+# id -> name rules (mk8d_ids) and the rank table's card-swap animation (mk8d_anim, used by the glue).
 set(MK8D_ASSET_SOURCES
     mk8d_assets.cpp
     mk8d_assets.h
@@ -111,9 +111,13 @@ set(MK8D_READER_SOURCES
     mk8d_pins303_ctgp.inc
     mk8d_ids.cpp
     mk8d_ids.h)
+set(MK8D_ANIM_SOURCES
+    mk8d_anim.cpp
+    mk8d_anim.h)
 set(MK8D_MODULE_SOURCES
     0100152000022000.cpp
     ${MK8D_READER_SOURCES}
+    ${MK8D_ANIM_SOURCES}
     ${MK8D_ASSET_SOURCES})
 # The minimap projection reproduces the game's float math; keep arm64 and x86-64 identical.
 set_source_files_properties(mk8d_assets.cpp PROPERTIES COMPILE_OPTIONS -ffp-contract=off)
@@ -240,6 +244,8 @@ if(BUILD_TESTING AND NOT ANDROID)
     dsmod_add_test(dsmod-mk8d-reader KEEP_ASSERTS
         SOURCES 0100152000022000_test.cpp ${MK8D_MODULE_SOURCES}
         INCLUDE_DIRECTORIES "${EDEN_SOURCE_ROOT}/externals/bc_decoder")
+    dsmod_add_test(dsmod-mk8d-anim KEEP_ASSERTS
+        SOURCES mk8d_anim_test.cpp ${MK8D_ANIM_SOURCES})
     # Synthetic checks always; the real-data checks run when MK8D_ROMFS names your own 4.0.0
     # romfs dump (environment, or this cache variable for ctest) and, for the CTGP-DX course
     # files, when MK8D_CTGP_ROMFS (environment) names the plugin's romfs. MK8D_CONTACT_DIR (same

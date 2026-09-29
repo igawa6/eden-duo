@@ -8,19 +8,25 @@
 //   mk8d_assets.{h,cpp}  asset-free art, map cameras, message text and font advances from the
 //                        player's romfs
 //   mk8d_ids.{h,cpp}     id -> name rules
+//   mk8d_anim.{h,cpp}    the rank table's card-swap animation (presentation only)
 // Supported builds: 4.0.0 (2C336A9BCF79C304...) and 3.0.3 (6A85262F21B90364..., also with the
 // CTGP-DX plugin), each with its own verified pins (mk8d_reader.cpp profiles).
 
 #include "core/mods/dsmod_module_abi.h"
 #include "core/mods/dsmod_module_extensions.h"
 #include "core/mods/modules/dsmod_module_sdk.h"
+#include "core/mods/modules/mk8d_anim.h"
 #include "core/mods/modules/mk8d_assets.h"
 #include "core/mods/modules/mk8d_ids.h"
 #include "core/mods/modules/mk8d_reader.h"
 
+#include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 #include <future>
 #include <memory>
 #include <string>
@@ -40,15 +46,162 @@ EdenDsmodBool SupportsBuild(const char* build_id) {
 
 /// One module instance: the asset library and the reader that uses it.
 struct Module {
-    Module(const EdenDsmodHostApi& api, const char* config) : reader{api, assets, config} {}
+    Module(const EdenDsmodHostApi& api, const char* config) : reader{api, assets, config} {
+        for (int i = 0; i < Mk8dAnim::MaxCards; ++i) {
+            const std::string p = "r" + std::to_string(i) + ".";
+            auto& n = anim_names[static_cast<std::size_t>(i)];
+            n = {p + "valid", p + "rank", p + "row_y", p + "row_dx", p + "row_glow"};
+        }
+        const char* log = std::getenv("EDEN_DSMOD_MK8D_ANIM_LOG");
+        anim_log = log && *log && *log != '0';
+    }
     void Sample(const EdenDsmodHostApi& api) {
+        const auto t0 = std::chrono::steady_clock::now();
         reader.Sample(api);
         if (!late_publish) { // a wrapper module may publish these itself, after its own values
             PublishNameScales(api);
             PublishReadiness(api);
+            PublishRankAnim(api);
         }
+        if (anim_log)
+            LogCost(api, t0);
     }
     bool late_publish{false};
+
+    /// The rank table's card-swap animation (mk8d_anim.h): r{i}.row_y (row units, 1.0 = the
+    /// rank-1 row; the page places each card with y_bind r{i}.row_y, y_scale = the row pitch),
+    /// r{i}.row_dx (row units, + = right; x_bind, x_scale = the row pitch), r{i}.row_glow
+    /// (0..3, the overtaking card's glow), rk.moving (cards in motion), rk.pile (a pile-up slide
+    /// in progress) and rk.flip (toggles whenever a slide starts or restarts: the page's 60 Hz
+    /// redraw trigger). Runs on every call (60 Hz; the reader re-reads race state at 30 Hz), from
+    /// the reader's published values, which it never changes.
+    void PublishRankAnim(const EdenDsmodHostApi& api) {
+        if (!api.get_i64 || !api.publish_i64 || !api.publish_f64)
+            return;
+        const auto t0 = std::chrono::steady_clock::now();
+        const auto get = [&api](const char* name, std::int64_t fallback) {
+            return api.get_i64(api.userdata, name, fallback);
+        };
+        // Race context: a new race (phase back to the start or out of the race scene), another
+        // course, race state (not) resolved, another local slot -> the cards snap.
+        const std::int64_t ready = get("mk.ready", 0), course = get("mk.course", -1),
+                           phase = get("mk.phase", -1), me = get("me.slot", -1);
+        if (ready != ctx_ready || course != ctx_course || me != ctx_me || phase < ctx_phase)
+            ++ctx_epoch;
+        ctx_ready = ready;
+        ctx_course = course;
+        ctx_me = me;
+        ctx_phase = phase;
+        Mk8dAnim::Input in;
+        in.count = static_cast<int>(
+            std::clamp<std::int64_t>(get("racers.count", 0), 0, Mk8dAnim::MaxCards));
+        in.context = ctx_epoch;
+        for (int i = 0; i < in.count; ++i) {
+            const auto k = static_cast<std::size_t>(i);
+            const std::int64_t rank = get(anim_names[k][1].c_str(), 0);
+            in.valid[k] =
+                get(anim_names[k][0].c_str(), 0) != 0 && rank >= 1 && rank <= Mk8dAnim::MaxCards;
+            in.rank[k] = in.valid[k] ? static_cast<int>(rank) : 0;
+        }
+        const double now = std::chrono::duration<double, std::milli>(t0.time_since_epoch()).count();
+        const auto snaps = rank_anim.Snaps();
+        rank_anim.Update(now, in);
+        for (int i = 0; i < Mk8dAnim::MaxCards; ++i) {
+            const auto& n = anim_names[static_cast<std::size_t>(i)];
+            const Mk8dAnim::Card& c = rank_anim.At(i);
+            api.publish_f64(api.userdata, n[2].c_str(), c.y);
+            api.publish_f64(api.userdata, n[3].c_str(), c.dx);
+            api.publish_i64(api.userdata, n[4].c_str(), c.glow);
+        }
+        PublishLocalCard(api, in, me);
+        // rk.flip toggles whenever a slide (re)starts; the page's 60 Hz trigger group runs one
+        // slide duration from each toggle (so it logs one line per slide start, not per tick)
+        if (rank_anim.Slides() != flip_slides) {
+            flip_slides = rank_anim.Slides();
+            anim_flip = !anim_flip;
+        }
+        api.publish_i64(api.userdata, "rk.moving", rank_anim.Moving());
+        api.publish_i64(api.userdata, "rk.pile", rank_anim.Pileup() ? 1 : 0);
+        api.publish_i64(api.userdata, "rk.flip", anim_flip ? 1 : 0);
+        const double us =
+            std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - t0)
+                .count();
+        anim_sum_us += us;
+        anim_max_us = std::max(anim_max_us, us);
+        // EDEN_DSMOD_MK8D_ANIM_LOG=1 (dev): one line per call while a card moves or snapped,
+        // so the positions can be plotted per tick.
+        if (anim_log && api.log && (rank_anim.Moving() > 0 || rank_anim.Snaps() != snaps)) {
+            std::string line = "MK8D anim t=" + std::to_string(static_cast<long long>(now)) +
+                               " mv=" + std::to_string(rank_anim.Moving()) +
+                               " pile=" + (rank_anim.Pileup() ? "1" : "0") +
+                               (rank_anim.Snaps() != snaps ? " SNAP" : "") + " y/dx/glow=";
+            char buf[48];
+            for (int i = 0; i < in.count; ++i) {
+                const Mk8dAnim::Card& c = rank_anim.At(i);
+                std::snprintf(buf, sizeof(buf), "%s%d:%d:%.3f/%.3f/%d", i ? " " : "", i,
+                              in.rank[static_cast<std::size_t>(i)], c.y, c.dx, c.glow);
+                line += buf;
+            }
+            api.log(api.userdata, EDEN_DSMOD_LOG_INFO, line.c_str());
+        }
+    }
+    /// The local player's card is drawn once more on top of all cards. So that the page needs one
+    /// copy of it (not twelve gated ones), mc.* = the local racer's own published values, copied
+    /// unchanged: mc.row_y / mc.row_dx / mc.row_glow (its card position), mc.icon, mc.name,
+    /// mc.item0_key, mc.item1_key, mc.item_state, mc.item1_state, mc.finished, mc.name_scale.
+    /// Published only while me.slot names a valid racer (the page gates the card on ui.me).
+    void PublishLocalCard(const EdenDsmodHostApi& api, const Mk8dAnim::Input& in, std::int64_t me) {
+        if (me < 0 || me >= in.count || !in.valid[static_cast<std::size_t>(me)])
+            return;
+        const Mk8dAnim::Card& c = rank_anim.At(static_cast<int>(me));
+        api.publish_f64(api.userdata, "mc.row_y", c.y);
+        api.publish_f64(api.userdata, "mc.row_dx", c.dx);
+        api.publish_i64(api.userdata, "mc.row_glow", c.glow);
+        const std::string p = "r" + std::to_string(me) + ".";
+        static constexpr const char* Texts[] = {"icon", "name", "item0_key", "item1_key"};
+        static constexpr const char* Ints[] = {"item_state", "item1_state", "finished",
+                                               "name_scale"};
+        if (api.get_text && api.publish_text)
+            for (const char* f : Texts)
+                if (const char* v = api.get_text(api.userdata, (p + f).c_str()))
+                    api.publish_text(api.userdata, (std::string{"mc."} + f).c_str(), v);
+        for (const char* f : Ints) {
+            const std::int64_t missing = INT64_MIN;
+            const std::int64_t v = api.get_i64(api.userdata, (p + f).c_str(), missing);
+            if (v != missing)
+                api.publish_i64(api.userdata, (std::string{"mc."} + f).c_str(), v);
+        }
+    }
+    /// EDEN_DSMOD_MK8D_ANIM_LOG=1: whole-sample (reader + glue) and animation cost per 600 calls.
+    void LogCost(const EdenDsmodHostApi& api, std::chrono::steady_clock::time_point t0) {
+        const double us =
+            std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - t0)
+                .count();
+        cost_sum_us += us;
+        cost_max_us = std::max(cost_max_us, us);
+        if (++cost_n < 600)
+            return;
+        if (api.log) {
+            char line[200];
+            std::snprintf(line, sizeof(line),
+                          "MK8D module: sample avg %.1f us max %.1f us; rank anim avg %.2f us max "
+                          "%.1f us over %d calls",
+                          cost_sum_us / cost_n, cost_max_us, anim_sum_us / cost_n, anim_max_us,
+                          cost_n);
+            api.log(api.userdata, EDEN_DSMOD_LOG_INFO, line);
+        }
+        cost_sum_us = cost_max_us = anim_sum_us = anim_max_us = 0;
+        cost_n = 0;
+    }
+    Mk8dAnim::RankTable rank_anim;
+    std::array<std::array<std::string, 5>, Mk8dAnim::MaxCards> anim_names;
+    std::int64_t ctx_ready{-2}, ctx_course{-2}, ctx_me{-2}, ctx_phase{-2};
+    std::uint64_t ctx_epoch{};
+    bool anim_flip{};
+    std::uint64_t flip_slides{};
+    bool anim_log{};
+    double cost_sum_us{}, cost_max_us{}, anim_sum_us{}, anim_max_us{};
+    int cost_n{};
 
     /// The waiting / loading cards appear only with their core data, and each image slot only
     /// with a decodable image. mk.pict_ok / mk.cup_ok = the published key is non-empty AND this
