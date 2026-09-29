@@ -154,6 +154,10 @@ Eden Duo was developed with AI assistance. The dual-screen runtime, the companio
 
 If anything is wrong with Eden Duo, report issues here rather than to upstream Eden.
 
+## Kind Words from Eden Dev
+
+![Kind Words from Eden Dev](dist/screenshots/kind_words.png)
+
 ## Credits and License
 
 Eden Duo is based on the open-source [Eden](https://git.eden-emu.dev/eden-emu/eden) emulator and its predecessors.
