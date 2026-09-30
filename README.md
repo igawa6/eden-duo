@@ -63,14 +63,12 @@ Eden Duo uses its own app ID (`dev.igawa6.edenduo`), so it installs alongside ot
 
 ## Launching from a Frontend
 
-Ready-made configuration files in [`dist/frontends/`](dist/frontends/) add Eden Duo as a Nintendo Switch emulator:
+| Frontend | Setup |
+|----------|-------|
+| [CocoonFE](https://github.com/inssekt/CocoonFE) | Built in, thanks to [cream-neapolitan](https://github.com/cream-neapolitan). In Cocoon, open **Settings → Library & Data → Refetch Platforms**. Then, for each game you want on Eden Duo, open the game's settings and set **Player Override** to **Eden Duo**. |
+| [ES-DE](https://es-de.org) (Android) | Copy [`es-de/es_systems.xml`](dist/frontends/es-de/es_systems.xml) and [`es-de/es_find_rules.xml`](dist/frontends/es-de/es_find_rules.xml) into `ES-DE/custom_systems/` and restart ES-DE. **Eden Duo (Standalone)** becomes the default Switch emulator. |
 
-| Frontend | Files | Setup |
-|----------|-------|-------|
-| [CocoonFE](https://github.com/inssekt/CocoonFE) | [`cocoonfe/NintendoSwitch.json`](dist/frontends/cocoonfe/NintendoSwitch.json) | Import it as the Nintendo Switch platform, then choose **Eden Duo** as the player. |
-| [ES-DE](https://es-de.org) (Android) | [`es-de/es_systems.xml`](dist/frontends/es-de/es_systems.xml), [`es-de/es_find_rules.xml`](dist/frontends/es-de/es_find_rules.xml) | Copy both files into `ES-DE/custom_systems/` and restart ES-DE. **Eden Duo (Standalone)** becomes the default Switch emulator. |
-
-These are the upstream files from [CocoonFE](https://github.com/inssekt/CocoonFE/blob/main/platforms/NintendoSwitch.json) and [es-de-android-custom-systems](https://github.com/GlazedBelmont/es-de-android-custom-systems), with only the Eden Duo entries added.
+The ES-DE files are the upstream files from [es-de-android-custom-systems](https://github.com/GlazedBelmont/es-de-android-custom-systems), with only the Eden Duo entries added.
 
 ## Making a Companion for Another Game
 
