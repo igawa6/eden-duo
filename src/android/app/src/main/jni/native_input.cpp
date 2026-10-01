@@ -24,7 +24,6 @@
 #include <span>
 
 #include "video_core/dsmod/aux_routing.h"
-#include "video_core/gpu.h"
 #include "native.h"
 
 ankerl::unordered_dense::map<std::string, std::unique_ptr<AndroidConfig>> map_profiles;
@@ -257,14 +256,16 @@ void Java_org_yuzu_yuzu_1emu_features_input_NativeInput_onAuxTouchEvent(
     JNIEnv* env, jobject j_obj, jintArray j_ids, jfloatArray j_xs, jfloatArray j_ys, jint j_count,
     jint j_start_mask) {
     auto& session = EmulationSession::GetInstance();
-    if (!session.IsRunning()) {
-        return;
-    }
-    auto& aux = session.System().GPU().DSModAux();
     const size_t count = std::min<size_t>(static_cast<size_t>(std::max(j_count, 0)),
                                           VideoCore::DSMod::AuxRouting::MaxTouch);
     if (count == 0) {
-        aux.SetTouch({});
+        session.SetAuxTouch({});
+        return;
+    }
+    // The arrays may be longer than `count` (the caller reuses fixed-size buffers).
+    if (env->GetArrayLength(j_ids) < static_cast<jsize>(count) ||
+        env->GetArrayLength(j_xs) < static_cast<jsize>(count) ||
+        env->GetArrayLength(j_ys) < static_cast<jsize>(count)) {
         return;
     }
     std::array<jint, VideoCore::DSMod::AuxRouting::MaxTouch> ids{};
@@ -284,7 +285,7 @@ void Java_org_yuzu_yuzu_1emu_features_input_NativeInput_onAuxTouchEvent(
             .delta_ns = 0,
         };
     }
-    aux.SetTouch(std::span{points.data(), count});
+    session.SetAuxTouch(std::span<const VideoCore::DSMod::AuxTouchPoint>{points.data(), count});
 }
 
 void Java_org_yuzu_yuzu_1emu_features_input_NativeInput_onTouchReleased(JNIEnv* env, jobject j_obj,

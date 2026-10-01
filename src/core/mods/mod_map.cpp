@@ -1727,21 +1727,9 @@ std::string ModRuntime::ResolveMapArea(const Widget& w, const StateSnapshot& s) 
     }
     if (area.empty() && !w.area_bind.empty()) {
         if (const auto zone = s.ints.find(w.area_bind); zone != s.ints.end()) {
-            if (!w.area_season_bind.empty()) {
-                if (const auto season = s.ints.find(w.area_season_bind);
-                    season != s.ints.end() && season->second >= 0 && season->second < 4) {
-                    if (const auto mapped =
-                            manifest.zone_area.find(zone->second * 4 + season->second);
-                        mapped != manifest.zone_area.end()) {
-                        area = mapped->second;
-                    }
-                }
-            }
-            if (area.empty()) {
-                if (const auto mapped = manifest.zone_area.find(zone->second);
-                    mapped != manifest.zone_area.end()) {
-                    area = mapped->second;
-                }
+            if (const auto mapped = manifest.zone_area.find(zone->second);
+                mapped != manifest.zone_area.end()) {
+                area = mapped->second;
             }
         }
     }

@@ -16,6 +16,7 @@ import android.content.IntentFilter
 import android.content.pm.ActivityInfo
 import android.content.res.Configuration
 import android.graphics.Bitmap
+import android.hardware.display.DisplayManager
 import android.net.Uri
 import android.os.BatteryManager
 import android.os.BatteryManager.*
@@ -25,6 +26,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.util.Rational
+import android.view.Display
 import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.MotionEvent
@@ -133,8 +135,40 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
     private var isInFoldableLayout = false
     private var emulationStarted = false
 
-    // DSMod: second-screen Presentation (AYN Thor bottom panel, AYANEO Pocket DS, ...)
+    // DSMod: second-screen Presentation (AYN Thor bottom panel, AYANEO Pocket DS, ...). It
+    // lives from onStart to onStop, so it stays up while the activity is only paused (PiP, a
+    // dialog on top), and a DisplayListener brings it back when a panel appears or turns on.
     private var auxPresentation: AuxPresentation? = null
+    private var auxWanted = false
+    private val auxHandler = Handler(Looper.getMainLooper())
+    private val auxRetry = Runnable { if (auxWanted) showAuxPresentation() }
+    private val auxDisplayStates = HashMap<Int, Int>()
+    private val auxDisplayListener = object : DisplayManager.DisplayListener {
+        override fun onDisplayAdded(displayId: Int) {
+            displayState(displayId)?.let { auxDisplayStates[displayId] = it }
+            scheduleAuxRetry()
+        }
+
+        override fun onDisplayRemoved(displayId: Int) {
+            auxDisplayStates.remove(displayId)
+            if (auxPresentation?.displayId == displayId) {
+                Log.info("[EmulationFragment] DSMod: second-screen display $displayId removed")
+                dismissAuxPresentation()
+                scheduleAuxRetry()
+            }
+        }
+
+        override fun onDisplayChanged(displayId: Int) {
+            val state = displayState(displayId) ?: return
+            val previous = auxDisplayStates.put(displayId, state)
+            // Only a display turning on matters: it may be the second panel coming back.
+            if (auxPresentation == null && state != Display.STATE_OFF &&
+                (previous == null || previous == Display.STATE_OFF)
+            ) {
+                scheduleAuxRetry()
+            }
+        }
+    }
 
     private lateinit var gpuModel: String
     private lateinit var fwVersion: String
@@ -1422,8 +1456,26 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
             }
         }
 
-    override fun onPause() {
+    override fun onStart() {
+        super.onStart()
+        auxWanted = true
+        displayManager()?.let { dm ->
+            auxDisplayStates.clear()
+            for (display in dm.displays) auxDisplayStates[display.displayId] = display.state
+            dm.registerDisplayListener(auxDisplayListener, auxHandler)
+        }
+        showAuxPresentation()
+    }
+
+    override fun onStop() {
+        auxWanted = false
+        auxHandler.removeCallbacks(auxRetry)
+        displayManager()?.unregisterDisplayListener(auxDisplayListener)
         dismissAuxPresentation()
+        super.onStop()
+    }
+
+    override fun onPause() {
         if (this::emulationState.isInitialized) {
             if (emulationState.isRunning && emulationActivity?.isInPictureInPictureMode != true) {
                 pauseEmulationAndCaptureFrame()
@@ -1436,6 +1488,8 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
 
     override fun onDestroyView() {
         super.onDestroyView()
+        auxWanted = false
+        auxHandler.removeCallbacks(auxRetry)
         dismissAuxPresentation()
         amiiboLoadJob?.cancel()
         amiiboLoadJob = null
@@ -1475,24 +1529,42 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
         initializeOverlayAutoHide()
 
         addQuickSettings()
-        showAuxPresentation()
+    }
+
+    private fun displayManager(): DisplayManager? =
+        context?.getSystemService(Context.DISPLAY_SERVICE) as? DisplayManager
+
+    private fun displayState(displayId: Int): Int? = displayManager()?.getDisplay(displayId)?.state
+
+    /** Coalesces bursts of display events into one attempt. */
+    private fun scheduleAuxRetry() {
+        if (!auxWanted) return
+        auxHandler.removeCallbacks(auxRetry)
+        auxHandler.postDelayed(auxRetry, AUX_RETRY_DELAY_MS)
     }
 
     private fun showAuxPresentation() {
         if (auxPresentation != null) return
         val activity = emulationActivity ?: activity ?: return
-        auxPresentation = AuxPresentation.showOnBestDisplay(activity)
+        val presentation = AuxPresentation.showOnBestDisplay(activity) ?: return
+        auxPresentation = presentation
+        // Presentation cancels itself when its display goes away; drop it and look again.
+        presentation.setOnDismissListener {
+            if (auxPresentation === presentation) {
+                auxPresentation = null
+                scheduleAuxRetry()
+            }
+        }
     }
 
     private fun dismissAuxPresentation() {
-        auxPresentation?.let {
-            try {
-                it.dismiss()
-            } catch (e: Exception) {
-                Log.error("[EmulationFragment] DSMod: dismiss failed: ${e.message}")
-            }
-        }
+        val presentation = auxPresentation ?: return
         auxPresentation = null
+        try {
+            presentation.dismiss()
+        } catch (e: Exception) {
+            Log.error("[EmulationFragment] DSMod: dismiss failed: ${e.message}")
+        }
     }
 
     private fun resetInputOverlay() {
@@ -2348,7 +2420,7 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
             emulationThread.join()
             emulationThread = Thread({
                 Log.debug("[EmulationFragment] Starting emulation thread.")
-                NativeLibrary.run(gamePath, programIndex, false)
+                runEmulation(programIndex, false)
             }, "NativeEmulation")
             emulationThread.start()
         }
@@ -2400,6 +2472,15 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
             }
         }
 
+        private fun runEmulation(programIndex: Int, frontendInitiated: Boolean) {
+            GameHelper.onEmulationStarting()
+            try {
+                NativeLibrary.run(gamePath, programIndex, frontendInitiated)
+            } finally {
+                GameHelper.onEmulationStopped()
+            }
+        }
+
         private fun runWithValidSurface(programIndex: Int = 0) {
             if (!emulationCanStart.invoke()) {
                 return
@@ -2415,7 +2496,7 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
                     NativeLibrary.surfaceChanged(currentSurface)
                     emulationThread = Thread({
                         Log.debug("[EmulationFragment] Starting emulation thread.")
-                        NativeLibrary.run(gamePath, programIndex, true)
+                        runEmulation(programIndex, true)
                     }, "NativeEmulation")
                     emulationThread.start()
                     state = State.RUNNING
@@ -2467,6 +2548,7 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
             arrayOf("application/octet-stream", "application/x-binary", "*/*")
         private val perfStatsUpdateHandler = Handler(Looper.myLooper()!!)
         private val socUpdateHandler = Handler(Looper.myLooper()!!)
+        private const val AUX_RETRY_DELAY_MS = 300L
     }
 
     private fun startOverlayAutoHideTimer(seconds: Int) {

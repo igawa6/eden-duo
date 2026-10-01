@@ -90,18 +90,23 @@ void Canvas::DrawImageRegion(s32 x, s32 y, s32 rw, s32 rh, const Image& image, s
     s32 reuse_src_y = -1;
     const u32* reuse_row = nullptr;
     const bool full_opacity = EffectiveOpacity() >= 1.0f; // ApplyDrawOpacity is the identity
+    if (run1 <= run0) {
+        return; // nothing of the image falls inside the clip
+    }
     // Tint() per channel as a lookup; only worth building for a large blit (not for a glyph).
     const bool use_lut = !plain && full_opacity && static_cast<s64>(rw) * rh >= 4096;
     // A tint that only scales alpha (a translucent map icon): one small table, same result as Tint.
     const bool alpha_only = !plain && !use_lut && (tint & 0x00FFFFFFu) == 0x00FFFFFFu;
-    std::array<u32, 256> alpha_lut{};
+    // Filled only when used (every entry is written before any is read): a glyph blit used to
+    // zero 5 KB of tables it never touched.
+    std::array<u32, 256> alpha_lut;
     if (alpha_only) {
         const u32 ta = tint >> 24;
         for (u32 v = 0; v < 256; ++v) {
             alpha_lut[v] = ((v * ta) / 255) << 24;
         }
     }
-    std::array<std::array<u32, 256>, 4> tint_lut{};
+    std::array<std::array<u32, 256>, 4> tint_lut;
     if (use_lut) {
         for (u32 ch = 0; ch < 4; ++ch) {
             const u32 t = (tint >> (ch * 8)) & 0xFF;
@@ -109,9 +114,6 @@ void Canvas::DrawImageRegion(s32 x, s32 y, s32 rw, s32 rh, const Image& image, s
                 tint_lut[ch][v] = ((v * t) / 255) << (ch * 8);
             }
         }
-    }
-    if (run1 <= run0) {
-        return; // nothing of the image falls inside the clip
     }
     // Untinted, unflipped: the drawn columns split into spans whose source columns are
     // consecutive (the whole row at 1:1, a few texels long when scaling). A span of opaque texels
@@ -317,7 +319,9 @@ void Canvas::DrawImageFilled(s32 x, s32 y, s32 rw, s32 rh, const Image& image, u
     if (visible <= 0) {
         return;
     }
-    // Keep the sprite's own scale and simply reveal it from the bottom up.
+    // Keep the sprite's own scale and simply reveal it from the bottom up. A source rect reaching
+    // past the image (a src_rect outside 0..1) samples nothing there, as in DrawImageRegion.
+    const s64 iw = image.w, ih = image.h;
     const s32 top = y + rh - visible;
     for (s32 row = 0; row < visible; ++row) {
         const s32 py = top + row;
@@ -325,7 +329,10 @@ void Canvas::DrawImageFilled(s32 x, s32 y, s32 rw, s32 rh, const Image& image, u
             continue;
         }
         const s32 src_row = rh - visible + row;
-        const u32 source_y = static_cast<u32>(sy + static_cast<s64>(src_row) * sh / rh);
+        const s64 source_y = sy + static_cast<s64>(src_row) * sh / rh;
+        if (source_y < 0 || source_y >= ih) {
+            continue;
+        }
         u32* const dst_row = pixels.data() + static_cast<size_t>(py) * w;
         const u32* const src = image.pixels.data() + static_cast<size_t>(source_y) * image.w;
         for (s32 col = 0; col < rw; ++col) {
@@ -333,7 +340,10 @@ void Canvas::DrawImageFilled(s32 x, s32 y, s32 rw, s32 rh, const Image& image, u
             if (px < clip_x0 || px >= clip_x1) {
                 continue;
             }
-            const u32 source_x = static_cast<u32>(sx + static_cast<s64>(col) * sw / rw);
+            const s64 source_x = sx + static_cast<s64>(col) * sw / rw;
+            if (source_x < 0 || source_x >= iw) {
+                continue;
+            }
             u32 texel = src[source_x];
             if (tint != 0xFFFFFFFFu) {
                 const u32 a = (((texel >> 24) & 0xFF) * ((tint >> 24) & 0xFF)) / 255;

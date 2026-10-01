@@ -74,7 +74,8 @@ s32 ScrollOffset(const ScrollRegion& region, const StateSnapshot& snapshot) {
 }
 
 std::pair<s64, s64> VisibleElementRange(const Widget& widget, const ScrollRegion& region,
-                                        s32 base_y, s32 offset, s64 rows) {
+                                        s32 base_y, s32 offset, s64 rows, s32 paint_top,
+                                        s32 paint_bottom) {
     const s64 pitch = RepeatRowPitch(widget);
     if (rows <= 0) {
         return {0, 0};
@@ -83,14 +84,36 @@ std::pair<s64, s64> VisibleElementRange(const Widget& widget, const ScrollRegion
         return {0, rows}; // rows do not advance vertically: nothing to cull by position
     }
     const s64 cols = widget.repeat_cols > 0 ? widget.repeat_cols : 1;
-    const s64 h = std::max<s32>(widget.rect[3], 1);
-    // Row r spans [base_y + r*pitch - offset, +h); keep it when that touches [top, bottom).
+    // Row r paints [y_r + above, y_r + h) with y_r = base_y + r*pitch - offset: its rect, widened
+    // to what its text paints (a label's glyphs run past a zero or short rect height). Keep it
+    // when that touches [top, bottom); the draw clips it to the viewport.
+    const s64 h = std::max<s64>({widget.rect[3], paint_bottom, 1});
+    const s64 above = std::min(0, paint_top);
     const s64 top = region.rect[1];
     const s64 bottom = static_cast<s64>(region.rect[1]) + region.rect[3];
     const auto floor_div = [](s64 a, s64 b) { return a >= 0 ? a / b : -((-a + b - 1) / b); };
     const s64 first_row = std::max<s64>(0, floor_div(top + offset - base_y - h, pitch) + 1);
-    const s64 end_row = std::max<s64>(0, floor_div(bottom + offset - base_y - 1, pitch) + 1);
+    const s64 end_row =
+        std::max<s64>(0, floor_div(bottom + offset - base_y - above - 1, pitch) + 1);
     return {std::min(rows, first_row * cols), std::min(rows, end_row * cols)};
+}
+
+std::array<s32, 2> RowPaintSpan(const Widget& widget, const StateSnapshot& snapshot, s32 max_h) {
+    if (widget.type != WidgetType::Label && widget.type != WidgetType::Value &&
+        widget.type != WidgetType::Button) {
+        return {0, 0};
+    }
+    // The text bound with the built-in metrics (widths do not matter here, so no manifest tables
+    // and no font); a game font's descender reaches up to about one more em below. The canvas
+    // height caps the extent (a wrapped label of unknown length), here the viewport's.
+    static const Manifest no_manifest;
+    const s32 em = std::max<s32>(1, widget.text_scale) * 5;
+    const auto t = WidgetTextBounds(widget, widget.rect[0], 0, widget.rect[2], widget.rect[3],
+                                    snapshot, no_manifest, nullptr, 1 << 16, std::max(1, max_h));
+    if (t[3] <= 0) {
+        return {0, 0};
+    }
+    return {std::min(0, t[1]), std::min(t[1] + t[3] + em + 2, std::max(1, max_h) + em + 2)};
 }
 
 std::array<s32, 4> ScrollBarThumb(const ScrollRegion& region, const ScrollMetrics& m, s32 offset) {

@@ -27,6 +27,26 @@ object GameHelper {
 
     var cachedGameList = mutableListOf<Game>()
 
+    // The startup game-list scan runs on a background thread and can overlap a game launch
+    // (the cached list is tappable at once, and front-ends launch straight into a cold app).
+    // The lock keeps "clear the filesystem provider + re-add update/DLC folders" atomic
+    // against a game boot, and once a game is booting the scan no longer clears the provider,
+    // so the booting game can't lose its update.
+    private val filesystemProviderLock = Any()
+
+    @Volatile
+    private var emulationActive = false
+
+    fun onEmulationStarting() {
+        synchronized(filesystemProviderLock) {
+            emulationActive = true
+        }
+    }
+
+    fun onEmulationStopped() {
+        emulationActive = false
+    }
+
     private lateinit var preferences: SharedPreferences
 
     fun getGames(): List<Game> {
@@ -49,11 +69,15 @@ object GameHelper {
         // Reset metadata so we don't use stale information
         GameMetadata.resetMetadata()
 
-        // Remove previous filesystem provider information so we can get up to date version info
-        NativeLibrary.clearFilesystemProvider()
-
         val mountedContainerUris = mutableSetOf<String>()
-        mountExternalContentDirectories(mountedContainerUris)
+        synchronized(filesystemProviderLock) {
+            // Remove previous filesystem provider information so we can get up to date version
+            // info, unless a game is booting or running off these entries.
+            if (!emulationActive) {
+                NativeLibrary.clearFilesystemProvider()
+            }
+            mountExternalContentDirectories(mountedContainerUris)
+        }
 
         val badDirs = mutableListOf<Int>()
         gameDirs.forEachIndexed { index: Int, gameDir: GameDir ->
@@ -101,10 +125,12 @@ object GameHelper {
     fun restoreContentForGame(game: Game) {
         NativeLibrary.reloadKeys()
 
-        val mountedContainerUris = mutableSetOf<String>()
-        mountExternalContentDirectories(mountedContainerUris)
-        mountGameFolderContent(Uri.parse(game.path), mountedContainerUris)
-        NativeLibrary.addFileToFilesystemProvider(game.path)
+        synchronized(filesystemProviderLock) {
+            val mountedContainerUris = mutableSetOf<String>()
+            mountExternalContentDirectories(mountedContainerUris)
+            mountGameFolderContent(Uri.parse(game.path), mountedContainerUris)
+            NativeLibrary.addFileToFilesystemProvider(game.path)
+        }
     }
 
     // File extensions considered as external content, buuut should

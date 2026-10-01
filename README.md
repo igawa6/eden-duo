@@ -16,14 +16,17 @@ Companions are separate, installable **`.dsmod.zip` packages**, one per game, so
 
 ## Supported Games
 
-| No | Game | Title ID | Patch Version | Supporter |
+| No | Game | Title ID | Patch Version | Contributor/Supporter |
 |---:|------|----------|---------------|:---------:|
 | 1 | [Persona 5 Royal](https://github.com/igawa6/eden-duo-companions#persona-5-royal) | `01005CA01580E000` | 1.0.2 | 🥇<sup>1</sup> |
 | 2 | [Metroid Dread](https://github.com/igawa6/eden-duo-companions#metroid-dread) | `010093801237C000` | 2.1.0 | |
 | 3 | [The Legend of Zelda: Link's Awakening](https://github.com/igawa6/eden-duo-companions#the-legend-of-zelda-links-awakening) | `01006BB00C6F0000` | 1.0.1 | |
 | 4 | [Mario Kart 8 Deluxe](https://github.com/igawa6/eden-duo-companions#mario-kart-8-deluxe) | `0100152000022000` | 4.0.0, 3.0.3 (also with CTGP-DX v1.1.1) | |
+| 5 | [Super Mario Bros. Wonder](https://github.com/igawa6/eden-duo-companions#super-mario-bros-wonder) | `010015100B514000` | 1.2.1 | ⭐<sup>1</sup> |
 
 <sup>1</sup> 🥇 Thanks to [u/gymgooner123](https://www.reddit.com/user/gymgooner123), who commissioned the Persona 5 Royal companion.
+
+<sup>1</sup> ⭐ Credit to [u/Far_Entrepreneur_246](https://www.reddit.com/user/Far_Entrepreneur_246), creator of Super Mario Wonders companion. Support him on [Patreon](https://www.patreon.com/cw/KalebPowell).
 
 Compatibility is intentionally strict. Each companion is written for exact game builds and checks the running build before it loads. On any other version it does not load and shows a notice, instead of reading memory it does not understand.
 
@@ -74,13 +77,13 @@ The ES-DE files are the upstream files from [es-de-android-custom-systems](https
 
 Eden Duo is not limited to the games above. Anyone can write a companion for another game and ship it as a `.dsmod.zip`, without changing or rebuilding the emulator.
 
-**What the runtime gives you (runtime 13, Eden Duo 1.0.1):**
+**What the runtime gives you (runtime 15, Eden Duo 1.0.2):**
 
 | Layer | What you get |
 |-------|--------------|
-| Package (JSON) | Pages built from 8 widget types: rect, label, value, bar, button, pips, image and map. Widgets support bindings, derived values, flags, page transitions, animations, scroll lists, repeat templates, taps and press-and-hold gestures with haptic feedback. There are 10 action kinds: write, button, page, call, sequence, flag, view reset, module, slot write and map select. Game art is referenced from the player's own files (`romfs:`), so a package never ships game assets. |
+| Package (JSON) | Pages built from 8 widget types: rect, label, value, bar, button, pips, image and map. Widgets support bindings, derived values, flags, page transitions, animations, scroll lists, repeat templates, taps, press-and-hold and swipe gestures with haptic feedback, pan and zoom, coloured words inside text, and outlined game-font text. There are 10 action kinds: write, button (including combinations such as `L+R`), page, call, sequence, flag, view reset, module, slot write and map select. Chosen flags can persist between sessions. Game art is referenced from the player's own files (`romfs:`), so a package never ships game assets. |
 | Memory points | Pointer chains, static fields, pattern scans and per-build address tables, all checked against the game's build ID before loading. |
-| Native module (C ABI) | For data too complex for JSON. Modules get bounded memory reads and writes, the player's romfs, and publishing of values and map frames. Five optional extensions add actions and module images, font decoding, save-file reads, atomic write batches, and module-generated data. |
+| Native module (C ABI) | For data too complex for JSON. Modules get bounded memory reads and writes, the player's romfs (the updated game, and also the base game and installed DLC), and publishing of values and map frames. Five optional extensions add actions and module images, font decoding, save-file reads, atomic write batches, and module-generated data. |
 | Compatibility | `min_runtime` in the package makes an older Eden Duo show an "update" page instead of failing. |
 
 **What helps you reverse engineer a game:**
@@ -102,7 +105,7 @@ Eden Duo is not limited to the games above. Anyone can write a companion for ano
 - [Package Format](https://github.com/igawa6/eden-duo-companions/blob/main/docs/PACKAGE_FORMAT.md)
 - [Module Guide](https://github.com/igawa6/eden-duo-companions/blob/main/docs/MODULE_GUIDE.md)
 - [Architecture](https://github.com/igawa6/eden-duo-companions/blob/main/docs/ARCHITECTURE.md)
-- The [four published packages](https://github.com/igawa6/eden-duo-companions/tree/main/packages), as working examples.
+- The [five published packages](https://github.com/igawa6/eden-duo-companions/tree/main/packages), as working examples.
 
 Module sources live in this repository under [`src/core/mods/modules/`](src/core/mods/modules/).
 

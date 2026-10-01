@@ -69,7 +69,7 @@ android {
         targetSdk = 36
         // Eden Duo release version (shown to users); versionCode stays time-based so every new
         // build installs as an update.
-        versionName = "1.0.1"
+        versionName = "1.0.2"
         versionCode = autoVersion
 
         externalNativeBuild {
@@ -96,7 +96,10 @@ android {
 
                 if (isNightly) {
                     arguments.addAll(listOf(
-                        "-DENABLE_UPDATE_CHECKER=ON",
+                        // Eden Duo: the checker asks upstream Eden's release feed and would offer
+                        // to install upstream Eden (another app). It stays off in every build
+                        // (the CMake default) until it can point at Eden Duo's own releases.
+                        "-DENABLE_UPDATE_CHECKER=OFF",
                         "-DNIGHTLY_BUILD=ON",
                     ))
                 }

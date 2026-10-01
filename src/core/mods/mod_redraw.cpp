@@ -31,6 +31,7 @@
 #include <string>
 #include <vector>
 #include <span>
+#include <utility>
 
 #include <cstdlib>
 #include <fstream>
@@ -70,12 +71,8 @@ thread_local bool hash_without_marker = false;
 /// The redraw worker's marker-only Map redraw (RenderExtras::maps): on unless
 /// EDEN_DSMOD_MARKER_REDRAW is 0/false.
 bool MarkerRedrawEnabled() {
-    static const bool enabled = [] {
-        const char* v = std::getenv("EDEN_DSMOD_MARKER_REDRAW");
-        return v == nullptr || *v == '\0' ||
-               (std::strcmp(v, "0") != 0 && std::strcmp(v, "false") != 0 &&
-                std::strcmp(v, "FALSE") != 0);
-    }();
+    static const bool enabled =
+        VideoCore::DSMod::DsmodEnvFlag("EDEN_DSMOD_MARKER_REDRAW", true);
     return enabled;
 }
 
@@ -448,7 +445,6 @@ u64 ModRuntime::WidgetDependencyHash(const Widget& w, const StateSnapshot& s,
     // visibility group, a freshly revealed icon, a moved pin, or an in-flight reveal fade silently
     // stuck at its old picture until an unrelated redraw happened to also touch the map. ---
     add(w.area_bind);
-    add(w.area_season_bind);
     add(w.room_bind);
     if (!hash_without_marker) {
         add(w.marker_x_bind);
@@ -485,6 +481,12 @@ u64 ModRuntime::WidgetDependencyHash(const Widget& w, const StateSnapshot& s,
             add(group.show.point);
             add(group.hide.point);
         }
+        // Runtime 14: the bound base picture and the overlays' pictures / gates.
+        add(w.map_extras->image_bind);
+        for (const auto& ov : w.map_extras->overlays) {
+            add(ov.src_bind);
+            add(ov.show.point);
+        }
     }
     // The resolved area's own markers/labels/dynamic_markers -- read live by the Map case
     // (GeometryMapDraw's marker and label passes, mod_ui_map_widget.cpp) but never through a
@@ -518,6 +520,13 @@ u64 ModRuntime::WidgetDependencyHash(const Widget& w, const StateSnapshot& s,
                 add(substitute(dm.x, i));
                 add(substitute(dm.y, i));
                 add(substitute(dm.kind, i));
+                // Runtime 14 per-slot picture / bar / dim / frame / tint.
+                add(substitute(dm.icon_src_bind, i));
+                add(substitute(dm.bar_bind, i));
+                add(substitute(dm.bar_max_bind, i));
+                add(substitute(dm.dim_bind, i));
+                add(substitute(dm.frame_color_bind, i));
+                add(substitute(dm.tint_bind, i));
             }
         }
     }
@@ -782,7 +791,10 @@ void ModRuntime::PublishUi(const StateSnapshot& snapshot) {
     map_lock.unlock();
     const bool groups_dirty = anim_dirty[2] > 0 && anim_dirty[3] > 0;
     const bool same = !sig_changed;
-    if (same && !groups_dirty) {
+    // A module font that was not ready yet (LoadFont's bounded retry) redraws a still page too.
+    const bool font_retry_due =
+        !font_ready && font_module_attempts > 0 && tick_count >= font_retry_tick;
+    if (same && !groups_dirty && !font_retry_due) {
         return;
     }
     last_ui_signature = sig;
@@ -812,7 +824,11 @@ void ModRuntime::PublishUi(const StateSnapshot& snapshot) {
                                                // immutable copy made only when it changed --
                                                // PumpNxAssets reassigns font_metrics wholesale.
         canvas.SetFont(dispatch_font_atlas.get(), &font_metrics);
+    } else {
+        canvas.SetFont(nullptr, nullptr);
     }
+    // `canvas` keeps the raw pointers past this call: hold what they point at until the next one.
+    canvas_font_ref = dispatch_font_atlas;
     {
         // The FontMetrics* out-param is filled by NxIconFont itself while it still holds
         // nx_assets->state_mutex internally -- this file can't take that lock directly
@@ -822,6 +838,7 @@ void ModRuntime::PublishUi(const StateSnapshot& snapshot) {
                                                  &dispatch_icon_metrics_copy)
                                     : nullptr;
         canvas.SetIconFont(dispatch_icon_atlas.get(), icons, dispatch_icon_pending);
+        canvas_icon_ref = dispatch_icon_atlas;
     }
     const auto& page = manifest.pages[std::min(current_page, manifest.pages.size() - 1)];
     draw_list.quads.clear();
@@ -843,11 +860,8 @@ void ModRuntime::PublishUi(const StateSnapshot& snapshot) {
     // (it could overwrite a transition's already-correct pixels).
     // EDEN_DSMOD_SYNC_REDRAW=1 remains as an escape hatch back to the old fully-synchronous path;
     // unset (or "0"/"false"/"FALSE") runs the worker.
-    static const bool sync_redraw = [] {
-        const char* off = std::getenv("EDEN_DSMOD_SYNC_REDRAW");
-        return off != nullptr && std::strcmp(off, "0") != 0 && std::strcmp(off, "false") != 0 &&
-               std::strcmp(off, "FALSE") != 0;
-    }();
+    static const bool sync_redraw =
+        VideoCore::DSMod::DsmodEnvFlag("EDEN_DSMOD_SYNC_REDRAW", false);
     // This tick's ordinary canvas-path render goes to the redraw worker instead of running
     // synchronously here, unless the kill switch forces the old behaviour or this page is excluded
     // by design -- only the debug page stays fully synchronous. GPU_COMPOSITE (`dl != nullptr`)
@@ -1329,11 +1343,8 @@ void ModRuntime::RedrawWorkerMain(std::stop_token stop) {
     // tree's real precedent for the priority call itself, not those two threads. An escape hatch,
     // EDEN_DSMOD_REDRAW_NORMAL_PRIORITY=1, leaves the worker at the default OS priority so the two
     // configurations can be A/B measured without a rebuild.
-    static const bool keep_normal_priority = [] {
-        const char* v = std::getenv("EDEN_DSMOD_REDRAW_NORMAL_PRIORITY");
-        return v != nullptr && std::strcmp(v, "0") != 0 && std::strcmp(v, "false") != 0 &&
-               std::strcmp(v, "FALSE") != 0;
-    }();
+    static const bool keep_normal_priority =
+        VideoCore::DSMod::DsmodEnvFlag("EDEN_DSMOD_REDRAW_NORMAL_PRIORITY", false);
     Common::SetCurrentThreadName("DSModRedraw");
     if (!keep_normal_priority) {
         Common::SetCurrentThreadPriority(Common::ThreadPriority::Low);
@@ -1401,15 +1412,6 @@ bool RectInside(const std::array<s32, 4>& inner, const std::array<s32, 4>& outer
            inner[1] + inner[3] <= outer[1] + outer[3];
 }
 
-bool EnvOn(const char* name, bool fallback) {
-    const char* v = std::getenv(name);
-    if (v == nullptr || *v == '\0') {
-        return fallback;
-    }
-    return std::strcmp(v, "0") != 0 && std::strcmp(v, "false") != 0 &&
-           std::strcmp(v, "FALSE") != 0;
-}
-
 /// The latest record of expanded widget `index` in `records` (nullptr: none).
 const MapDrawRecord* FindRecord(const MapDrawRecords& records, size_t index) {
     const MapDrawRecord* found = nullptr;
@@ -1434,7 +1436,10 @@ void ModRuntime::RunRedrawJob(RedrawJob& job) {
     // its self-check (EDEN_DSMOD_VERIFY_REDRAW=1: every partial job is compared with a full redraw
     // of the same state, mismatches logged -- a debugging aid, it doubles the worker's cost).
     const bool marker_redraw = MarkerRedrawEnabled();
-    static const bool verify_redraw = EnvOn("EDEN_DSMOD_VERIFY_REDRAW", false);
+    // Set again only by this job's own GPU-composite publish (see its use below).
+    const bool hud_synced = std::exchange(worker_hud_synced, false);
+    static const bool verify_redraw =
+        VideoCore::DSMod::DsmodEnvFlag("EDEN_DSMOD_VERIFY_REDRAW", false);
     static thread_local NarrowStats nstats;
     static thread_local RuntimeStageStats worker_stats;
     static thread_local RuntimeStageStats marker_stats;
@@ -1825,7 +1830,13 @@ void ModRuntime::RunRedrawJob(RedrawJob& job) {
     auto& aux = system.GPU().DSModAux();
     if (job.gpu_composite && job.draw_list.active) {
         worker_unpublished.Clear(); // the composite publishes the whole HUD canvas
-        PublishGpuComposite(job.draw_list, worker_canvas);
+        // Only this job's dirty rect of the HUD changed when the job is partial and the previous
+        // job published this canvas the same way (anything else -- a stale or failed job, a
+        // canvas-path publish -- leaves hud_synced false: the whole HUD is compared).
+        const bool rect_only =
+            hud_synced && job.partial && job.extras.clip[2] > 0 && job.extras.clip[3] > 0;
+        PublishGpuComposite(job.draw_list, worker_canvas, rect_only ? &job.extras.clip : nullptr);
+        worker_hud_synced = true;
         return;
     }
     aux.ClearComposite();
@@ -1990,6 +2001,12 @@ std::array<s32, 4> WidgetEffectiveRect(const Widget& w, u32 canvas_w, u32 canvas
                 const s32 y1 = std::max(r[1] + r[3], t[1] + t[3]);
                 r = {x0, y0, x1 - x0, y1 - y0};
             }
+        }
+        // Outline ring and rising glyphs paint outside the plain text bound.
+        if (w.text_outline_px > 0 || w.text_rise != 0.0f) {
+            const s32 pad = w.text_outline_px + 1;
+            const s32 lift = static_cast<s32>(std::ceil(std::fabs(w.text_rise) * 32.0f));
+            r = {r[0] - pad, r[1] - pad - lift, r[2] + 2 * pad, r[3] + 2 * pad + lift};
         }
     }
     return r;
@@ -2222,11 +2239,8 @@ std::array<s32, 4> ModRuntime::BuildRenderExtras(const StateSnapshot& snapshot,
     // rect, one RenderPage call, not two passes. Kill switch: EDEN_DSMOD_FORCE_FULL_REDRAW=1 skips
     // this whole block, degrading to exactly the group-box-only behaviour above -- a field problem
     // in this new path can be diagnosed by setting the env var, no rebuild required. ---
-    static const bool force_full_redraw = [] {
-        const char* v = std::getenv("EDEN_DSMOD_FORCE_FULL_REDRAW");
-        return v != nullptr && std::strcmp(v, "0") != 0 && std::strcmp(v, "false") != 0 &&
-               std::strcmp(v, "FALSE") != 0;
-    }();
+    static const bool force_full_redraw =
+        VideoCore::DSMod::DsmodEnvFlag("EDEN_DSMOD_FORCE_FULL_REDRAW", false);
     if (force_full_redraw) {
         render_extras.maps.clear();
     }
@@ -2441,12 +2455,13 @@ std::array<s32, 4> ModRuntime::BuildRenderExtras(const StateSnapshot& snapshot,
     return {x0, y0, x1 - x0, y1 - y0};
 }
 
-void ModRuntime::PublishGpuComposite(AuxDrawList& dl, Canvas& hud_canvas) {
+void ModRuntime::PublishGpuComposite(AuxDrawList& dl, Canvas& hud_canvas,
+                                     const std::array<s32, 4>* hud_dirty) {
     static thread_local RuntimeStageStats stats;
     const RuntimeStageTimer timer{stats, "map-composite"};
     // Everything from here down touches `last_map_key`/`last_map_stamp`/
     // `last_pulse_key`/`last_pulse_present`/`map_fade_weights`/`last_map_fade_epoch`/
-    // `atlas_published`/`last_hud_hash`/`last_composite_weight`/`last_map_composite_epoch` --
+    // `last_atlas_key`/`last_hud_hash`/`last_composite_weight`/`last_map_composite_epoch` --
     // plain ModRuntime members this function is the ONLY normal-path writer of, but not
     // implicitly single-threaded since the worker can call this too (see `gpu_composite_mutex`'s
     // own comment: the one real cross-thread writer is the console "reload" reset, not concurrent
@@ -2589,12 +2604,16 @@ void ModRuntime::PublishGpuComposite(AuxDrawList& dl, Canvas& hud_canvas) {
             std::erase_if(dl.quads, [](const auto& q) { return q.slot == 3; });
         }
     }
-    // Icon atlas (slot 1): a constant sheet, upload once.
-    if (!atlas_published && !dl.atlas_key.empty()) {
+    // Icon atlas (slot 1): uploaded when the sheet the map drew from is not the one there already
+    // -- another key (a second map widget's marker_src, an atlas that landed later) or the same
+    // key decoded again. A constant sheet uploads once.
+    if (!dl.atlas_key.empty()) {
         if (const std::shared_ptr<const Image> a = GetImage(dl.atlas_key);
-            a != nullptr && a->Valid()) {
+            a != nullptr && a->Valid() &&
+            (a != last_atlas_image || dl.atlas_key != last_atlas_key)) {
             aux.PublishAuxTexture(1, a->w, a->h, a->pixels);
-            atlas_published = true;
+            last_atlas_key = dl.atlas_key;
+            last_atlas_image = a;
         }
     }
     // HUD overlay (slot 2): the canvas holds only the HUD (transparent elsewhere); re-upload only
@@ -2603,15 +2622,26 @@ void ModRuntime::PublishGpuComposite(AuxDrawList& dl, Canvas& hud_canvas) {
     // Reads `hud_canvas`, not the tick-thread's own `canvas` -- see this function's own
     // declaration comment (mod_runtime.h) for why the caller picks which Canvas that is.
     {
-        // A full-content hash (every byte), ~4x faster than the per-pixel FNV it replaced.
         const std::vector<u32>& px = hud_canvas.Pixels();
-        u64 h =
-            Common::CityHash64(reinterpret_cast<const char*>(px.data()), px.size() * sizeof(u32));
-        h ^= px.size();
-        if (h != last_hud_hash) {
-            aux.PublishAuxTexture(2, hud_canvas.Width(), hud_canvas.Height(), px);
-            last_hud_hash = h;
+        if (hud_dirty != nullptr && hud_slot_canvas == &hud_canvas) {
+            // A partial redraw of the canvas slot 2 was last published from: only its dirty rect
+            // can differ, so neither the whole-canvas hash (~5 MB read) nor a whole-canvas diff
+            // under the lock the render thread takes every frame is needed.
+            aux.PublishAuxTextureRects(2, hud_canvas.Width(), hud_canvas.Height(), px,
+                                       std::span<const std::array<s32, 4>>{hud_dirty, 1});
+            last_hud_hash_valid = false; // the hash no longer describes slot 2
+        } else {
+            // A full-content hash (every byte), ~4x faster than the per-pixel FNV it replaced.
+            u64 h = Common::CityHash64(reinterpret_cast<const char*>(px.data()),
+                                       px.size() * sizeof(u32));
+            h ^= px.size();
+            if (!last_hud_hash_valid || h != last_hud_hash || hud_slot_canvas != &hud_canvas) {
+                aux.PublishAuxTexture(2, hud_canvas.Width(), hud_canvas.Height(), px);
+                last_hud_hash = h;
+                last_hud_hash_valid = true;
+            }
         }
+        hud_slot_canvas = &hud_canvas;
     }
     // Append the HUD overlay as a final full-canvas quad (slot 2), drawn last so the HUD strip
     // and area label sit on top of the map/icons/marker; transparent everywhere else.

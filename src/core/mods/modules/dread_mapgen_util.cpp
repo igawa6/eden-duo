@@ -23,6 +23,7 @@ struct BitReader {
     std::uint32_t bitbuf = 0;
     int bitcnt = 0;
     bool overrun = false;
+    std::size_t max_out = std::numeric_limits<std::size_t>::max(); // output cap (Inflate max_out)
 
     int Bits(int need) {
         std::uint32_t val = bitbuf;
@@ -105,6 +106,8 @@ bool Codes(BitReader& br, std::vector<std::uint8_t>& out, const Huffman& lit, co
         if (sym < 0)
             return false;
         if (sym < 256) {
+            if (out.size() >= br.max_out)
+                return false;
             out.push_back(std::uint8_t(sym));
             continue;
         }
@@ -118,7 +121,7 @@ bool Codes(BitReader& br, std::vector<std::uint8_t>& out, const Huffman& lit, co
         if (dsym < 0 || dsym >= 30 || br.overrun)
             return false;
         const std::size_t d = DistBase[dsym] + std::size_t(br.Bits(DistExtra[dsym]));
-        if (br.overrun || d > out.size())
+        if (br.overrun || d > out.size() || len > br.max_out - out.size())
             return false;
         const std::size_t from = out.size() - d;
         for (std::size_t i = 0; i < len; ++i)
@@ -204,7 +207,7 @@ bool Stored(BitReader& br, std::vector<std::uint8_t>& out) {
     const unsigned len = br.in[br.pos] | br.in[br.pos + 1] << 8;
     const unsigned nlen = br.in[br.pos + 2] | br.in[br.pos + 3] << 8;
     br.pos += 4;
-    if (len != (~nlen & 0xFFFFu) || br.pos + len > br.in.size())
+    if (len != (~nlen & 0xFFFFu) || br.pos + len > br.in.size() || len > br.max_out - out.size())
         return false;
     out.insert(out.end(), br.in.begin() + std::ptrdiff_t(br.pos),
                br.in.begin() + std::ptrdiff_t(br.pos + len));
@@ -214,8 +217,12 @@ bool Stored(BitReader& br, std::vector<std::uint8_t>& out) {
 
 } // namespace
 
-bool Inflate(std::span<const std::uint8_t> deflate, std::vector<std::uint8_t>& out) {
+bool Inflate(std::span<const std::uint8_t> deflate, std::vector<std::uint8_t>& out,
+             std::size_t max_out) {
+    if (out.size() > max_out)
+        return false;
     BitReader br{deflate};
+    br.max_out = max_out;
     for (;;) {
         const int last = br.Bits(1);
         const int type = br.Bits(2);

@@ -128,6 +128,9 @@ std::array<s32, 4> WidgetTextBounds(const Widget& widget, s32 x, s32 y, s32 rw, 
             bytes = widget.text.size();
             literal = &widget.text;
         }
+        if (widget.color_markup && bytes.has_value() && literal != nullptr) {
+            *bytes -= TextMarkupBytes(*literal); // colour tags draw nothing
+        }
         block =
             widget.wrap_width > 0 || literal == nullptr || literal->find('\n') != std::string::npos;
     } else if (widget.type == WidgetType::Button) {
@@ -140,14 +143,18 @@ std::array<s32, 4> WidgetTextBounds(const Widget& widget, s32 x, s32 y, s32 rw, 
             x = x + rw / 2;
             y = y + (rh - widget.text_scale * 5) / 2;
         } else {
-            x = x + 12;
-            y = y + 12;
+            x = x + widget.text_inset;
+            y = y + widget.text_inset;
         }
     } else if (widget.type == WidgetType::Value) {
         size_t label = 20; // a formatted s64 (with sign) or a padded one
         if (!widget.table.empty()) {
             label = 0;
-            if (const auto tbl = manifest.tables.find(widget.table); tbl != manifest.tables.end()) {
+            if (const auto known = manifest.table_max_len.find(widget.table);
+                known != manifest.table_max_len.end()) {
+                label = known->second;
+            } else if (const auto tbl = manifest.tables.find(widget.table);
+                       tbl != manifest.tables.end()) {
                 for (const auto& name : tbl->second) {
                     label = std::max(label, name.size());
                 }
@@ -162,6 +169,10 @@ std::array<s32, 4> WidgetTextBounds(const Widget& widget, s32 x, s32 y, s32 rw, 
         label = std::max<size_t>(label, static_cast<size_t>(std::max(0, widget.pad)));
         bytes = std::min<size_t>(127, widget.text.size() + label + widget.max_sep.size() + 20) +
                 widget.suffix.size();
+        if (widget.color_markup) {
+            *bytes -=
+                std::min(*bytes, TextMarkupBytes(widget.text) + TextMarkupBytes(widget.suffix));
+        }
     } else {
         return {0, 0, 0, 0};
     }
@@ -230,12 +241,15 @@ std::array<s32, 4> WidgetPaintBounds(const Widget& widget, s32 x, s32 y, s32 rw,
         if (total <= 0) {
             return {0, 0, 0, 0};
         }
-        // Sprite pips: rect-sized sprites every rect width + 8 px (from the widget's own rect).
+        // Sprite pips: rect-sized sprites every rect width + gap (8) px.
         const s32 sw = std::max(0, widget.rect[2]), sh = std::max(0, widget.rect[3]);
-        const s32 sprite_w = static_cast<s32>(total - 1) * (sw + 8) + sw;
-        // Drawn pips: squares of max(4, rh), every pip + pip / 3 px (from the resolved rect).
+        const s32 sprite_w =
+            static_cast<s32>(total - 1) * (sw + (widget.gap >= 0 ? widget.gap : 8)) + sw;
+        // Drawn pips: squares of max(4, rh), every pip + gap (pip / 3) px (from the resolved
+        // rect).
         const s32 pip = std::max(4, rh);
-        const s32 box_w = static_cast<s32>(total) * (pip + pip / 3);
+        const s32 box_w =
+            static_cast<s32>(total) * (pip + (widget.gap >= 0 ? widget.gap : pip / 3));
         const s32 x0 = std::min(x, widget.rect[0]);
         const s32 y0 = std::min(y, widget.rect[1]);
         const s32 x1 = std::max(x + box_w, widget.rect[0] + sprite_w);

@@ -284,9 +284,7 @@ void ModRuntime::InitializeModuleWriteExtensions() {
             }
             applied = true;
         };
-        if (!rt.system.IsMulticore()) {
-            apply();
-        } else if (!rt.system.RunWithGuestThreadsSuspended(apply)) {
+        if (!rt.RunWithGuestStopped(apply)) {
             return EDEN_DSMOD_FALSE; // pause/resume in progress: the module retries later
         }
         return applied ? EDEN_DSMOD_TRUE : EDEN_DSMOD_FALSE;
@@ -310,10 +308,8 @@ void ModRuntime::RunModuleAction(const std::string& name, s64 argument) {
 void ModRuntime::StartModuleAssetWorker() {
     if (!game_module || !game_module->Extensions() || !game_module->Extensions()->load_image)
         return;
-    // Resolve the session filesystem on its owner thread before any concurrent decoder reads.
-    ReadAssetBytesRaw("romfs:");
     const auto loader = game_module->Extensions()->load_image;
-    const auto host = module_host;
+    const auto host = module_worker_host; // off the tick thread: see InitializeGameModule
     module_asset_worker = std::jthread([this, loader, host](std::stop_token stop) {
         while (!stop.stop_requested()) {
             std::string key;
@@ -355,9 +351,12 @@ void ModRuntime::StartModuleAssetWorker() {
                     module_asset_times[key].second = std::chrono::steady_clock::now();
                 }
                 module_asset_completed.insert_or_assign(key, std::move(result));
+                module_asset_failed.erase(key);
             } else {
                 module_asset_pending.erase(key);
-                module_asset_failed.insert(key);
+                auto& failure = module_asset_failed[key];
+                failure.at = std::chrono::steady_clock::now();
+                ++failure.attempts;
                 module_asset_times.erase(key); // no "landed" line for a failed image
             }
         }
@@ -415,6 +414,7 @@ void ModRuntime::DrainModuleImages() {
         }
     }
     ui_signature_valid = false;
+    ++asset_epoch; // as PumpNxAssets: a page transition in flight repaints once the image lands
     module_images_landed = true;
     module_asset_cv.notify_all();
 }
@@ -426,7 +426,7 @@ bool ModRuntime::LoadModuleImageSync(const std::string& key, Image& out) {
     if (!game_module || !game_module_instance || !game_module->Extensions() ||
         !game_module->Extensions()->load_image)
         return false;
-    const auto host = module_host;
+    const auto host = module_worker_host; // off the tick thread: see InitializeGameModule
     Image result;
     try {
         game_module->Extensions()->load_image(
@@ -473,8 +473,16 @@ std::shared_ptr<const Image> ModRuntime::GetModuleImage(const std::string& key) 
     if (!module_asset_worker.joinable())
         return nullptr;
     std::scoped_lock lock{module_asset_mutex};
+    if (const auto failed = module_asset_failed.find(key); failed != module_asset_failed.end()) {
+        // Retry a failed key after 2 s, 4 s, 6 s, 8 s; give up after 5 attempts.
+        constexpr u32 MaxAttempts = 5;
+        const auto wait = std::chrono::seconds{2 * failed->second.attempts};
+        if (failed->second.attempts >= MaxAttempts ||
+            std::chrono::steady_clock::now() - failed->second.at < wait)
+            return nullptr;
+    }
     if (module_asset_pending.size() >= 128 || module_asset_failed.size() >= 2048 ||
-        module_asset_failed.contains(key) || !module_asset_pending.insert(key).second)
+        !module_asset_pending.insert(key).second)
         return nullptr;
     module_asset_queue.push_back(key);
     if (ImageTimingEnabled()) {
@@ -496,7 +504,7 @@ std::vector<u8> ModRuntime::LoadModuleData(const std::string& key) {
         !game_module->DataExtensions()->load_data) {
         return {};
     }
-    const auto host = module_host;
+    const auto host = module_worker_host; // off the tick thread: see InitializeGameModule
     std::vector<u8> result;
     try {
         const bool ok = game_module->DataExtensions()->load_data(

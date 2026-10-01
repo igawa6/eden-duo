@@ -747,9 +747,21 @@ void ParseFloatPair(const nlohmann::json& j, const char* key, float& a, float& b
 
 /// Map widget "groups", "label_style" and tap keys; null when none is present.
 std::shared_ptr<const MapWidgetExtras> ParseMapWidgetExtras(const nlohmann::json& w) {
-    static constexpr std::array keys{
-        "groups",           "label_style",   "on_map_tap",        "on_marker_tap",
-        "tap_enabled_bind", "marker_hit_px", "marker_tap_groups", "empty_tap_deselects"};
+    static constexpr std::array keys{"groups",
+                                     "label_style",
+                                     "on_map_tap",
+                                     "on_marker_tap",
+                                     "tap_enabled_bind",
+                                     "marker_hit_px",
+                                     "marker_tap_groups",
+                                     "empty_tap_deselects",
+                                     "view_rect_x0_bind",
+                                     "view_rect_y0_bind",
+                                     "view_rect_x1_bind",
+                                     "view_rect_y1_bind",
+                                     "view_rect_pad",
+                                     "image_bind",
+                                     "overlays"};
     if (std::ranges::none_of(keys, [&](const char* k) { return w.contains(k); })) {
         return nullptr;
     }
@@ -787,6 +799,42 @@ std::shared_ptr<const MapWidgetExtras> ParseMapWidgetExtras(const nlohmann::json
     extras->empty_tap_deselects = w.value("empty_tap_deselects", true);
     extras->tap_enabled = ParseGate(w, "tap_enabled_bind");
     extras->marker_hit_px = std::max<s32>(32, static_cast<s32>(w.value("marker_hit_px", 32)));
+    // Runtime 14: the bound default view rect (all four binds, or none takes effect).
+    static constexpr std::array rect_keys{"view_rect_x0_bind", "view_rect_y0_bind",
+                                          "view_rect_x1_bind", "view_rect_y1_bind"};
+    for (size_t i = 0; i < rect_keys.size(); ++i) {
+        extras->view_rect_binds[i] = w.value(rect_keys[i], std::string{});
+    }
+    extras->view_rect_pad = std::max(0.0f, JsonFloat(w, "view_rect_pad", 0.0f));
+    // Runtime 14: a bound base picture and world-space overlays.
+    extras->image_bind = w.value("image_bind", std::string{});
+    if (w.contains("overlays") && w.at("overlays").is_array()) {
+        for (const auto& o : w.at("overlays")) {
+            if (!o.is_object()) {
+                continue;
+            }
+            MapWidgetExtras::Overlay ov;
+            ov.src = o.value("src", std::string{});
+            ov.src_bind = o.value("src_bind", std::string{});
+            ov.x0 = JsonFloat(o, "x0", 0.0f);
+            ov.y0 = JsonFloat(o, "y0", 0.0f);
+            ov.x1 = JsonFloat(o, "x1", 0.0f);
+            ov.y1 = JsonFloat(o, "y1", 0.0f);
+            ov.show = ParseGate(o, "show_bind");
+            ov.opacity = std::clamp(JsonFloat(o, "opacity", 1.0f), 0.0f, 1.0f);
+            if ((ov.src.empty() && ov.src_bind.empty()) || ov.x0 == ov.x1 || ov.y0 == ov.y1) {
+                LOG_WARNING(Core,
+                            "DSMod: map overlay without src/src_bind or an empty box ignored");
+                continue;
+            }
+            extras->overlays.push_back(std::move(ov));
+        }
+    }
+    if (!extras->HasViewRect() &&
+        std::ranges::any_of(extras->view_rect_binds, [](const auto& b) { return !b.empty(); })) {
+        LOG_WARNING(Core, "DSMod: map widget has only some view_rect_*_bind keys; the view rect "
+                          "needs all four and is ignored");
+    }
     if (w.contains("marker_tap_groups") && w.at("marker_tap_groups").is_array()) {
         for (const auto& g : w.at("marker_tap_groups")) {
             if (g.is_string()) {
@@ -927,6 +975,19 @@ void ParseMapAreasInto(const nlohmann::json& areas,
                 dm.opacity = std::clamp(JsonFloat(d, "opacity", 1.0f), 0.0f, 1.0f);
                 dm.show = ParseGate(d, "show_bind");
                 dm.hide = ParseGate(d, "hide_bind");
+                // Runtime 14: per-slot pictures, world size, bar, dim and frame / tint.
+                dm.icon_src_bind = d.value("icon_src_bind", std::string{});
+                dm.size_world = std::max(0.0f, JsonFloat(d, "size_world", 0.0f));
+                dm.bar_bind = d.value("bar_bind", std::string{});
+                dm.bar_max_bind = d.value("bar_max_bind", std::string{});
+                dm.bar_max = d.contains("bar_max") ? ParseNumber(d.at("bar_max")) : 100;
+                dm.bar_color = ParseColor(d, "bar_color", dm.bar_color);
+                dm.bar_bg = ParseColor(d, "bar_bg", dm.bar_bg);
+                dm.bar_h = static_cast<s32>(d.value("bar_h", 0));
+                dm.dim_bind = d.value("dim_bind", std::string{});
+                dm.frame_color_bind = d.value("frame_color_bind", std::string{});
+                dm.frame_px = static_cast<s32>(d.value("frame_px", 0));
+                dm.tint_bind = d.value("tint_bind", std::string{});
                 if (dm.count > 0 && !dm.x.empty() && !dm.y.empty()) {
                     entry.dynamic_markers.push_back(std::move(dm));
                 } else {
@@ -1147,12 +1208,19 @@ void ParseManifestJson(const nlohmann::json& json, Manifest& manifest) {
             vals.reserve(arr.size());
             for (const auto& v : arr)
                 vals.push_back(v.is_string() ? v.get<std::string>() : std::string{});
-            manifest.tables.emplace(tname, std::move(vals));
+            size_t longest = 0;
+            for (const auto& v : vals)
+                longest = std::max(longest, v.size());
+            if (manifest.tables.emplace(tname, std::move(vals)).second)
+                manifest.table_max_len[tname] = longest;
         }
     }
     manifest.find_spec = json.value("find", std::string{});
     manifest.trace_target = json.value("trace", std::string{});
     manifest.dump_registry = json.value("dump_registry", false);
+    if (json.contains("module_tick_hidden")) {
+        manifest.module_tick_hidden = json.at("module_tick_hidden").get<bool>();
+    }
     manifest.describe_string = json.value("describe", std::string{});
     if (json.contains("frame_hook")) {
         const auto hook = json.at("frame_hook").get<std::string>();
@@ -1262,6 +1330,15 @@ void ParseManifestJson(const nlohmann::json& json, Manifest& manifest) {
                     widget.hidden_icons = w.value("hidden_icons", std::vector<std::string>{});
                     widget.pill = w.value("pill", false);
                     widget.frame = w.value("frame", 2);
+                    widget.border = static_cast<s32>(w.value("border", 3));
+                    widget.text_inset = static_cast<s32>(w.value("text_inset", 12));
+                    widget.gap = static_cast<s32>(w.value("gap", -1));
+                    if (w.contains("label_offset") && w.at("label_offset").is_array() &&
+                        w.at("label_offset").size() == 2) {
+                        const auto& lo = w.at("label_offset");
+                        widget.label_offset = {static_cast<s32>(ParseNumber(lo[0])),
+                                               static_cast<s32>(ParseNumber(lo[1]))};
+                    }
                     widget.pulse = w.value("pulse", false);
                     if (w.contains("keep_min"))
                         widget.keep_min = ParseKeepBound(w.at("keep_min"), widget.keep_min_i);
@@ -1272,7 +1349,6 @@ void ParseManifestJson(const nlohmann::json& json, Manifest& manifest) {
                         widget.hide_eq_on = true;
                     }
                     widget.area_bind = w.value("area_bind", std::string{});
-                    widget.area_season_bind = w.value("area_season_bind", std::string{});
                     widget.marker_x_bind = w.value("marker_x_bind", std::string{});
                     widget.marker_y_bind = w.value("marker_y_bind", std::string{});
                     widget.marker_scale = static_cast<float>(w.value("marker_scale", 1.0));
@@ -1281,9 +1357,6 @@ void ParseManifestJson(const nlohmann::json& json, Manifest& manifest) {
                     widget.actor_y_bind = w.value("actor_y_bind", std::string{});
                     widget.actor_icon = w.value("actor_icon", std::string{});
                     widget.actor_reveal_required = w.value("actor_reveal_required", false);
-                    widget.actor_pulse_scale =
-                        static_cast<float>(w.value("actor_pulse_scale", 0.5));
-                    widget.actor_pulse_ms = static_cast<float>(w.value("actor_pulse_ms", 667.0));
                     widget.follow_window = static_cast<float>(w.value("follow_window", 0.0));
                     widget.marker_src = w.value("marker_src", std::string{});
                     for (const auto& [key, target] :
@@ -1331,11 +1404,24 @@ void ParseManifestJson(const nlohmann::json& json, Manifest& manifest) {
                     }
                     widget.color = ParseColor(w, "color", ToPixelOrder(widget.color));
                     widget.bg = ParseColor(w, "bg", ToPixelOrder(widget.bg));
+                    if (w.contains("outline")) {
+                        widget.text_outline = ParseColor(w, "outline", 0u);
+                        widget.text_outline_px =
+                            std::clamp(static_cast<s32>(w.value("outline_px", 2)), 0, 12);
+                    }
+                    if (w.contains("rise") && w.at("rise").is_number())
+                        widget.text_rise = std::clamp(w.at("rise").get<float>(), -8.0f, 8.0f);
                     widget.text_scale = static_cast<s32>(w.value("text_scale", 3));
                     widget.on_tap = w.value("on_tap", std::string{});
                     widget.on_hold = w.value("on_hold", std::string{});
                     widget.hold_ms = static_cast<s32>(
                         w.contains("hold_ms") ? ParseNumber(w.at("hold_ms")) : 0);
+                    widget.on_swipe_left = w.value("on_swipe_left", std::string{});
+                    widget.on_swipe_right = w.value("on_swipe_right", std::string{});
+                    widget.on_swipe_up = w.value("on_swipe_up", std::string{});
+                    widget.on_swipe_down = w.value("on_swipe_down", std::string{});
+                    widget.swipe_px = static_cast<s32>(
+                        w.contains("swipe_px") ? ParseNumber(w.at("swipe_px")) : 0);
                     widget.id = w.value("id", std::string{});
                     widget.repeat = w.contains("repeat") ? ParseNumber(w.at("repeat")) : 0;
                     widget.repeat_bind = w.value("repeat_bind", std::string{});
@@ -1362,6 +1448,27 @@ void ParseManifestJson(const nlohmann::json& json, Manifest& manifest) {
                     widget.pan_zoom = w.value("pan_zoom", false);
                     widget.min_zoom = w.value("min_zoom", 1.0f);
                     widget.max_zoom = w.value("max_zoom", 8.0f);
+                    // Bound default view (unreleased runtime 15 addition, mod_view_default.h):
+                    // a non-map pan_zoom widget only (a map has view_rect_*_bind).
+                    if (w.contains("view_zoom_bind") || w.contains("view_cx_bind") ||
+                        w.contains("view_cy_bind")) {
+                        ViewDefaultBinds vd;
+                        vd.zoom_bind = w.value("view_zoom_bind", std::string{});
+                        vd.cx_bind = w.value("view_cx_bind", std::string{});
+                        vd.cy_bind = w.value("view_cy_bind", std::string{});
+                        vd.reset_bind = w.value("view_reset_bind", std::string{});
+                        if (!widget.pan_zoom || widget.type == WidgetType::Map ||
+                            vd.zoom_bind.empty() || vd.cx_bind.empty() || vd.cy_bind.empty()) {
+                            LOG_WARNING(Core,
+                                        "DSMod: widget '{}': view_zoom_bind / view_cx_bind / "
+                                        "view_cy_bind need all three on a non-map pan_zoom "
+                                        "widget; ignored",
+                                        widget.id);
+                        } else {
+                            widget.view_default =
+                                std::make_shared<const ViewDefaultBinds>(std::move(vd));
+                        }
+                    }
                     // Tap-select / drag-and-drop.
                     if (w.contains("payload")) {
                         const auto& pv = w.at("payload");
@@ -1421,6 +1528,8 @@ void ParseManifestJson(const nlohmann::json& json, Manifest& manifest) {
                     widget.line_gap = static_cast<s32>(w.value("line_gap", -1));
                     widget.icon_silhouette =
                         w.value("icon_style", std::string{"color"}) == "silhouette";
+                    widget.color_markup = w.value("color_markup", false);
+                    widget.outline_copy = w.value("outline_copy", false);
                     widget.tap_block = w.value("tap_block", false);
                     // A tap-only block let a drag on a panel pan the map underneath; both keys
                     // now own the whole gesture.
@@ -1561,6 +1670,32 @@ void ParseManifestJson(const nlohmann::json& json, Manifest& manifest) {
             s.custom_marker_icon = st.value("custom_marker_icon", s.custom_marker_icon);
             s.custom_marker_back_icon =
                 st.value("custom_marker_back_icon", s.custom_marker_back_icon);
+            s.door_prefix = st.value("door_prefix", s.door_prefix);
+            if (st.contains("structural_prefixes") && st.at("structural_prefixes").is_array()) {
+                s.structural_prefixes.clear();
+                for (const auto& prefix : st.at("structural_prefixes")) {
+                    if (prefix.is_string()) {
+                        s.structural_prefixes.push_back(prefix.get<std::string>());
+                    }
+                }
+            }
+            s.door_closed_suffix = st.value("door_closed_suffix", s.door_closed_suffix);
+            s.door_open_suffix = st.value("door_open_suffix", s.door_open_suffix);
+            s.door_opened_left = st.value("door_opened_left", s.door_opened_left);
+            s.door_opened_right = st.value("door_opened_right", s.door_opened_right);
+            s.collected_suffix = st.value("collected_suffix", s.collected_suffix);
+            s.collected_fallback = st.value("collected_fallback", s.collected_fallback);
+            s.collectible_kind = st.value("collectible_kind", s.collectible_kind);
+            s.item_blink_period = std::max<u32>(
+                2u, static_cast<u32>(st.value("item_blink_period", s.item_blink_period)));
+            s.item_blink_low = std::clamp(st.value("item_blink_low", s.item_blink_low), 0.0f, 1.0f);
+            s.player_blink_period = std::max<u32>(
+                2u, static_cast<u32>(st.value("player_blink_period", s.player_blink_period)));
+            s.player_blink_low =
+                std::clamp(st.value("player_blink_low", s.player_blink_low), 0.0f, 1.0f);
+            s.pin_outer = std::clamp(static_cast<s32>(st.value("pin_outer", s.pin_outer)), 0, 256);
+            s.pin_inner = std::clamp(static_cast<s32>(st.value("pin_inner", s.pin_inner)), 0, 256);
+            s.pin_core = std::clamp(static_cast<s32>(st.value("pin_core", s.pin_core)), 0, 256);
         }
         if (mj.contains("icons")) {
             for (const auto& [name, cell] : mj.at("icons").items()) {
@@ -1590,6 +1725,26 @@ void ParseManifestJson(const nlohmann::json& json, Manifest& manifest) {
             // Flags are ints: true/false stay 1/0, a number is a multi-state value.
             manifest.flag_defaults[name] =
                 value.is_boolean() ? (value.get<bool>() ? 1 : 0) : ParseNumber(value);
+        }
+    }
+    if (json.contains("persist_flags")) {
+        // Runtime flags kept across sessions (mod_persist.h): restored at load over "flags".
+        const auto& list = json.at("persist_flags");
+        if (!list.is_array()) {
+            LOG_WARNING(Core, "DSMod: \"persist_flags\" must be an array of flag names");
+        } else {
+            for (const auto& entry : list) {
+                if (!entry.is_string() || entry.get<std::string>().empty()) {
+                    LOG_WARNING(Core, "DSMod: \"persist_flags\" entry {} is not a flag name",
+                                entry.dump());
+                    continue;
+                }
+                auto name = entry.get<std::string>();
+                if (std::find(manifest.persist_flags.begin(), manifest.persist_flags.end(),
+                              name) == manifest.persist_flags.end()) {
+                    manifest.persist_flags.push_back(std::move(name));
+                }
+            }
         }
     }
     if (json.contains("derived")) {
@@ -1896,7 +2051,7 @@ Manifest ModRuntime::UpdateRequiredManifest(u64 title_id, u32 required,
     m.background = 0xFF101014u;
     Page page;
     page.id = "update_required";
-    page.title = "UPDATE EDEN";
+    page.title = "UPDATE EDEN DUO";
     const auto label = [&page](std::string id, s32 y, std::string text, s32 scale, u32 color) {
         Widget w;
         w.type = WidgetType::Label;
@@ -1915,14 +2070,14 @@ Manifest ModRuntime::UpdateRequiredManifest(u64 title_id, u32 required,
     band.bg = 0xFFE0202Au;
     band.color = 0;
     page.widgets.push_back(std::move(band));
-    label("update_title", 360, "UPDATE EDEN", 14, 0xFFFFFFFFu);
-    label("update_line1", 500, "This package needs a newer Eden", 7, 0xFFE6ECF2u);
+    label("update_title", 360, "UPDATE EDEN DUO", 14, 0xFFFFFFFFu);
+    label("update_line1", 500, "This package needs a newer Eden Duo", 7, 0xFFE6ECF2u);
     const std::string runtime =
         required == std::numeric_limits<u32>::max()
             ? fmt::format("runtime ?, have {}", DualScreenRuntimeVersion)
             : fmt::format("runtime {}, have {}", required, DualScreenRuntimeVersion);
     label("update_line2", 580, runtime, 7, 0xFFFFC040u);
-    label("update_line3", 660, "Update Eden to use it.", 7, 0xFFE6ECF2u);
+    label("update_line3", 660, "Update Eden Duo to use it.", 7, 0xFFE6ECF2u);
     std::string dir = mod_dir.substr(0, 60);
     label("update_package", 800, dir, 4, 0xFF8890A0u);
     m.pages.push_back(std::move(page));
@@ -2213,6 +2368,8 @@ std::optional<Manifest> ModRuntime::Discover(System& system, u64 title_id,
     return std::nullopt;
 }
 
+#if EDEN_DSMOD_BUILD_DEV_TOOLS
+/// Console "reload" (dev-tools builds only).
 void ModRuntime::ReloadManifest() {
     std::scoped_lock bridge_lock{guest_bridge_mutex};
     if (system.GetDualScreenGuestMailbox().second != 0) {
@@ -2228,7 +2385,17 @@ void ModRuntime::ReloadManifest() {
         LOG_WARNING(Core, "DSMod reload: no asset dir");
         return;
     }
-    if (const auto mj = ReadJson(manifest.asset_dir->GetFile("manifest.json"))) {
+    const auto mj = ReadJson(manifest.asset_dir->GetFile("manifest.json"));
+    if (!mj) {
+        // Nothing may change then: the data file's "derived" would otherwise be appended to the
+        // old list, and every cache below would be dropped for a package that did not reload.
+        LOG_WARNING(Core, "DSMod reload skipped: manifest.json does not parse");
+        return;
+    }
+    // The redraw worker reads pages, points and derived values: stop it before they are rebuilt
+    // (it restarts on the next dispatch).
+    StopRedrawWorker();
+    {
         if (const u32 required = PackageMinRuntime(&*mj, nullptr);
             required > DualScreenRuntimeVersion) {
             LOG_WARNING(Core,
@@ -2243,6 +2410,7 @@ void ModRuntime::ReloadManifest() {
         manifest.pages.clear();
         manifest.actions.clear();
         manifest.tables.clear();
+        manifest.table_max_len.clear();
         manifest.derived.clear();
         derived_order_list = nullptr; // re-parsed in place: recompute the evaluation order
         shared_page.reset();          // pages re-parsed: no job may be handed the old copy
@@ -2279,6 +2447,8 @@ void ModRuntime::ReloadManifest() {
     canvas.SetFont(nullptr, nullptr);
     font_metrics = {};
     font_ready = false;
+    font_module_attempts = 0;
+    font_retry_tick = 0;
     {
         // Same reasoning as above, for the map_state_mutex cluster.
         std::scoped_lock mlk{map_state_mutex};
@@ -2309,7 +2479,10 @@ void ModRuntime::ReloadManifest() {
         // of hazard already guarded for `image_cache`/`map_state_mutex` above, real for these
         // fields too because PublishGpuComposite can run on the redraw worker.
         std::scoped_lock composite_lock{gpu_composite_mutex};
-        atlas_published = false;
+        last_atlas_key.clear();
+        last_atlas_image.reset();
+        last_hud_hash_valid = false;
+        hud_slot_canvas = nullptr;
         map_pub_current.reset();
         map_pub_previous.reset();
         map_pub_epoch = 0;
@@ -2339,6 +2512,14 @@ void ModRuntime::ReloadManifest() {
         map_records_page = ~size_t{0};
     }
     derived_index.clear();
+    derived_held.clear();
+    // Caches keyed by the old manifest's objects or its symbols.
+    text_scan_cache.clear();
+    text_scan_attempt.clear();
+    entry_array_cache.clear();
+    pattern_cache.clear();
+    symbol_cache.clear();
+    method_info_cache.clear();
     page_bind_state.clear(); // re-arm cold against the fresh manifest.page_binds
     ResetInteraction("reload");
     CancelAnimations("reload");
@@ -2346,5 +2527,6 @@ void ModRuntime::ReloadManifest() {
              manifest.points.size(), manifest.derived.size());
     InitializeGameModule();
 }
+#endif
 
 } // namespace Core::Mods

@@ -917,11 +917,17 @@ add_library(core STATIC
     hle/service/olsc/olsc_service_for_system_service.h
     mods/mod_runtime.cpp
     mods/mod_manifest.cpp
+    mods/mod_persist.cpp
+    mods/mod_persist.h
     mods/mod_state.cpp
     mods/mod_actions.cpp
     mods/mod_input.cpp
     mods/mod_pages.cpp
     mods/mod_assets.cpp
+    mods/mod_sources.cpp
+    mods/mod_sources.h
+    mods/mod_romfs_sources.cpp
+    mods/mod_romfs_sources.h
     mods/mod_map.cpp
     mods/mod_redraw.cpp
     mods/mod_guest_bridge.cpp

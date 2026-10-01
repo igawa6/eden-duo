@@ -17,10 +17,15 @@ add_executable(tests
     common/undefined_fix.cpp
     common/unique_function.cpp
     core/core_timing.cpp
+    core/mods/asset_sources.cpp
     core/mods/map_cache_identity.cpp
     core/mods/map_overview.cpp
+    core/mods/manifest_digest.cpp
     core/mods/map_room_category.cpp
     core/mods/mod_load_plan.cpp
+    core/mods/render_golden.cpp
+    core/mods/text_markup.cpp
+    core/mods/ui_render.cpp
     core/mods/widget_position.cpp
     core/internal_network/network.cpp
     video_core/aux_routing.cpp
@@ -48,6 +53,17 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND ARCHITECTURE_x86_64)
 endif()
 
 add_test(NAME tests COMMAND tests)
+
+# DSMod package regression goldens (core/mods/manifest_digest.cpp, core/mods/render_golden.cpp):
+# the published packages are read from these folders at test time (':'-separated, each holding
+# <Package>/dualscreen/manifest.json; EDEN_DSMOD_GOLDEN_PACKAGE_ROOTS overrides at run time, a
+# package found nowhere is skipped). The goldens live in the source tree.
+set(DSMOD_GOLDEN_PACKAGE_ROOTS
+    "$ENV{HOME}/eden-duo-companions/packages"
+    CACHE STRING "':'-separated folders holding the published DSMod packages for the golden tests")
+target_compile_definitions(tests PRIVATE
+    DSMOD_GOLDEN_DIR="${CMAKE_CURRENT_SOURCE_DIR}/core/mods/golden"
+    DSMOD_GOLDEN_PACKAGE_ROOTS="${DSMOD_GOLDEN_PACKAGE_ROOTS}")
 
 # needed for vma
 if (NOT MSVC)
@@ -107,6 +123,9 @@ add_executable(dsmod_min_runtime_test
     core/mods/min_runtime.cpp
     core/mods/map_areas_src.cpp
     core/mods/runtime13.cpp
+    core/mods/runtime14.cpp
+    core/mods/runtime15.cpp
+    core/mods/runtime15_persist.cpp
 )
 create_target_directory_groups(dsmod_min_runtime_test)
 target_link_libraries(dsmod_min_runtime_test PRIVATE common core input_common frontend_common video_core)

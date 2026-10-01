@@ -76,10 +76,10 @@ TEST_CASE("DSMod min_runtime: the built-in update page", "[dsmod][min-runtime]")
     for (const auto& w : m.pages[0].widgets) {
         all += w.text + "|";
     }
-    REQUIRE(all.find("This package needs a newer Eden") != std::string::npos);
+    REQUIRE(all.find("This package needs a newer Eden Duo") != std::string::npos);
     REQUIRE(all.find("runtime 12, have " + std::to_string(DualScreenRuntimeVersion)) !=
             std::string::npos);
-    REQUIRE(all.find("Update Eden") != std::string::npos);
+    REQUIRE(all.find("Update Eden Duo to use it.") != std::string::npos);
     REQUIRE(all.find("P5R") != std::string::npos);
     const Manifest unknown = ModRuntime::UpdateRequiredManifest(1, Max, "x");
     std::string u;

@@ -41,6 +41,7 @@
 #include "core/hle/service/filesystem/romfs_controller.h"
 #include "core/loader/loader.h"
 #include "core/mods/mod_nx_assets.h"
+#include "core/mods/mod_romfs_sources.h"
 #include "core/mods/mod_runtime.h"
 
 namespace Core::Mods {
@@ -164,60 +165,55 @@ std::vector<u8> ModRuntime::ReadAssetBytes(const std::string& src) {
 }
 
 std::vector<u8> ModRuntime::ReadAssetBytesRaw(const std::string& src) {
-    constexpr std::string_view FilePrefix = "file:";
-    constexpr std::string_view RomFsPrefix = "romfs:";
-    if (src.starts_with(FilePrefix)) {
-        const std::string name = src.substr(FilePrefix.size());
-        if (!manifest.asset_dir) {
-            return {};
-        }
-        const auto file = manifest.asset_dir->GetFileRelative(name);
-        return file ? file->ReadAllBytes() : std::vector<u8>{};
-    }
-    // Runtime 12: data the package's module generates (asset-free packages).
-    if (src.starts_with("module:")) {
-        return LoadModuleData(src);
-    }
-    if (!src.starts_with(RomFsPrefix)) {
-        return {};
-    }
+    // Every "<prefix>:" source resolves through the registry; an unknown prefix reads as empty.
+    return asset_sources->ReadAll(src);
+}
 
+void ModRuntime::RegisterAssetSources() {
+    // The package's own dualscreen/ folder.
+    asset_sources->Register({.prefix = "file", .open_dir = [this] { return manifest.asset_dir; }});
     // The game's own filesystem. Reading art from here means a package can use the game's assets
-    // without redistributing any of them: the copy on disk is the user's own.
-    if (!romfs_tried) {
-        romfs_tried = true;
-        auto* const process = system.ApplicationProcess();
-        if (process != nullptr) {
-            Service::FileSystem::ProgramId program_id{};
-            std::shared_ptr<Service::FileSystem::SaveDataController> save_data;
-            std::shared_ptr<Service::FileSystem::RomFsController> romfs;
-            const auto result = system.GetFileSystemController().OpenProcess(
-                &program_id, &save_data, &romfs, process->GetProcessId());
-            if (R_SUCCEEDED(result) && romfs) {
-                // The asset worker reads while the game does: never through the game's own chain.
-                auto raw = OpenPrivateRomFS(system, program_id);
-                if (!raw) {
-                    raw = romfs->OpenRomFSCurrentProcess();
-                    LOG_WARNING(Core, "DSMod: no private romfs chain, sharing the game's ({})",
-                                raw ? "reads may race the game's" : "unavailable");
-                }
-                if (raw) {
-                    romfs_root =
-                        FileSys::ExtractRomFS(std::make_shared<SerialVfsFile>(std::move(raw)));
-                }
+    // without redistributing any of them: the copy on disk is the user's own. Opened once, by
+    // whichever thread reads first; a failed open (no process yet) stays failed for the session.
+    asset_sources->Register({.prefix = "romfs", .open_dir = [this] { return OpenGameRomFS(); }});
+    // Runtime 12: data the package's module generates (asset-free packages).
+    asset_sources->Register(
+        {.prefix = "module",
+         .read_bytes = [this](const std::string& src) { return LoadModuleData(src); }});
+    // The program romfs as the base NCA ships it: no update, no LayeredFS.
+    asset_sources->Register({.prefix = "base",
+                             .open_dir = [this] { return OpenBaseRomfs(system); },
+                             .capability = EDEN_DSMOD_CAP_SOURCE_BASE});
+    // The add-on content data romfs the game mounts (null without DLC or with it disabled).
+    asset_sources->Register({.prefix = "aoc",
+                             .open_dir = [this] { return OpenAocRomfs(system); },
+                             .capability = EDEN_DSMOD_CAP_SOURCE_AOC});
+}
+
+FileSys::VirtualDir ModRuntime::OpenGameRomFS() {
+    FileSys::VirtualDir root;
+    auto* const process = system.ApplicationProcess();
+    if (process != nullptr) {
+        Service::FileSystem::ProgramId program_id{};
+        std::shared_ptr<Service::FileSystem::SaveDataController> save_data;
+        std::shared_ptr<Service::FileSystem::RomFsController> romfs;
+        const auto result = system.GetFileSystemController().OpenProcess(
+            &program_id, &save_data, &romfs, process->GetProcessId());
+        if (R_SUCCEEDED(result) && romfs) {
+            // The asset worker reads while the game does: never through the game's own chain.
+            auto raw = OpenPrivateRomFS(system, program_id);
+            if (!raw) {
+                raw = romfs->OpenRomFSCurrentProcess();
+                LOG_WARNING(Core, "DSMod: no private romfs chain, sharing the game's ({})",
+                            raw ? "reads may race the game's" : "unavailable");
+            }
+            if (raw) {
+                root = FileSys::ExtractRomFS(std::make_shared<SerialVfsFile>(std::move(raw)));
             }
         }
-        LOG_INFO(Core, "DSMod: game romfs {}", romfs_root ? "opened" : "unavailable");
     }
-    if (!romfs_root) {
-        return {};
-    }
-    std::string path = src.substr(RomFsPrefix.size());
-    while (!path.empty() && path.front() == '/') {
-        path.erase(path.begin());
-    }
-    const auto file = romfs_root->GetFileRelative(path);
-    return file ? file->ReadAllBytes() : std::vector<u8>{};
+    LOG_INFO(Core, "DSMod: game romfs {}", root ? "opened" : "unavailable");
+    return root;
 }
 
 /// Decode a BNTX texture -- Nintendo's own container, used by their first-party titles.
@@ -329,10 +325,12 @@ bool ModRuntime::ModuleDecodeFont(std::span<const u8> bytes, FontMetrics& out) {
 }
 
 void ModRuntime::LoadFont() {
-    if (font_ready || manifest.font_metrics_src.empty() || manifest.font_atlas_src.empty()) {
+    if (font_ready || manifest.font_metrics_src.empty() || manifest.font_atlas_src.empty() ||
+        tick_count < font_retry_tick) {
         return;
     }
-    font_ready = true; // one attempt: a missing font should not be retried every frame
+    font_ready = true; // one attempt: a missing font should not be retried every frame, except
+                       // for a module decoder that may not see the game yet (see below)
     if (RequestNxFont()) {
         return; // a BFFNT: built on the asset worker, installed by PumpNxAssets
     }
@@ -353,9 +351,25 @@ void ModRuntime::LoadFont() {
         if (!ParseMfnt(bytes, font_metrics)) {
             font_source = "core SoS fallback";
             if (!ParseSosFont(bytes, font_metrics)) {
+                font_metrics.glyphs.clear();
+                // A module that declares a font decoder may need the running game for it: try
+                // again about once a second, at most 30 times, instead of giving up for good.
+                constexpr u32 MaxModuleFontAttempts = 30;
+                constexpr u64 ModuleFontRetryTicks = 60;
+                const auto* font_ext =
+                    game_module && game_module_instance ? game_module->FontExtensions() : nullptr;
+                if (font_ext && font_ext->decode_font &&
+                    ++font_module_attempts < MaxModuleFontAttempts) {
+                    font_ready = false;
+                    font_retry_tick = tick_count + ModuleFontRetryTicks;
+                    if (font_module_attempts == 1) {
+                        LOG_INFO(Core, "DSMod: module font '{}' not ready yet; retrying",
+                                 manifest.font_metrics_src);
+                    }
+                    return;
+                }
                 LOG_WARNING(Core, "DSMod: could not read font metrics '{}'",
                             manifest.font_metrics_src);
-                font_metrics.glyphs.clear();
                 return;
             }
         }

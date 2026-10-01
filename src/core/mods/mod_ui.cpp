@@ -8,14 +8,14 @@
 //     widget, the visibility gates, the anim-group / scrolled-row clip and opacity, and the draw.
 //     Selection highlights and scroll bars are painted after every widget, the ghost last.
 //   - The draw functions, one per widget type, each taking a WidgetDrawContext
-//     (mod_ui_internal.h): DrawImage (with the opt-in chrome cache), DrawRect, DrawLabel,
+//     (mod_ui_internal.h): DrawImage, DrawRect, DrawLabel,
 //     DrawValue, DrawBar, DrawPips, DrawButton. DrawMap is in mod_ui_map_widget.cpp.
 //   - RenderDebugPage: the generated "__debug" page (every data point, its address and value).
 // Not here: the Canvas calls (mod_ui_canvas.cpp, mod_ui_image.cpp, mod_ui_text.cpp), visibility
 // and paint bounds (mod_ui_widget_state.cpp), deciding what to redraw and when (mod_redraw.cpp).
 // Threads: RenderPage runs on the DSModRedraw worker and, for page transitions, the debug page and
 // EDEN_DSMOD_SYNC_REDRAW, on the tick thread, at the same time. The process-wide state here (the
-// widget profile, the chrome cache) and in the map widget (label bitmaps) each has its own mutex;
+// widget profile) and in the map widget (label bitmaps) each has its own mutex;
 // follow_state_mutex and manifest_markers_mutex come from the caller.
 
 #include <algorithm>
@@ -41,151 +41,14 @@
 namespace Core::Mods {
 
 namespace {
-// Chrome cache: cache a plain Image widget's own RENDERED OUTPUT (the actual pixels
-// canvas.DrawImage/DrawImageRegion just wrote) and blit it back verbatim on a later tick
-// instead of resampling+blending the source texture again, whenever every input that could
-// change that output is still exactly what produced the cached copy. Measured
-// (EDEN_DSMOD_PROFILE_WIDGETS=1, dungeon page, real walk): with no eligible Map-type occluder
-// there (the occlusion skip below only recognises WidgetType::Map, hidden on this page's
-// dungeon sub-state), LA's "bg"/"map_sheet" AND, more expensively, the active dungeon floor's
-// own "dgn_grid_<i>"/"dgn_panel_<i>_f<n>" composite images (~5-8ms and ~2.5-3.1ms per draw)
-// redraw on 90-100% of walking ticks though none of them depend on anything that changes while
-// walking -- only the small player marker on top of them does. Chosen over generalising the
-// occlusion skip (recognising more widget TYPES as occluders) because occlusion only ever helps
-// the widgets UNDER something else that's opaque and unconditional; the dungeon page's own
-// grid/panel widgets have nothing later drawn over their full rect to occlude them with, so
-// nothing short of caching THEIR OWN output helps there.
-//
-// Deliberately NOT keyed on the widget's declared bind fields (the way the dirty-scan's own
-// WidgetDependencyHash is, per-name): keying on the actual RESOLVED draw inputs instead --
-// the resolved Image identity, tint, source-rect window, flip flags, destination rect, and
-// canvas size -- is strictly sufficient (a deterministic draw call with identical inputs has
-// identical output, full stop) without maintaining a hand-written enumeration of "which bind
-// fields this widget type reads" that the dirty-scan's own comment already flags as an easy
-// thing to miss. It also means a bind that happens to be constant right now is cached exactly
-// as safely as a widget declared with no bind at all, and a bind that starts changing
-// self-invalidates the moment its resolved effect on the draw actually differs -- satisfying
-// "do not assume no-bind holds for every package" by never depending on that in the first
-// place. The resolved Image* pointer specifically is what catches a hot asset/theme reload (a
-// freshly decoded Image object at a new address) even though the widget's own src string,
-// tint and rect are all unchanged.
-struct ChromeCacheKey {
-    const void* image{};
-    u32 tint{};
-    std::array<float, 4> src_rect{};
-    bool flip_x{};
-    bool flip_y{};
-    s32 x{}, y{}, rw{}, rh{};
-    u32 canvas_w{}, canvas_h{};
-    bool operator==(const ChromeCacheKey&) const = default;
-};
-struct ChromeCacheEntry {
-    ChromeCacheKey key{};
-    std::vector<u32> pixels; // rw * rh, tightly packed row-major (NOT canvas stride)
-};
-/// The chrome cache's process-wide state, made on first use and shared by every thread's
-/// RenderPage.
-struct ChromeCacheState {
-    std::unordered_map<std::string, ChromeCacheEntry> chrome_cache;
-    std::mutex chrome_cache_mutex; // shared across threads, like RenderPage's profile_mutex
-    // Chrome cache: OPT-IN, default OFF -- EDEN_DSMOD_CHROME_CACHE=1 turns it on.
-    //
-    // A live A/B (cache on vs off) found the measured perf win is real (dungeon-walking worker cost
-    // 10-14ms -> 3-3.7ms, zero over-16.7ms ticks vs up to 38/144) but ALSO found a real,
-    // reproducible pixel bug even after narrowing the cache to exclude "composite:" sources and the
-    // src_rect/flip draw path entirely (leaving only the plain whole-image DrawImage path, exactly
-    // where bg/map_sheet/a dungeon floor's own grid background live, all independently confirmed
-    // pixel-correct on their own): with that narrowed cache still ON by default, the Gear/Items X
-    // and Y equip-slot discs (both "composite:slot_disc", drawn through a DIFFERENT widget than
-    // anything this cache touches) render with a wrong, stuck highlight colour, while the SAME
-    // composite family at a different screen position ("composite:slot_disc_small", the B disc,
-    // gated behind need_bind/hide_bind so it draws later) renders correctly. Turning the cache off
-    // entirely (this flag) makes X/Y correct again on the same binary; turning it back on
-    // reproduces the wrong colour again -- repeatable, not a one-off. The most likely mechanism
-    // (not confirmed): this cache's own speedup shifts WHEN "composite:slot_disc" is first
-    // requested relative to whatever game-state read decides its highlight colour, landing on an
-    // unsettled value that then gets memoized -- a latent timing sensitivity in that composite's
-    // own build path (outside this cache, outside this file's Image-widget case) that this cache's
-    // speed happens to expose, not a correctness bug in the cache's OWN blit logic (which only ever
-    // replays bytes a real draw already produced). Not root-caused further. Because pixel exactness
-    // must not regress, the cache is OFF by default; OFF costs nothing (identical to having no
-    // cache, verified pixel-identical with the flag unset) and leaves the code, the measurement,
-    // and the diagnosis in the tree for whoever resolves the composite-timing question next.
-    const bool chrome_cache_enabled = [] {
-        const char* on = std::getenv("EDEN_DSMOD_CHROME_CACHE");
-        return on != nullptr && std::strcmp(on, "0") != 0 && std::strcmp(on, "false") != 0 &&
-               std::strcmp(on, "FALSE") != 0;
-    }();
-};
-
-ChromeCacheState& GetChromeCacheState() {
-    static ChromeCacheState state;
-    return state;
-}
-
-// Tries a cached blit for `cache_key`/`key`; returns whether it drew anything. Refuses whenever
-// the canvas's current opacity isn't exactly 1.0 -- a page-transition fade or an animating
-// widget-group's own SetLayerOpacity means this tick's correct output is a partial blend the
-// cache (captured only at full opacity) cannot reproduce.
-bool TryChromeBlit(Canvas& canvas, const std::string& cache_key, const ChromeCacheKey& key) {
-    auto& [chrome_cache, chrome_cache_mutex, chrome_cache_enabled] = GetChromeCacheState();
-    if (!chrome_cache_enabled || canvas.CurrentOpacity() < 1.0f) {
-        return false;
-    }
-    std::scoped_lock lk{chrome_cache_mutex};
-    const auto it = chrome_cache.find(cache_key);
-    if (it == chrome_cache.end() || !(it->second.key == key)) {
-        return false;
-    }
-    canvas.BlitRaw(key.x, key.y, key.rw, key.rh, it->second.pixels.data(), key.rw);
-    return true;
-}
-
-// Captures the canvas region [x,y,rw,rh] a real draw just wrote, for a future tick's hit.
-// Refuses (a) below full opacity, same reasoning as TryChromeBlit, and (b) whenever the
-// CURRENT CLIP does not fully contain the widget's own rect -- on a narrow partial redraw
-// (the dirty region only overlapping PART of this widget) the real draw only touched that
-// sub-rect, so capturing the "full" rect would bake in stale pixels for the untouched part.
-// A hit can still use a cache built earlier during a wider draw even on a later narrow-clip
-// tick (BlitRaw intersects with the current clip itself) -- only building/refreshing the
-// cache is gated this way, not using it.
-void CaptureChrome(Canvas& canvas, const std::string& cache_key, const ChromeCacheKey& key) {
-    auto& [chrome_cache, chrome_cache_mutex, chrome_cache_enabled] = GetChromeCacheState();
-    if (!chrome_cache_enabled || canvas.CurrentOpacity() < 1.0f || key.rw <= 0 || key.rh <= 0) {
-        return;
-    }
-    const auto clip = canvas.Clip();
-    if (clip[0] > key.x || clip[1] > key.y || clip[0] + clip[2] < key.x + key.rw ||
-        clip[1] + clip[3] < key.y + key.rh) {
-        return;
-    }
-    const s32 cw = static_cast<s32>(canvas.Width());
-    const s32 ch = static_cast<s32>(canvas.Height());
-    if (key.x < 0 || key.y < 0 || key.x + key.rw > cw || key.y + key.rh > ch) {
-        return; // off-canvas: refuse rather than mis-handle the clamp
-    }
-    std::vector<u32> snap(static_cast<size_t>(key.rw) * static_cast<size_t>(key.rh));
-    const auto& px = canvas.Pixels();
-    for (s32 row = 0; row < key.rh; ++row) {
-        std::memcpy(snap.data() + static_cast<size_t>(row) * static_cast<size_t>(key.rw),
-                    px.data() + static_cast<size_t>(key.y + row) * static_cast<size_t>(cw) +
-                        static_cast<size_t>(key.x),
-                    static_cast<size_t>(key.rw) * sizeof(u32));
-    }
-    std::scoped_lock lk{chrome_cache_mutex};
-    chrome_cache[cache_key] = ChromeCacheEntry{key, std::move(snap)};
-}
-
 /// WidgetType::Image: a picture (by src, bound name, table, threshold or format), whole,
 /// cropped, mirrored, turning, trembling or filled as a gauge.
 void DrawImage(const WidgetDrawContext& ctx) {
     Canvas& canvas = ctx.canvas;
     const Manifest& manifest = ctx.manifest;
-    const Page& page = ctx.page;
     const StateSnapshot& snapshot = ctx.snapshot;
     const ImageProvider& images = ctx.images;
     const Widget& widget = ctx.widget;
-    const size_t widget_index = ctx.widget_index;
     const ViewTransform& view = ctx.view;
     s32& x = ctx.x;
     s32& y = ctx.y;
@@ -215,19 +78,21 @@ void DrawImage(const WidgetDrawContext& ctx) {
                 widget.color);
         }
     }
-    std::string source = widget.src;
+    // Which picture, by reference: copying the key per draw cost an allocation per Image widget.
+    const std::string* source = &widget.src;
+    std::string formatted; // src_format's result
     if (!widget.src_names.empty() && img_value >= 0 &&
         img_value < static_cast<s64>(widget.src_names.size())) {
-        source = widget.src_names[static_cast<size_t>(img_value)];
+        source = &widget.src_names[static_cast<size_t>(img_value)];
     }
     if (!widget.src_thresholds.empty()) {
         // Fatigue and similar bands: the first entry whose ceiling the value fits under
         // wins, so an irregular 0 / 1-49 / 50-79 / 80-100 split maps straight to four
         // faces.
-        source = widget.src_thresholds.back().second;
+        source = &widget.src_thresholds.back().second;
         for (const auto& [ceiling, path] : widget.src_thresholds) {
             if (value <= ceiling) {
-                source = path;
+                source = &path;
                 break;
             }
         }
@@ -262,7 +127,8 @@ void DrawImage(const WidgetDrawContext& ctx) {
             char sbuf[512];
             std::snprintf(sbuf, sizeof(sbuf), widget.src_format.c_str(),
                           static_cast<int>(img_value));
-            source = sbuf;
+            formatted = sbuf;
+            source = &formatted;
         }
     }
     if (!widget.src_bind.empty()) {
@@ -277,12 +143,12 @@ void DrawImage(const WidgetDrawContext& ctx) {
             if (!text->second.starts_with("module:")) {
                 return;
             }
-            source = text->second;
+            source = &text->second;
         } else {
-            source = mapped->second;
+            source = &mapped->second;
         }
     }
-    const std::shared_ptr<const Image> image = images(source);
+    const std::shared_ptr<const Image> image = images(*source);
     // Pan and zoom on a picture is a narrower window onto it: at 2x we sample half the
     // source across the same rectangle. Panning is clamped so the content cannot be
     // dragged off its own frame and leave the user staring at nothing.
@@ -311,22 +177,6 @@ void DrawImage(const WidgetDrawContext& ctx) {
     if (image == nullptr) {
         return;
     }
-    // Chrome cache, found by pixel verification, not assumed -- "composite:" sources (e.g.
-    // "composite:slot_disc_small", the Gear/Items equip-slot highlight disc;
-    // "composite:dgn_7_f0", a dungeon floor's room-reveal-state panel) can be REBUILT IN
-    // PLACE, the same Image object's pixels overwritten to reflect new state (a
-    // newly-revealed room, a newly-equipped slot) without the resolved image pointer ever
-    // changing -- the exact opposite of the "a reload allocates a new Image at a new
-    // address" assumption the cache's pointer-identity key relies on for correctness. A
-    // live A/B (this binary with EDEN_DSMOD_CHROME_CACHE=0 vs on) caught this directly: the
-    // X/Y equip-slot disc froze at whatever highlight state it was first cached in (a
-    // wrong, permanently-green disc instead of tracking the real selection), and a Tail
-    // Cave room's reveal-state tint froze the same way. Plain, non-"composite:" texture
-    // sources (bg's "ItemBGTex_00^o", map_sheet's "Paper_02^_D", a dungeon floor's own
-    // "DgnMapGrid_00^_A") are ordinary, once-decoded, never-mutated assets -- confirmed
-    // pixel-identical to an uncached draw in the same A/B -- so only composites are
-    // excluded here, not every Image widget.
-    const bool chrome_eligible = !source.starts_with("composite:");
     const bool whole = eff[0] == 0.0f && eff[1] == 0.0f && eff[2] == 1.0f && eff[3] == 1.0f;
     if (widget.shake != 0.0f) {
         // A trembling piece (the version warning's X): a fresh pseudo-random offset within
@@ -352,40 +202,10 @@ void DrawImage(const WidgetDrawContext& ctx) {
                 std::max(1, static_cast<s32>((r[3] - r[1]) * static_cast<float>(image->h))),
                 widget.color, deg * 3.14159265f / 180.0f);
         } else if (whole && !widget.flip_x && !widget.flip_y) {
-            // Chrome cache: see chrome_eligible above and the comment on ChromeCacheKey for
-            // the full reasoning. The key is built from this exact call's real inputs, not
-            // from the widget's declared bind names.
-            const std::string chrome_key = page.id + "#" + std::to_string(widget_index);
-            const ChromeCacheKey ck{image.get(),
-                                    static_cast<u32>(widget.color),
-                                    eff,
-                                    widget.flip_x,
-                                    widget.flip_y,
-                                    x,
-                                    y,
-                                    rw,
-                                    rh,
-                                    canvas.Width(),
-                                    canvas.Height()};
-            if (!(chrome_eligible && TryChromeBlit(canvas, chrome_key, ck))) {
-                canvas.DrawImage(x, y, rw, rh, *image, widget.color);
-                if (chrome_eligible) {
-                    CaptureChrome(canvas, chrome_key, ck);
-                }
-            }
+            canvas.DrawImage(x, y, rw, rh, *image, widget.color);
         } else {
             // A mirrored whole image takes the region path too (same sampling as
-            // DrawImage), so flip_x/flip_y work with or without src_rect. Chrome cache: NOT
-            // cached here, deliberately -- see the comment on ChromeCacheKey. Live
-            // verification found a second, separate real bug specifically on
-            // this src_rect/flip path (a Gear/Items equip-slot's green HUD ring, a PLAIN,
-            // non-"composite:" texture cropped via src_rect, rendered wrong only when its
-            // own cache entry was ever consulted -- confirmed by direct A/B,
-            // `EDEN_DSMOD_CHROME_CACHE=0` restores it), not root-caused. Every measured win
-            // (bg, map_sheet, a dungeon floor's own grid background) draws through the
-            // OTHER branch (whole, unrotated, unflipped, no src_rect) just above, so
-            // narrowing the cache to that branch keeps all of the win without that
-            // correctness risk.
+            // DrawImage), so flip_x/flip_y work with or without src_rect.
             region(*image, static_cast<s32>(widget.color));
         }
     } else {
@@ -472,13 +292,19 @@ void DrawLabel(const WidgetDrawContext& ctx) {
     if (shown == nullptr || shown->empty()) {
         return;
     }
+    // An outline copy skips the colour tags but draws in its own colour only; icon_style only
+    // decides how inline icons draw.
     canvas.SetIconSilhouette(widget.icon_silhouette);
+    canvas.SetColorMarkup(widget.color_markup);
+    canvas.SetOutlineCopy(widget.outline_copy);
     if (widget.wrap_width > 0 || shown->find('\n') != std::string::npos) {
         canvas.DrawTextBlock(x, y, *shown, widget.text_scale, widget.color, widget.align,
                              widget.wrap_width, widget.max_lines, widget.line_gap);
     } else {
         canvas.DrawTextAligned(x, y, *shown, widget.text_scale, widget.color, widget.align);
     }
+    canvas.SetOutlineCopy(false);
+    canvas.SetColorMarkup(false);
     canvas.SetIconSilhouette(false);
 }
 
@@ -526,12 +352,20 @@ void DrawValue(const WidgetDrawContext& ctx) {
         std::snprintf(buf, sizeof(buf), "%s%lld", widget.text.c_str(),
                       static_cast<long long>(shown));
     }
+    // Colour tags as on a label. A value's icon_style applies only with color_markup, as before
+    // markup existed (a plain value never read it).
+    canvas.SetColorMarkup(widget.color_markup);
+    canvas.SetOutlineCopy(widget.outline_copy);
+    canvas.SetIconSilhouette(widget.color_markup && widget.icon_silhouette);
     if (widget.suffix.empty()) {
         canvas.DrawTextAligned(x, y, buf, widget.text_scale, widget.color, widget.align);
     } else {
         canvas.DrawTextAligned(x, y, std::string{buf} + widget.suffix, widget.text_scale,
                                widget.color, widget.align);
     }
+    canvas.SetIconSilhouette(false);
+    canvas.SetOutlineCopy(false);
+    canvas.SetColorMarkup(false);
 }
 
 /// WidgetType::Bar: a horizontal gauge of value / maximum.
@@ -549,7 +383,7 @@ void DrawBar(const WidgetDrawContext& ctx) {
     const s64 clamped = std::clamp<s64>(value, 0, span);
     const s32 filled = static_cast<s32>(static_cast<s64>(rw) * clamped / span);
     canvas.FillRect(x, y, filled, rh, widget.color);
-    canvas.FrameRect(x, y, rw, rh, 2, widget.color);
+    canvas.FrameRect(x, y, rw, rh, widget.frame, widget.color);
 }
 
 /// WidgetType::Pips: a run of sprites or squares, `value` of them lit.
@@ -568,11 +402,11 @@ void DrawPips(const WidgetDrawContext& ctx) {
             // drawn one sprite at a time: without a bound, a nonsense maximum on the
             // first frames asks for millions of draws and takes the app down.
             const s64 total = std::clamp<s64>(maximum > 0 ? maximum : value, 0, MaxPips);
-            const s32 step = widget.rect[2] + 8;
+            const s32 step = widget.rect[2] + (widget.gap >= 0 ? widget.gap : 8);
             for (s64 i = 0; i < total; ++i) {
-                const s32 px = widget.rect[0] + static_cast<s32>(i) * step;
+                const s32 px = x + static_cast<s32>(i) * step;
                 const u32 tint = i < value ? widget.color : widget.bg;
-                canvas.DrawImage(px, widget.rect[1], widget.rect[2], widget.rect[3], *pip, tint);
+                canvas.DrawImage(px, y, widget.rect[2], widget.rect[3], *pip, tint);
             }
             return;
         }
@@ -581,7 +415,7 @@ void DrawPips(const WidgetDrawContext& ctx) {
     const s32 count = static_cast<s32>(std::clamp<s64>(total, 0, MaxPips));
     const s32 pip = std::max(4, rh);
     for (s32 i = 0; i < count; ++i) {
-        const s32 px = x + i * (pip + pip / 3);
+        const s32 px = x + i * (pip + (widget.gap >= 0 ? widget.gap : pip / 3));
         const bool on = i < value;
         canvas.FillRect(px, y, pip, pip, on ? widget.color : widget.bg);
         canvas.FrameRect(px, y, pip, pip, 1, widget.color);
@@ -596,17 +430,19 @@ void DrawButton(const WidgetDrawContext& ctx) {
     s32& y = ctx.y;
     const s32 rw = ctx.rw;
     const s32 rh = ctx.rh;
+    const s32 border = widget.border;
     if (widget.pill) {
-        canvas.Pill(x, y, rw, rh, 3, widget.bg, widget.color);
+        canvas.Pill(x, y, rw, rh, border, widget.bg, widget.color);
     } else {
         canvas.FillRect(x, y, rw, rh, widget.bg);
-        canvas.FrameRect(x, y, rw, rh, 3, widget.color);
+        canvas.FrameRect(x, y, rw, rh, border, widget.color);
     }
     if (widget.align == 1) {
         canvas.DrawTextAligned(x + rw / 2, y + (rh - widget.text_scale * 5) / 2, widget.text,
                                widget.text_scale, widget.color, 1);
     } else {
-        canvas.DrawText(x + 12, y + 12, widget.text, widget.text_scale, widget.color);
+        canvas.DrawText(x + widget.text_inset, y + widget.text_inset, widget.text,
+                        widget.text_scale, widget.color);
     }
 }
 
@@ -817,7 +653,8 @@ bool RenderPage(Canvas& canvas, const Manifest& manifest, const Page& page,
     };
 
     // EDEN_DSMOD_PROFILE_WIDGETS: per-widget draw time, the slowest ones logged every 5 s.
-    static const bool profile_widgets = std::getenv("EDEN_DSMOD_PROFILE_WIDGETS") != nullptr;
+    static const bool profile_widgets =
+        VideoCore::DSMod::DsmodEnvFlag("EDEN_DSMOD_PROFILE_WIDGETS", false);
     struct WidgetCost {
         double ms{};
         u64 calls{};
@@ -891,10 +728,9 @@ bool RenderPage(Canvas& canvas, const Manifest& manifest, const Page& page,
         // The background fill under the first occluder is overwritten, opaque, by that Map
         // widget's own background before anything reads it (every canvas operation reads only the
         // pixel it writes, and a widget skipped or blended there is repainted the same way), so
-        // only the rest of the clip is cleared. Not with the chrome cache: a capture taken before
-        // the map draws would keep the unfilled pixels and replay them on a later frame.
+        // only the rest of the clip is cleared.
         const auto& occ = static_occluders.empty() ? std::array<s32, 4>{} : static_occluders.front().second;
-        if (static_occluders.empty() || GetChromeCacheState().chrome_cache_enabled ||
+        if (static_occluders.empty() ||
             expanded[static_occluders.front().first]->scroll_clip[2] > 0) {
             canvas.Clear(manifest.background);
         } else {
@@ -907,21 +743,20 @@ bool RenderPage(Canvas& canvas, const Manifest& manifest, const Page& page,
             canvas.ClearRect(ox1, oy0, cx1 - ox1, oy1 - oy0, manifest.background); // right
         }
     }
-    Widget anim_moved; ///< a widget of a sliding group, at this frame's offset
     for (size_t widget_index = 0; widget_index < expanded.size(); ++widget_index) {
-        const Widget* widget_ptr = expanded[widget_index];
+        const Widget& widget = *expanded[widget_index];
         const RenderAnimGroup* anim_group = nullptr;
-        if (extras != nullptr && widget_ptr->anim) {
-            anim_group = extras->Find(widget_ptr->anim->key);
-            if (anim_group != nullptr && anim_group->moving &&
-                (anim_group->dx != 0 || anim_group->dy != 0)) {
-                anim_moved = *widget_ptr;
-                anim_moved.rect[0] += anim_group->dx;
-                anim_moved.rect[1] += anim_group->dy;
-                widget_ptr = &anim_moved;
+        // A widget of a sliding group is drawn at this frame's offset: added to its resolved
+        // position below (the draw functions position everything from ctx.x / ctx.y), not by
+        // copying the Widget.
+        s32 move_dx = 0, move_dy = 0;
+        if (extras != nullptr && widget.anim) {
+            anim_group = extras->Find(widget.anim->key);
+            if (anim_group != nullptr && anim_group->moving) {
+                move_dx = anim_group->dx;
+                move_dy = anim_group->dy;
             }
         }
-        const auto& widget = *widget_ptr;
         const bool is_ghost = widget_index == ghost_index;
         if (is_ghost) {
             draw_scroll_bars();
@@ -980,8 +815,8 @@ bool RenderPage(Canvas& canvas, const Manifest& manifest, const Page& page,
                 view = found->second;
             }
         }
-        s32 x = widget.rect[0];
-        s32 y = widget.rect[1];
+        s32 x = widget.rect[0] + move_dx;
+        s32 y = widget.rect[1] + move_dy;
         s32 rw = widget.rect[2];
         s32 rh = widget.rect[3];
         if (rw == 0 && rh == 0 &&
@@ -1017,15 +852,12 @@ bool RenderPage(Canvas& canvas, const Manifest& manifest, const Page& page,
         // interaction (the reject would inherit the anim_clip path's own risk under a different
         // trigger). extras->clip with w or h <= 0 means "whole canvas" (the Canvas::SetClip
         // contract), so nothing is ever wrongly rejected on a full-page draw.
-        if (extras != nullptr && anim_group == nullptr && extras->clip[2] > 0 &&
-            extras->clip[3] > 0) {
-            const s32 cx0 = extras->clip[0], cy0 = extras->clip[1];
-            const s32 cx1 = cx0 + extras->clip[2], cy1 = cy0 + extras->clip[3];
-            // Unsized text is anchored at rect x and grows right (left align), both ways (centre)
-            // or LEFT (right align). Reject against the same conservative extent the dirty-region
-            // scan uses (WidgetEffectiveRect, mod_redraw.cpp); testing the zero-width anchor
-            // alone skipped a right-aligned number whenever the dirty rect ended left of its
-            // anchor, after the background under its leading digits had been repainted.
+        // Unsized text is anchored at rect x and grows right (left align), both ways (centre) or
+        // LEFT (right align). Rejects use the same conservative extent the dirty-region scan uses
+        // (WidgetEffectiveRect, mod_redraw.cpp); testing the zero-width anchor alone skipped a
+        // right-aligned number whenever the dirty rect ended left of its anchor, after the
+        // background under its leading digits had been repainted.
+        const auto fixed_box = [&] {
             s32 bx = x, bw = rw, by = y, bh = rh;
             if (rw == 0 && (widget.type == WidgetType::Label || widget.type == WidgetType::Value)) {
                 const s32 scale = std::max<s32>(1, widget.text_scale);
@@ -1041,50 +873,69 @@ bool RenderPage(Canvas& canvas, const Manifest& manifest, const Page& page,
                 bw += 2 * pad;
                 bh += 2 * pad;
             }
+            return std::array<s32, 4>{bx, by, bw, bh};
+        };
+        // The fixed box widened by everything the widget can paint past it (long text, a tall
+        // font, a run of pips).
+        const auto paint_box = [&](std::array<s32, 4> b) {
             if (const auto t = WidgetPaintBounds(
                     widget, x, y, rw, rh, snapshot, manifest, canvas.ActiveFont(),
                     static_cast<s32>(canvas.Width()), static_cast<s32>(canvas.Height()));
                 t[2] > 0 && t[3] > 0) {
-                // Long text, a tall font, a run of pips paint outside the fixed box: reject on the
-                // real bound.
-                const s32 ux0 = std::min(bx, t[0]), uy0 = std::min(by, t[1]);
-                const s32 ux1 = std::max(bx + bw, t[0] + t[2]),
-                          uy1 = std::max(by + bh, t[1] + t[3]);
-                bx = ux0;
-                by = uy0;
-                bw = ux1 - ux0;
-                bh = uy1 - uy0;
+                const s32 ux0 = std::min(b[0], t[0]), uy0 = std::min(b[1], t[1]);
+                const s32 ux1 = std::max(b[0] + b[2], t[0] + t[2]),
+                          uy1 = std::max(b[1] + b[3], t[1] + t[3]);
+                b = {ux0, uy0, ux1 - ux0, uy1 - uy0};
             }
-            if (bx + bw <= cx0 || bx >= cx1 || by + bh <= cy0 || by >= cy1) {
+            return b;
+        };
+        if (extras != nullptr && anim_group == nullptr && extras->clip[2] > 0 &&
+            extras->clip[3] > 0) {
+            const s32 cx0 = extras->clip[0], cy0 = extras->clip[1];
+            const s32 cx1 = cx0 + extras->clip[2], cy1 = cy0 + extras->clip[3];
+            const auto misses = [&](const std::array<s32, 4>& b) {
+                return b[0] + b[2] <= cx0 || b[0] >= cx1 || b[1] + b[3] <= cy0 || b[1] >= cy1;
+            };
+            // The paint bounds only widen the box: measure them only when the box alone misses.
+            if (const auto b = fixed_box(); misses(b) && misses(paint_box(b))) {
                 continue; // entirely outside this frame's dirty rect
             }
         }
         // Occlusion skip -- see static_occluders' own build-site comment above for the full safety
         // argument. widget_index >= occ_index is excluded (only a strictly LATER, higher-z-order
         // occluder can repaint over this widget; one drawn before or at the same index cannot).
-        // x/y/rw/rh here already reflect anim_moved's shifted rect when anim_group != nullptr
-        // (widget_ptr was reassigned above), so this is correct for a moving group member too -- it
-        // is simply the widget actually being drawn this tick, wherever that is. Frame_clip is
+        // x/y here already include a moving group's offset (move_dx/move_dy), so this is correct
+        // for a moving group member too -- it is simply the widget actually being drawn this
+        // tick, wherever that is. Frame_clip is
         // intersected in, exactly like the bbox pre-reject just above, so a widget only partly
         // inside the occluder (never fully covered) is correctly NOT skipped.
-        if (!static_occluders.empty()) {
-            const s32 wx0 = std::max(frame_clip[0], x);
-            const s32 wy0 = std::max(frame_clip[1], y);
-            const s32 wx1 = std::min(frame_clip[0] + frame_clip[2], x + rw);
-            const s32 wy1 = std::min(frame_clip[1] + frame_clip[3], y + rh);
-            bool occluded = false;
-            for (const auto& [occ_index, occ_rect] : static_occluders) {
-                if (widget_index >= occ_index) {
-                    continue;
+        // Everything the widget paints counts, not just its rect (a zero-width label's text, a
+        // spinning picture's corners, a run of pips), and a widget with a highlight is never
+        // skipped: highlights are painted after every widget, over the map.
+        if (!static_occluders.empty() && widget.highlight_color == 0 &&
+            widget.highlight_src.empty()) {
+            const auto occluded_box = [&](const std::array<s32, 4>& b) {
+                const s32 wx0 = std::max(frame_clip[0], b[0]);
+                const s32 wy0 = std::max(frame_clip[1], b[1]);
+                const s32 wx1 = std::min(frame_clip[0] + frame_clip[2], b[0] + b[2]);
+                const s32 wy1 = std::min(frame_clip[1] + frame_clip[3], b[1] + b[3]);
+                for (const auto& [occ_index, occ_rect] : static_occluders) {
+                    if (widget_index >= occ_index) {
+                        continue;
+                    }
+                    if (wx0 >= occ_rect[0] && wy0 >= occ_rect[1] &&
+                        wx1 <= occ_rect[0] + occ_rect[2] && wy1 <= occ_rect[1] + occ_rect[3]) {
+                        return true;
+                    }
                 }
-                if (wx0 >= occ_rect[0] && wy0 >= occ_rect[1] && wx1 <= occ_rect[0] + occ_rect[2] &&
-                    wy1 <= occ_rect[1] + occ_rect[3]) {
-                    occluded = true;
-                    break;
+                return false;
+            };
+            // The rect alone first (the cheap test): only a rect under an occluder needs the
+            // widened box.
+            if (occluded_box({x, y, rw, rh})) {
+                if (const auto b = fixed_box(); occluded_box(b) && occluded_box(paint_box(b))) {
+                    continue; // fully repainted by a later, opaque Map widget this tick
                 }
-            }
-            if (occluded) {
-                continue; // fully repainted by a later, opaque Map widget this tick
             }
         }
         const s64 value = widget.bind.empty() ? 0 : snapshot.GetInt(widget.bind);
@@ -1188,6 +1039,7 @@ bool RenderPage(Canvas& canvas, const Manifest& manifest, const Page& page,
                                     .rh = rh,
                                     .value = value,
                                     .maximum = maximum};
+        canvas.SetTextEffects(widget.text_outline, widget.text_outline_px, widget.text_rise);
         switch (widget.type) {
         case WidgetType::Image:
             DrawImage(ctx);
@@ -1214,6 +1066,7 @@ bool RenderPage(Canvas& canvas, const Manifest& manifest, const Page& page,
             DrawButton(ctx);
             break;
         }
+        canvas.SetTextEffects(0, 0, 0.0f);
         if (own_clip) {
             canvas.SetClip(frame_clip[0], frame_clip[1], frame_clip[2], frame_clip[3]);
             canvas.SetLayerOpacity(1.0f);

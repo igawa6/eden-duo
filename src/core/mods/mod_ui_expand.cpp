@@ -45,6 +45,12 @@ size_t ExpandTemplateInto(const Page& page, const Widget& source, const StateSna
         widget.rect[0] = ResolveBindOffset(widget.rect[0], widget.x_bind, widget.x_scale, snapshot);
         widget.rect[1] = ResolveBindOffset(widget.rect[1], widget.y_bind, widget.y_scale, snapshot);
     };
+    // List fields hold "{i}" rarely: look once per template, not per element.
+    const auto has_index = [](const std::string& s) { return s.find("{i") != std::string::npos; };
+    const bool names_indexed = std::ranges::any_of(source.src_names, has_index);
+    const bool text_map_indexed =
+        source.text_map != nullptr &&
+        std::ranges::any_of(*source.text_map, [&](const auto& kv) { return has_index(kv.second); });
     {
         const s64 rows = RepeatElementCount(source, snapshot);
         // Scrolled list: only the cells whose rows show through the region's rect are built, at
@@ -62,7 +68,11 @@ size_t ExpandTemplateInto(const Page& page, const Widget& source, const StateSna
             // y_bind moves a template as a whole; take it into the visibility maths too.
             const s32 base_y =
                 ResolveBindOffset(source.rect[1], source.y_bind, source.y_scale, snapshot);
-            const auto range = VisibleElementRange(source, *region, base_y, scroll_offset, rows);
+            // A label's text can show below its (zero or short) rect: cull by what it paints,
+            // so a half-visible row keeps its text (clipped) as well as its icon.
+            const auto paint = RowPaintSpan(source, snapshot, region->rect[3]);
+            const auto range = VisibleElementRange(source, *region, base_y, scroll_offset, rows,
+                                                   paint[0], paint[1]);
             cell_first = range.first;
             cell_end = range.second;
         }
@@ -173,6 +183,10 @@ size_t ExpandTemplateInto(const Page& page, const Widget& source, const StateSna
             substitute(clone.fill_bind);
             substitute(clone.on_tap);
             substitute(clone.on_hold);
+            substitute(clone.on_swipe_left);
+            substitute(clone.on_swipe_right);
+            substitute(clone.on_swipe_up);
+            substitute(clone.on_swipe_down);
             substitute(clone.id);
             substitute(clone.hide_bind);
             substitute(clone.need_bind);
@@ -184,6 +198,23 @@ size_t ExpandTemplateInto(const Page& page, const Widget& source, const StateSna
             substitute(clone.drag_under_src);
             substitute(clone.text_src);
             substitute(clone.text_bind);
+            substitute(clone.empty_src);
+            substitute(clone.suffix);
+            substitute(clone.max_sep);
+            substitute(clone.table);
+            if (names_indexed) {
+                for (auto& name : clone.src_names) {
+                    substitute(name);
+                }
+            }
+            if (text_map_indexed) {
+                // Shared between the template's elements: this element gets its own copy.
+                auto map = std::make_shared<std::unordered_map<s64, std::string>>(*source.text_map);
+                for (auto& [value, text] : *map) {
+                    substitute(text);
+                }
+                clone.text_map = std::move(map);
+            }
             position(clone);
             if (source.repeat_cols > 0) {
                 const s64 col = cell % source.repeat_cols;
@@ -208,11 +239,6 @@ size_t ExpandTemplateInto(const Page& page, const Widget& source, const StateSna
     return count;
 }
 } // namespace
-
-void ExpandRepeatTemplate(const Page& page, const Widget& source, const StateSnapshot& snapshot,
-                          std::vector<Widget>& out) {
-    ExpandTemplateInto(page, source, snapshot, out, out.size(), nullptr);
-}
 
 size_t ExpandRepeatTemplateInto(const Page& page, const Widget& source,
                                 const StateSnapshot& snapshot, std::vector<Widget>& slots,

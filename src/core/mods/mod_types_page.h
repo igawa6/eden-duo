@@ -27,7 +27,7 @@ namespace Core::Mods {
 /// several events land in one tick the largest value is played.
 enum class HapticStrength : u8 { Off = 0, Light, Click, Confirm, Heavy, Reject };
 /// What raised a haptic; indexes HapticsConfig::strength.
-enum class HapticKind : u8 { Tap, Write, Select, Drag, Drop, Marker, Refused, Hold, Count };
+enum class HapticKind : u8 { Tap, Write, Select, Drag, Drop, Marker, Refused, Hold, Swipe, Count };
 struct HapticsConfig {
     bool enabled{false};
     /// The frontend honours the system's own touch-feedback setting.
@@ -41,6 +41,7 @@ struct HapticsConfig {
         HapticStrength::Light,   // marker
         HapticStrength::Off,     // refused
         HapticStrength::Heavy,   // hold (runtime 13: a fired press-and-hold)
+        HapticStrength::Light,   // swipe (runtime 14: a fired horizontal swipe)
     };
 };
 /// A per-widget / per-action override: -1 = none, else a HapticStrength value.
@@ -130,6 +131,28 @@ struct ViewTransform {
     float goal_zoom{1.0f};
     float goal_pan_x{0.0f};
     float goal_pan_y{0.0f};
+    /// Unreleased runtime 15 addition (mod_view_default.h): the view's home -- the bound default
+    /// view last applied (ViewDefaultBinds), else zoom 1 / no pan -- and the "view_reset_bind"
+    /// value it was applied for.
+    float home_zoom{1.0f};
+    float home_pan_x{0.0f};
+    float home_pan_y{0.0f};
+    bool has_reset_value{false};
+    double reset_value{0.0};
+};
+
+/// Unreleased runtime 15 addition: the published values that place a pan_zoom widget's DEFAULT
+/// view (the view it starts in, RESET / view_reset and view_idle_ms glide back to, and
+/// "view_custom:<id>" compares against). Widget keys "view_zoom_bind" (zoom, the widget's own
+/// zoom scale: 1 = the whole picture), "view_cx_bind" / "view_cy_bind" (the point of the
+/// picture to centre, 0..1 across its width / height; pan is clamped to the picture), and
+/// optional "view_reset_bind" (a value whose change snaps even a user-moved view back to the
+/// default, e.g. a new floor's map). Missing / non-finite values = zoom 1, no pan.
+struct ViewDefaultBinds {
+    std::string zoom_bind;
+    std::string cx_bind;
+    std::string cy_bind;
+    std::string reset_bind;
 };
 
 /// Per-widget view state, keyed by widget id.
@@ -169,8 +192,32 @@ struct MapWidgetExtras {
     PointGate tap_enabled;
     s32 marker_hit_px{32};
     std::vector<std::string> marker_tap_groups; ///< empty = every dynamic group
+    /// Runtime 14: the bound default view ("view_rect_x0_bind", "view_rect_y0_bind",
+    /// "view_rect_x1_bind", "view_rect_y1_bind": published values in world units, the area's
+    /// min/max space) and its padding ("view_rect_pad", world units). When all four resolve, the
+    /// base view (zoom 1, pan 0) fits that rect instead of the whole area (mod_map_view_rect.h).
+    std::array<std::string, 4> view_rect_binds;
+    float view_rect_pad{0.0f};
+    /// Runtime 14: a text point naming the area's base picture ("image_bind"), drawn over the
+    /// area's world box like the area's own `image` and overriding it; "" / missing = the area's.
+    std::string image_bind;
+    /// Runtime 14: pictures placed in world space ("overlays"), drawn over the base picture and
+    /// under the markers, panning / zooming with the map. The picture's top edge is at the larger
+    /// y (world y grows upward, as for the area).
+    struct Overlay {
+        std::string src;      ///< a fixed image key
+        std::string src_bind; ///< a text point naming the image key (wins when non-empty)
+        float x0{}, y0{}, x1{}, y1{};
+        PointGate show;
+        float opacity{1.0f};
+    };
+    std::vector<Overlay> overlays;
     [[nodiscard]] bool Tappable() const {
         return !on_map_tap.empty() || !on_marker_tap.empty();
+    }
+    [[nodiscard]] bool HasViewRect() const {
+        return std::ranges::all_of(view_rect_binds,
+                                   [](const std::string& b) { return !b.empty(); });
     }
 };
 
@@ -209,6 +256,12 @@ struct Widget {
     u32 color{0xFFE6ECF2};
     u32 bg{0x00000000};
     s32 text_scale{3};
+    /// Text drawn with the game font: an outline ring of `text_outline_px` pixels in
+    /// `text_outline` (0 = none), and a per-glyph rise of `text_rise` pixels (glyph i is drawn
+    /// i * rise higher; only digits count -- the game's HUD numbers step upwards). Older runtimes ignore both keys.
+    u32 text_outline{0};
+    s32 text_outline_px{0};
+    float text_rise{0.0f};
     s32 align{0};       ///< text anchor: 0 left (x is the left edge), 1 centre, 2 right
     bool flip_x{false}; ///< image: mirror horizontally (a diagonal skin piece the other way)
     bool flip_y{false}; ///< image: mirror vertically (a corner piece for the lower corners)
@@ -222,13 +275,29 @@ struct Widget {
     bool area_label{true};                 ///< Map: draw the area name in the widget's corner
     std::vector<std::string> hidden_icons; ///< Map: icon ids omitted by this presentation
     bool pill{false};   ///< Button: rounded (capsule) shape instead of a boxed frame
-    s32 frame{2};       ///< Rect: outline thickness in px when `color` is set
+    s32 frame{2};       ///< Rect / Bar: outline thickness in px (Rect: when `color` is set)
+    s32 border{3};      ///< Button: outline thickness in px (box or pill)
+    s32 text_inset{12}; ///< Button: a left-aligned caption's inset from the top-left, px
+    s32 gap{-1}; ///< Pips: px between pips (-1: 8 for sprite pips, a third of a drawn pip)
+    /// Map: the area name's offset from the widget's bottom-left corner {right, up}, px.
+    std::array<s32, 2> label_offset{12, 24};
     bool pulse{false};  ///< Rect: the outline's alpha breathes (a warning frame)
     std::string on_tap; ///< action name
     /// Runtime 13: action run once when a single finger rests on this widget for `hold_ms`
     /// (press-and-hold). The lift that ends a fired hold is not a tap (mod_input_hold.h).
     std::string on_hold;
     s32 hold_ms{0}; ///< hold time in ms; <= 0 = DefaultHoldMs (600)
+    /// Runtime 14: actions run once when a single finger that landed on this widget moves
+    /// sideways at least `swipe_px` (horizontal dominance) and lifts -- left for a finger moving
+    /// left, right for one moving right (mod_input_swipe.h). The lift is not a tap.
+    std::string on_swipe_left;
+    std::string on_swipe_right;
+    /// Unreleased runtime 15 addition: the same on the vertical axis -- up for a finger moving
+    /// up, down for one moving down (|dy| > 2 |dx|, `swipe_px` travel). Never armed over a scroll
+    /// region that can scroll (UpdateGestures).
+    std::string on_swipe_up;
+    std::string on_swipe_down;
+    s32 swipe_px{0}; ///< minimum travel along the swipe's axis in canvas px; <= 0 = 60
     /// Names this widget so a gesture can be remembered against it across frames. Optional:
     /// a widget without one falls back to its index on the page.
     std::string id;
@@ -258,6 +327,9 @@ struct Widget {
     bool pan_zoom{false};
     float min_zoom{1.0f};
     float max_zoom{8.0f};
+    /// Unreleased runtime 15 addition: a bound default view for a non-map pan_zoom widget
+    /// (mod_view_default.h); null = the default view is zoom 1, no pan.
+    std::shared_ptr<const ViewDefaultBinds> view_default;
     /// Image: where the picture comes from. "file:<name>" reads it out of the mod package;
     /// "romfs:/<path>" reads it out of the running game's own filesystem, so a package can use
     /// the game's art without shipping any of it.
@@ -278,10 +350,6 @@ struct Widget {
     s64 hide_eq{0}; ///< with hide_eq_on: hide when the value equals this (empty sentinel).
     bool hide_eq_on{false};
     std::string area_bind; ///< Map: point holding the current map-zone value
-    /// Map: point holding the season (0..3). When set alongside area_bind, the zone is looked up
-    /// as zone_area[zone*4+season] first -- a game whose map art changes with the season -- then
-    /// falls back to zone_area[zone] and widget.area as before.
-    std::string area_season_bind;
     std::string room_bind; ///< Map: string point holding the current room name
     std::string area;      ///< Map: fixed area, used when neither bind resolves
     /// Map: float points holding the player's live world position. When both resolve, a marker
@@ -294,12 +362,6 @@ struct Widget {
     std::string actor_y_bind;
     std::string actor_icon; ///< its atlas icon; nothing is drawn while either bind is absent
     bool actor_reveal_required{false}; ///< draw the actor only after its own map cell is revealed
-    /// The second actor's breathing size pulse -- size = PlayerIcon * (1.3 +
-    /// actor_pulse_scale * wave), wave a 0..1 triangle over actor_pulse_ms per full grow-shrink
-    /// cycle -- package-declared instead of the fixed 1.3x..1.8x-over-~0.7s constants this used
-    /// to be. Defaults reproduce that exact old look for a package that leaves them unset.
-    float actor_pulse_scale{0.5f}; ///< added size at the peak, as a fraction of PlayerIcon
-    float actor_pulse_ms{667.0f};  ///< duration of one full grow-shrink cycle
     float follow_window{0.0f};     ///< world units across the widget when the marker resolves:
                                    ///< the view zooms in and tracks the player like the game's own
                                    ///< minimap. 0 keeps the whole area in frame.
@@ -362,6 +424,11 @@ struct Widget {
     s32 max_lines{0};  ///< Label: keep at most this many lines, the last ending in an ellipsis
     s32 line_gap{-1};  ///< Label: px between lines beyond the cap height (-1 = text_scale * 3)
     bool icon_silhouette{false}; ///< Label: inline icons drawn as a mask in the label colour
+    /// Label/Value: "{c:#AARRGGBB}..{/c}" colour spans in the text.
+    bool color_markup{false};
+    /// Label/Value: this widget is an outline / shadow copy of another label ("outline_copy"):
+    /// with color_markup it lays out the tags like the main copy but draws in its own colour only.
+    bool outline_copy{false};
 };
 
 /// A drag-to-scroll list region on a page (page "scrolls", or a widget's inline "scroll" object).

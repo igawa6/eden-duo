@@ -5,6 +5,7 @@
 #include <array>
 #include <cctype>
 #include <cerrno>
+#include <chrono>
 #include <cstring>
 #include <mutex>
 #include <stdexcept>
@@ -165,6 +166,23 @@ void StageModule(const std::vector<u8>& bytes, const std::string& title,
 void SetModuleCacheDirectory(const std::filesystem::path& directory) {
     std::scoped_lock lock{cache_mutex};
     module_cache = directory;
+    // A staging directory is removed when its module is unloaded, so any left here belong to a
+    // process that crashed or was killed. Sweep those; a recent one may still be between staging
+    // and dlopen in another process, so only directories older than a few minutes go.
+    std::error_code error;
+    if (directory.empty() || !std::filesystem::is_directory(directory, error)) {
+        return;
+    }
+    const auto cutoff = std::filesystem::file_time_type::clock::now() - std::chrono::minutes{10};
+    for (const auto& entry : std::filesystem::directory_iterator(directory, error)) {
+        const auto name = entry.path().filename().string();
+        std::error_code entry_error;
+        if (!name.starts_with("module-") || !entry.is_directory(entry_error) ||
+            entry.last_write_time(entry_error) > cutoff || entry_error) {
+            continue;
+        }
+        std::filesystem::remove_all(entry.path(), entry_error);
+    }
 }
 
 GameModule::~GameModule() {

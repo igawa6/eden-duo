@@ -4,6 +4,9 @@
 // SPDX-FileCopyrightText: Copyright 2023 yuzu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <mutex>
+#include <span>
+
 #include <android/native_window_jni.h>
 #include "common/android/applets/software_keyboard.h"
 #include "core/core.h"
@@ -12,6 +15,7 @@
 #include "core/perf_stats.h"
 #include "frontend_common/content_manager.h"
 #include "jni/emu_window/emu_window.h"
+#include "video_core/dsmod/aux_routing.h"
 #include "video_core/rasterizer_interface.h"
 
 #pragma once
@@ -33,12 +37,11 @@ public:
     void SetNativeWindow(ANativeWindow* native_window);
     void SurfaceChanged();
 
-    // DSMod aux (second screen) surface
-    EmuWindow_Android* AuxWindow();
-    ANativeWindow* AuxNativeWindow() const;
-    void SetAuxNativeWindow(ANativeWindow* native_window);
-    void AuxSurfaceChanged();
+    // DSMod aux (second screen) surface, UI thread. Takes over the reference of `native_window`.
+    void AuxSurfaceChanged(ANativeWindow* native_window);
     void AuxSurfaceDestroyed();
+    /// Forwards second-screen touch to the running game; false while no game renderer exists.
+    bool SetAuxTouch(std::span<const VideoCore::DSMod::AuxTouchPoint> points);
 
     void InitializeGpuDriver(const std::string& hook_lib_dir, const std::string& custom_driver_dir,
                              const std::string& custom_driver_name,
@@ -77,10 +80,14 @@ private:
     // Window management
     std::unique_ptr<EmuWindow_Android> m_window;
     ANativeWindow* m_native_window{};
+    // DSMod aux surface: guarded by m_aux_mutex (lock order: m_mutex, then m_aux_mutex).
     std::unique_ptr<EmuWindow_Android> m_aux_window;
     ANativeWindow* m_aux_native_window{};
+    bool m_aux_renderer_ready{}; // the game's renderer and GPU exist
+    std::mutex m_aux_mutex;
     void AttachAuxWindowLocked();
     void DetachAuxWindowLocked();
+    void ReleaseAuxNativeWindowLocked();
 
     // Core emulation
     Core::System m_system;

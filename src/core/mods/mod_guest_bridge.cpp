@@ -40,9 +40,8 @@ namespace Core::Mods {
 
 void ModRuntime::DrainGuestBridgeResults() {
     std::scoped_lock bridge_lock{guest_bridge_mutex};
-    sequence_values.merge(pending_sequence_values);
     for (auto& [name, value] : pending_sequence_values) {
-        sequence_values[name] = value;
+        sequence_values.insert_or_assign(name, value);
     }
     pending_sequence_values.clear();
     for (auto& [name, value] : pending_sequence_addresses) {
@@ -428,10 +427,14 @@ u64 ModRuntime::ResolveCallArg(const std::string& arg) {
         return addr;
     }
     if (name.starts_with("@")) {
-        // A pointer to something in the module -- a string literal, most usefully. The offsets
-        // are written down per build, so nothing has to be searched for at runtime.
-        const auto off = ResolveSymbol(name.substr(1));
-        return off ? main_region_begin + static_cast<VAddr>(*off) : 0;
+        // A pointer to something in the module -- a string literal, most usefully. Resolved when
+        // the sequence was armed (StartSequence, tick thread): this runs on the guest CPU thread
+        // inside the breakpoint handler, where a symbol lookup may scan the module and touches
+        // caches the tick thread owns.
+        const auto it = call_seq_symbols.find(name.substr(1));
+        return it != call_seq_symbols.end() && it->second
+                   ? main_region_begin + static_cast<VAddr>(*it->second)
+                   : 0;
     }
     if (name.starts_with("&")) {
         const auto it = call_snapshot.addresses.find(name.substr(1));
@@ -444,7 +447,9 @@ u64 ModRuntime::ResolveCallArg(const std::string& arg) {
 /// aborts the sequence rather than jumping somewhere arbitrary.
 bool ModRuntime::PrepareCallStep() {
     const CallStep& step = call_seq->steps[call_seq_step];
-    const auto off = ResolveSymbol(step.fn);
+    // Resolved at arm time (StartSequence); never looked up here, on the guest CPU thread.
+    const auto off = call_seq_step < call_seq_fn.size() ? call_seq_fn[call_seq_step]
+                                                        : std::optional<s64>{};
     if (!off) {
         LOG_ERROR(Core,
                   "DSMod: sequence '{}' step {} names '{}', which this build has no address "
@@ -479,11 +484,41 @@ void ModRuntime::StartSequence(const std::string& name, const CallSequence& sequ
         LOG_ERROR(Core, "DSMod: a sequence needs a manifest 'frame_hook' to borrow a thread at");
         return;
     }
+    // Every step's function and every "$@symbol" argument is resolved here, on the tick thread,
+    // before anything is armed: the steps run on the guest CPU thread inside the breakpoint
+    // handler, which must neither scan the module nor write the symbol/pattern caches. A step
+    // that does not resolve refuses the whole sequence now instead of abandoning it mid-chain.
+    std::vector<std::optional<s64>> step_fns;
+    std::unordered_map<std::string, std::optional<s64>> symbols;
+    step_fns.reserve(sequence.steps.size());
+    for (size_t i = 0; i < sequence.steps.size(); ++i) {
+        const CallStep& step = sequence.steps[i];
+        auto off = ResolveSymbol(step.fn);
+        if (!off) {
+            LOG_ERROR(Core,
+                      "DSMod: sequence '{}' step {} names '{}', which this build has no address "
+                      "for",
+                      name, i, step.fn);
+            return;
+        }
+        step_fns.push_back(off);
+        for (const auto& arg : step.args) {
+            if (arg.size() > 2 && arg.starts_with("$@")) {
+                auto key = arg.substr(2);
+                if (!symbols.contains(key)) {
+                    auto resolved = ResolveSymbol(key);
+                    symbols.emplace(std::move(key), resolved);
+                }
+            }
+        }
+    }
     resolved_hook = main_region_begin + static_cast<VAddr>(hook_offset);
     if (!InstallBreakpoint(resolved_hook)) {
         return;
     }
     hook_original = original_instruction;
+    call_seq_fn = std::move(step_fns);
+    call_seq_symbols = std::move(symbols);
     call_seq = &sequence;
     call_seq_name = name;
     call_seq_step = 0;
@@ -507,8 +542,13 @@ void ModRuntime::RunPolledSequences(const StateSnapshot& snapshot) {
         if (sequence.every_ms == 0 || call_state != CallState::Idle) {
             continue;
         }
-        if (!sequence.flag.empty() && !flags[sequence.flag]) {
-            continue;
+        if (!sequence.flag.empty()) {
+            // find, not operator[]: a lookup must not create the flag (it would then be published
+            // as "@flag:<name>" = 0 as a side effect).
+            const auto flag = flags.find(sequence.flag);
+            if (flag == flags.end() || flag->second == 0) {
+                continue;
+            }
         }
         const u64 due = MillisecondsToModTicks(sequence.every_ms);
         auto& last = sequence_last_run[name];
@@ -530,14 +570,24 @@ void ModRuntime::ApplyPatches() {
     auto& memory = system.ApplicationMemory();
     const char* const opt_in = std::getenv("EDEN_DSMOD_PATCHES");
     const bool apply_optional = opt_in != nullptr && opt_in[0] == '1';
-    for (const auto& patch : manifest.patches) {
+    // Each patch is written (and logged) once. A patch whose address is not mapped yet waits for
+    // a later tick; the ones before it are not rewritten every tick meanwhile.
+    patch_done.resize(manifest.patches.size(), false);
+    bool waiting = false;
+    for (size_t index = 0; index < manifest.patches.size(); ++index) {
+        const auto& patch = manifest.patches[index];
+        if (patch_done[index]) {
+            continue;
+        }
         if (patch.optional && !apply_optional) {
             LOG_INFO(Core, "DSMod: skipping optional patch at main+{:X} ({})", patch.at, patch.why);
+            patch_done[index] = true;
             continue;
         }
         const VAddr address = main_region_begin + static_cast<VAddr>(patch.at);
         if (!AddressIsSane(address, patch.words.size() * sizeof(u32))) {
-            return; // not mapped yet -- try again on a later tick
+            waiting = true; // not mapped yet -- try again on a later tick
+            continue;
         }
         for (size_t i = 0; i < patch.words.size(); ++i) {
             memory.Write32(address + i * sizeof(u32), patch.words[i]);
@@ -546,8 +596,9 @@ void ModRuntime::ApplyPatches() {
                                               patch.words.size() * sizeof(u32));
         LOG_INFO(Core, "DSMod: patched main+{:X} with {} instruction(s): {}", patch.at,
                  patch.words.size(), patch.why);
+        patch_done[index] = true;
     }
-    patches_applied = true;
+    patches_applied = !waiting;
 }
 
 /// Patches each declared spy once. The breakpoint stays until the game happens to make the call.
@@ -708,7 +759,7 @@ bool ModRuntime::OnGuestBreakpoint(Kernel::KThread& thread, Core::ArmInterface& 
             const u32 bits = static_cast<u32>(ctx.v[0][0]);
             std::memcpy(&value, &bits, sizeof(value));
             last_call_float = value;
-            last_call_result = static_cast<s64>(value);
+            last_call_result = SaturatingToS64(value);
         } else {
             last_call_result = static_cast<s64>(ctx.r[0]);
             last_call_float = static_cast<f64>(last_call_result);

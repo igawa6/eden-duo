@@ -31,6 +31,7 @@
 #include "core/core.h"
 #include "core/mods/mod_runtime.h"
 #include "core/mods/mod_runtime_shared.h"
+#include "core/mods/mod_view_default.h"
 #include "input_common/drivers/virtual_gamepad.h"
 
 namespace Core::Mods {
@@ -72,7 +73,7 @@ InputCommon::VirtualGamepad::VirtualButton ParseButton(const std::string& name, 
 
 std::optional<ModRuntime::ActionScalar> ModRuntime::ResolveActionRef(
     const std::string& ref, const StateSnapshot& snapshot, std::optional<s64> payload) const {
-    const auto from_float = [](f64 f) { return ActionScalar{static_cast<s64>(f), f}; };
+    const auto from_float = [](f64 f) { return ActionScalar{SaturatingToS64(f), f}; };
     if (ref == "payload") {
         return payload ? std::optional<ActionScalar>{ActionScalar{*payload, std::nullopt}}
                        : std::nullopt;
@@ -185,6 +186,10 @@ bool ModRuntime::PressToken(const std::string& name, u32 frames) {
     if (pad == nullptr || name.empty()) {
         return false;
     }
+    // "L+R": a chord, every part pressed on the same tick (a trailing '+' is a stick token).
+    if (const auto plus = name.find('+'); plus != std::string::npos && name.back() != '+') {
+        return PressToken(name.substr(0, plus), frames) && PressToken(name.substr(plus + 1), frames);
+    }
     // "RX+", "LY-" and friends name a stick shove rather than a button.
     if (name.size() >= 3 && (name[0] == 'L' || name[0] == 'R') &&
         (name[1] == 'X' || name[1] == 'Y') && (name.back() == '+' || name.back() == '-')) {
@@ -248,26 +253,30 @@ void ModRuntime::ReleaseHeldInputs() {
                 pad->SetStickPosition(pl, which, 0.0f, 0.0f);
             }
         }
+#if EDEN_DSMOD_BUILD_DEV_TOOLS
         for (const std::size_t pl : {std::size_t{0}, std::size_t{8}}) {
-            if (live_held_button >= 0) {
-                pad->SetButtonState(pl, live_held_button, false);
+            if (dev.live_held_button >= 0) {
+                pad->SetButtonState(pl, dev.live_held_button, false);
             }
-            if (live_held_stick) {
+            if (dev.live_held_stick) {
                 pad->SetStickPosition(pl,
-                                      live_stick_right
+                                      dev.live_stick_right
                                           ? InputCommon::VirtualGamepad::VirtualStick::Right
                                           : InputCommon::VirtualGamepad::VirtualStick::Left,
                                       0.0f, 0.0f);
             }
         }
+#endif
     }
     held_buttons.clear();
     held_sticks.clear();
     press_queue.clear();
-    live_hold_left = 0;
-    live_held_button = -1;
-    live_held_stick = false;
-    live_held_x = live_held_y = 0.0f;
+#if EDEN_DSMOD_BUILD_DEV_TOOLS
+    dev.live_hold_left = 0;
+    dev.live_held_button = -1;
+    dev.live_held_stick = false;
+    dev.live_held_x = dev.live_held_y = 0.0f;
+#endif
 }
 
 void ModRuntime::UpdateHeldButtons() {
@@ -422,6 +431,11 @@ ModRuntime::ActionResult ModRuntime::RunAction(const Action& action, const State
             std::string name;
         };
         std::vector<Planned> plan;
+        // The slot must still be free when the writes land (checked with the guest stopped).
+        std::vector<GuestExpect> expects;
+        if (const auto still_free = ExpectUnchanged(slot->second, found)) {
+            expects.push_back(*still_free);
+        }
         for (const auto& [pattern, source] : action.writes) {
             std::string name = pattern;
             bool indexed = false;
@@ -462,15 +476,26 @@ ModRuntime::ActionResult ModRuntime::RunAction(const Action& action, const State
             }
             plan.push_back({point, index, *value, name});
         }
+        // Every field of the slot is resolved first and stored as one unit: the guest never sees
+        // half a slot, and a field that cannot be written leaves the slot untouched.
         std::string written;
+        std::vector<GuestStore> stores;
+        stores.reserve(plan.size());
         for (const auto& p : plan) {
-            if (!WritePointValue(*p.point, p.value.i, p.index, p.value.f)) {
+            const auto store = PlanPointWrite(*p.point, p.value.i, p.index, p.value.f);
+            if (!store) {
                 LOG_WARNING(Core, "DSMod: slot_write '{}': writing '{}' failed", action.name,
                             p.name);
                 return ActionResult::Skipped;
             }
+            stores.push_back(*store);
             written += p.value.f ? fmt::format(" {}={:.3f}", p.name, *p.value.f)
                                  : fmt::format(" {}={}", p.name, p.value.i);
+        }
+        if (!ApplyGuestStores(expects, stores)) {
+            LOG_WARNING(Core, "DSMod: slot_write '{}': slot {} changed while writing; nothing written",
+                        action.name, found);
+            return ActionResult::Skipped;
         }
         if (!action.select.empty()) {
             map_selections[action.select] = found;
@@ -524,9 +549,15 @@ ModRuntime::ActionResult ModRuntime::RunAction(const Action& action, const State
         }
         const s64 value = resolved->i;
         const DataPoint& target = *target_ptr;
+        const auto target_store = PlanPointWrite(target, value, element, resolved->f);
+        if (!target_store) {
+            return ActionResult::Skipped;
+        }
+        bool swapped = false;
         if (!action.swap_point.empty()) {
             // An exclusive pair (LA's X/Y): equipping what the other slot holds moves this slot's
-            // old value over there instead of leaving the item on both.
+            // old value over there instead of leaving the item on both. Both stores land as one
+            // unit, and only if neither slot changed since it was read.
             const auto other = manifest.points.find(action.swap_point);
             s64 previous{};
             s64 other_value{};
@@ -535,13 +566,24 @@ ModRuntime::ActionResult ModRuntime::RunAction(const Action& action, const State
                 NormaliseToType(other->second.type, other_value) ==
                     NormaliseToType(other->second.type, value) &&
                 NormaliseToType(target.type, previous) != NormaliseToType(target.type, value)) {
-                if (WritePointValue(other->second, previous)) {
+                const auto other_store = PlanPointWrite(other->second, previous);
+                const auto target_now = ExpectUnchanged(target, element);
+                const auto other_now = ExpectUnchanged(other->second);
+                if (other_store && target_now && other_now) {
+                    const std::array expects{*target_now, *other_now};
+                    const std::array stores{*other_store, *target_store};
+                    if (!ApplyGuestStores(expects, stores)) {
+                        LOG_INFO(Core, "DSMod: swap {} skipped: a slot changed while writing",
+                                 action.swap_point);
+                        return ActionResult::Skipped;
+                    }
                     LOG_INFO(Core, "DSMod: swap {} = {} (it held {})", action.swap_point, previous,
                              other_value);
+                    swapped = true;
                 }
             }
         }
-        if (!WritePointValue(target, value, element, resolved->f)) {
+        if (!swapped && !ApplyGuestStores({}, std::span{&*target_store, 1})) {
             return ActionResult::Skipped;
         }
         if (resolved->f) {
@@ -566,9 +608,19 @@ ModRuntime::ActionResult ModRuntime::RunAction(const Action& action, const State
             return n.size() >= 3 && (n[0] == 'L' || n[0] == 'R') && (n[1] == 'X' || n[1] == 'Y') &&
                    (n.back() == '+' || n.back() == '-');
         };
+        // A chord ("L+R") is valid when every part is a button.
+        const auto is_chord = [](const std::string& n) {
+            const auto plus = n.find('+');
+            if (plus == std::string::npos || n.back() == '+')
+                return false;
+            bool a{}, b{};
+            ParseButton(n.substr(0, plus), a);
+            ParseButton(n.substr(plus + 1), b);
+            return a && b;
+        };
         bool ok{};
         ParseButton(action.button, ok);
-        if (!ok && !is_stick(action.button)) {
+        if (!ok && !is_stick(action.button) && !is_chord(action.button)) {
             return ActionResult::Skipped;
         }
         // Press on both the handheld and player-1 ports; npad polls at 1 kHz, so hold a few ticks.
@@ -692,10 +744,7 @@ ModRuntime::ActionResult ModRuntime::RunAction(const Action& action, const State
         // Ease the widget's view home over the next ticks (GlideViews) rather than snapping.
         std::scoped_lock lk{view_mutex};
         auto& view = view_state[action.view];
-        view.gliding = true;
-        view.goal_zoom = 1.0f;
-        view.goal_pan_x = 0.0f;
-        view.goal_pan_y = 0.0f;
+        GlideViewHome(view); // its bound default view, else zoom 1 / no pan (mod_view_default.h)
         LOG_INFO(Core, "DSMod: view '{}' gliding home from zoom {:.2f} pan ({:.0f},{:.0f})",
                  action.view, view.zoom, view.pan_x, view.pan_y);
         break;
@@ -720,6 +769,7 @@ ModRuntime::ActionResult ModRuntime::RunAction(const Action& action, const State
         }
         LOG_INFO(Core, "DSMod: flag '{}' = {}", action.flag, current);
         trace(fmt::format("DSMod: flag '{}' = {}", action.flag, current));
+        flag_persistence.SaveIfChanged(flags); // only "persist_flags", only when one changed
         break;
     }
     case ActionKind::None:
@@ -730,6 +780,7 @@ ModRuntime::ActionResult ModRuntime::RunAction(const Action& action, const State
 }
 
 void ModRuntime::DriveLiveInput() {
+#if EDEN_DSMOD_BUILD_DEV_TOOLS
     static const char* const path = std::getenv("EDEN_DSMOD_INPUT_LIVE");
     if (path == nullptr) {
         return;
@@ -744,24 +795,24 @@ void ModRuntime::DriveLiveInput() {
         // Re-assert every tick while held -- the virtual gamepad is not sticky, so setting it
         // once and returning (as this used to) gave a one-tick blip the game often missed.
         for (const std::size_t pl : {std::size_t{0}, std::size_t{8}}) {
-            if (live_held_button >= 0) {
-                pad->SetButtonState(pl, live_held_button, down);
+            if (dev.live_held_button >= 0) {
+                pad->SetButtonState(pl, dev.live_held_button, down);
             }
-            if (live_held_stick) {
+            if (dev.live_held_stick) {
                 pad->SetStickPosition(pl,
-                                      live_stick_right
+                                      dev.live_stick_right
                                           ? InputCommon::VirtualGamepad::VirtualStick::Right
                                           : InputCommon::VirtualGamepad::VirtualStick::Left,
-                                      down ? live_held_x : 0.0f, down ? live_held_y : 0.0f);
+                                      down ? dev.live_held_x : 0.0f, down ? dev.live_held_y : 0.0f);
             }
         }
     };
-    if (live_hold_left > 0) {
+    if (dev.live_hold_left > 0) {
         assert_input(true); // keep holding
-        if (--live_hold_left == 0) {
+        if (--dev.live_hold_left == 0) {
             assert_input(false); // clean release
-            live_held_button = -1;
-            live_held_stick = false;
+            dev.live_held_button = -1;
+            dev.live_held_stick = false;
         }
         return;
     }
@@ -782,36 +833,38 @@ void ModRuntime::DriveLiveInput() {
 
     const auto colon = tok.find(':');
     const std::string name = tok.substr(0, colon);
-    live_hold_left =
+    dev.live_hold_left =
         colon == std::string::npos ? 6 : std::strtoull(tok.c_str() + colon + 1, nullptr, 0);
-    live_held_button = -1;
-    live_held_stick = false;
-    live_held_x = live_held_y = 0.0f;
+    dev.live_held_button = -1;
+    dev.live_held_stick = false;
+    dev.live_held_x = dev.live_held_y = 0.0f;
     if (name.size() >= 3 && (name[0] == 'L' || name[0] == 'R') &&
         (name[1] == 'X' || name[1] == 'Y') && (name.back() == '+' || name.back() == '-')) {
-        live_held_stick = true;
-        live_stick_right = name[0] == 'R';
+        dev.live_held_stick = true;
+        dev.live_stick_right = name[0] == 'R';
         const float v = name.back() == '+' ? 1.0f : -1.0f;
         if (name[1] == 'X')
-            live_held_x = v;
+            dev.live_held_x = v;
         else
-            live_held_y = v;
+            dev.live_held_y = v;
     } else {
         bool ok{};
         const auto button = ParseButton(name, ok);
         if (ok) {
-            live_held_button = static_cast<int>(button);
+            dev.live_held_button = static_cast<int>(button);
         }
     }
     assert_input(true); // press this frame
     LOG_INFO(Core, "DSMod live input: {}", tok);
+#endif
 }
 
 void ModRuntime::DriveInputScript() {
+#if EDEN_DSMOD_BUILD_DEV_TOOLS
     auto* const pad = system.GetInputSubsystem() != nullptr
                           ? system.GetInputSubsystem()->GetVirtualGamepad()
                           : nullptr;
-    if (pad == nullptr || input_step >= input_script.size()) {
+    if (pad == nullptr || dev.input_step >= dev.input_script.size()) {
         return;
     }
     // Do not begin until the title is actually up. Boot speed varies run to run, so a leading
@@ -826,12 +879,12 @@ void ModRuntime::DriveInputScript() {
     }
     // Each step: hold for `hold` ticks, release for `Gap`, then advance. A colon overrides hold.
     constexpr u64 Gap = 10;
-    const std::string& tok = input_script[input_step];
+    const std::string& tok = dev.input_script[dev.input_step];
     const auto colon = tok.find(':');
     const std::string name = tok.substr(0, colon);
     const u64 hold =
         colon == std::string::npos ? 8 : std::strtoull(tok.c_str() + colon + 1, nullptr, 0);
-    const u64 phase = input_step_tick;
+    const u64 phase = dev.input_step_tick;
     const bool pressed = phase < hold;
 
     auto set_stick = [&](float x, float y) {
@@ -856,13 +909,14 @@ void ModRuntime::DriveInputScript() {
             }
         }
     }
-    if (++input_step_tick >= hold + Gap) {
-        input_step_tick = 0;
-        ++input_step;
-        if (input_step >= input_script.size()) {
-            LOG_INFO(Core, "DSMod: input script complete ({} steps)", input_script.size());
+    if (++dev.input_step_tick >= hold + Gap) {
+        dev.input_step_tick = 0;
+        ++dev.input_step;
+        if (dev.input_step >= dev.input_script.size()) {
+            LOG_INFO(Core, "DSMod: input script complete ({} steps)", dev.input_script.size());
         }
     }
+#endif
 }
 
 } // namespace Core::Mods

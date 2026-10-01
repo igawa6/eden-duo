@@ -3,6 +3,7 @@
 
 package org.yuzu.yuzu_emu.fragments
 
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
@@ -28,6 +29,7 @@ import org.yuzu.yuzu_emu.utils.AddonUtil
 import org.yuzu.yuzu_emu.utils.DualScreenPackageInstaller
 import org.yuzu.yuzu_emu.utils.FileUtil.copyFilesTo
 import org.yuzu.yuzu_emu.utils.InstallableActions
+import org.yuzu.yuzu_emu.utils.NativeConfig
 import org.yuzu.yuzu_emu.utils.ViewUtils.updateMargins
 import org.yuzu.yuzu_emu.utils.collect
 import java.io.File
@@ -230,8 +232,17 @@ class AddonsFragment : Fragment() {
             ) {
                 is DualScreenPackageInstaller.Result.Installed -> {
                     addonViewModel.persistAddonStates()
+                    val notes = applyDualScreenAddonStates(activity, game.programId, result)
                     addonViewModel.refreshAddons(force = true)
-                    activity.getString(R.string.dual_screen_mod_installed)
+                    if (notes.isEmpty()) {
+                        activity.getString(R.string.dual_screen_mod_installed)
+                    } else {
+                        MessageDialogFragment.newInstance(
+                            activity,
+                            titleId = R.string.dual_screen_mod_installed,
+                            descriptionString = notes
+                        )
+                    }
                 }
 
                 is DualScreenPackageInstaller.Result.Failed -> {
@@ -241,9 +252,7 @@ class AddonsFragment : Fragment() {
                         MessageDialogFragment.newInstance(
                             activity,
                             titleId = R.string.dual_screen_mod_install_failed,
-                            descriptionString = activity.getString(
-                                dualScreenInstallError(result.error)
-                            )
+                            descriptionString = dualScreenInstallError(activity, result)
                         )
                     }
                 }
@@ -251,26 +260,110 @@ class AddonsFragment : Fragment() {
         }.show(parentFragmentManager, ProgressDialogFragment.TAG)
     }
 
-    private fun dualScreenInstallError(error: DualScreenPackageInstaller.Error): Int =
-        when (error) {
-            DualScreenPackageInstaller.Error.InvalidFilename ->
-                R.string.dual_screen_mod_invalid_filename
+    /**
+     * Keeps the second screen on the package just installed, through the add-on on/off list
+     * (reversible from the Add-ons screen):
+     * - an update keeps the user's choice: if the version it replaced was off, the new one is too;
+     * - an older version that could not be deleted is turned off;
+     * - other folders holding only a dual-screen package for this game (hand-copied ones
+     *   included) are turned off, because the runtime uses the first enabled one by name.
+     * Folders that also hold other mods are left alone and named in the returned note.
+     */
+    private fun applyDualScreenAddonStates(
+        context: Context,
+        programId: String,
+        result: DualScreenPackageInstaller.Result.Installed
+    ): String {
+        val disabled = NativeConfig.getDisabledAddons(programId).toMutableList()
+        val replaced = result.removed + result.notRemoved
+        if (replaced.any { it in disabled } && result.folderName !in disabled) {
+            disabled += result.folderName
+        }
+        disabled.removeAll(result.removed.toSet())
+
+        val turnedOff = mutableListOf<String>()
+        for (name in result.notRemoved +
+            result.otherPackages.filter { it.onlyDualScreen }.map { it.folderName }) {
+            if (name !in disabled) {
+                disabled += name
+                turnedOff += name
+            }
+        }
+        val mayShadow = result.otherPackages
+            .filter { !it.onlyDualScreen && it.folderName !in disabled }
+            .map { it.folderName }
+            .filter { it < result.folderName }
+        NativeConfig.setDisabledAddons(programId, disabled.toTypedArray())
+        NativeConfig.saveGlobalConfig()
+
+        val notes = mutableListOf<String>()
+        if (result.notRemoved.isNotEmpty()) {
+            notes += context.getString(
+                R.string.dual_screen_mod_old_not_removed,
+                result.notRemoved.joinToString()
+            )
+        }
+        val othersOff = turnedOff - result.notRemoved.toSet()
+        if (othersOff.isNotEmpty()) {
+            notes += context.getString(
+                R.string.dual_screen_mod_others_disabled,
+                othersOff.joinToString()
+            )
+        }
+        if (mayShadow.isNotEmpty()) {
+            notes += context.getString(
+                R.string.dual_screen_mod_others_enabled,
+                mayShadow.joinToString()
+            )
+        }
+        return notes.joinToString("\n\n")
+    }
+
+    /** The message for a failed install: what went wrong, then the installer's detail. */
+    private fun dualScreenInstallError(
+        context: Context,
+        result: DualScreenPackageInstaller.Result.Failed
+    ): String {
+        val detail = result.detail
+        val message = when (result.error) {
+            DualScreenPackageInstaller.Error.RuntimeTooOld -> return context.getString(
+                R.string.dual_screen_mod_runtime_too_old,
+                if (result.requiredRuntime == DualScreenPackageInstaller.UNKNOWN_RUNTIME) {
+                    "?"
+                } else {
+                    result.requiredRuntime.toString()
+                },
+                result.runtime
+            )
+            DualScreenPackageInstaller.Error.MissingPlatformLibrary ->
+                return context.getString(R.string.dual_screen_mod_missing_platform_library, detail)
+            DualScreenPackageInstaller.Error.CannotWrite ->
+                return context.getString(R.string.dual_screen_mod_cannot_write, detail)
+            DualScreenPackageInstaller.Error.VersionMismatch ->
+                return context.getString(R.string.dual_screen_mod_version_mismatch, detail)
+            DualScreenPackageInstaller.Error.ChecksumMismatch ->
+                context.getString(R.string.dual_screen_mod_checksum_mismatch)
             DualScreenPackageInstaller.Error.ArchiveTooLarge ->
-                R.string.dual_screen_mod_archive_too_large
+                context.getString(R.string.dual_screen_mod_archive_too_large)
             DualScreenPackageInstaller.Error.MalformedArchive ->
-                R.string.dual_screen_mod_malformed_archive
+                context.getString(R.string.dual_screen_mod_malformed_archive)
             DualScreenPackageInstaller.Error.UnsafeEntry,
             DualScreenPackageInstaller.Error.DuplicateEntry,
             DualScreenPackageInstaller.Error.InvalidLayout,
             DualScreenPackageInstaller.Error.InvalidMetadata ->
-                R.string.dual_screen_mod_invalid_package
+                context.getString(R.string.dual_screen_mod_invalid_package)
             DualScreenPackageInstaller.Error.TitleMismatch ->
-                R.string.dual_screen_mod_title_mismatch
-            DualScreenPackageInstaller.Error.Cancelled ->
-                R.string.dual_screen_mod_install_cancelled
+                context.getString(R.string.dual_screen_mod_title_mismatch)
+            DualScreenPackageInstaller.Error.Cancelled,
             DualScreenPackageInstaller.Error.InstallFailed ->
-                R.string.dual_screen_mod_install_failed_description
+                context.getString(R.string.dual_screen_mod_install_failed_description)
         }
+        return if (detail.isEmpty()) {
+            message
+        } else {
+            context.getString(R.string.dual_screen_mod_error_detail, message, detail)
+        }
+    }
 
     private fun setInsets() =
         ViewCompat.setOnApplyWindowInsetsListener(

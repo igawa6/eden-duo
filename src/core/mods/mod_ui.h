@@ -11,11 +11,13 @@
 #include <algorithm>
 #include <cstddef>
 #include <functional>
+#include <list>
 #include <memory>
 #include <mutex>
 #include <optional>
 #include <span>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "common/common_types.h"
@@ -77,6 +79,10 @@ public:
     /// the last kept line ends in an ellipsis, trimmed to fit.
     [[nodiscard]] std::vector<std::string> LayoutText(std::string_view text, s32 scale,
                                                       s32 wrap_width, s32 max_lines) const;
+    /// LayoutText without the copy: a reference into the canvas' layout cache, valid until the
+    /// next LayoutText / LayoutLines / SetFont / SetIconFont call on this canvas.
+    [[nodiscard]] const std::vector<std::string>& LayoutLines(std::string_view text, s32 scale,
+                                                             s32 wrap_width, s32 max_lines) const;
     /// Multi-line DrawTextAligned: line i's cap top is y + i * (scale * 5 + line_gap), each line
     /// aligned on its own (line_gap < 0 = scale * 3).
     void DrawTextBlock(s32 x, s32 y, std::string_view text, s32 scale, u32 argb, s32 align,
@@ -88,10 +94,21 @@ public:
         icon_atlas = atlas;
         icon_metrics = metrics;
         icon_pending = pending;
+        layout.fonts_changed = true;
     }
     /// Draw inline icons as a mask in the text colour (a shadow copy of a label).
     void SetIconSilhouette(bool on) {
         icon_silhouette = on;
+    }
+    /// Colour tags in the text: "{c:#AARRGGBB}" starts a span, "{/c}" returns to the draw colour.
+    /// Tags take no width and never draw; a malformed one is plain text. Off = braces are text.
+    void SetColorMarkup(bool on) {
+        color_markup = on;
+    }
+    /// An outline / shadow copy of a label: colour tags are still read (same layout as the main
+    /// copy) but every span draws in the draw colour.
+    void SetOutlineCopy(bool on) {
+        outline_copy = on;
     }
     /// Draw with the game's own font instead of the built-in one. The atlas holds coverage in
     /// alpha, so the glyph is a mask and the colour comes from the caller -- which is what lets
@@ -99,6 +116,14 @@ public:
     void SetFont(const Image* atlas, const FontMetrics* metrics) {
         font_atlas = atlas;
         font_metrics = metrics;
+        layout.fonts_changed = true;
+    }
+    /// Outline ring and per-glyph rise for the next DrawText calls (game font only); callers
+    /// reset them to (0, 0, 0) after the widget.
+    void SetTextEffects(u32 outline_argb, s32 outline_px, float rise) {
+        text_outline = outline_argb;
+        text_outline_px = outline_px;
+        text_rise = rise;
     }
     [[nodiscard]] bool HasFont() const {
         return font_atlas != nullptr && font_metrics != nullptr;
@@ -137,6 +162,9 @@ public:
     }
     const Image* font_atlas{nullptr};
     const FontMetrics* font_metrics{nullptr};
+    u32 text_outline{0};
+    s32 text_outline_px{0};
+    float text_rise{0.0f};
     [[nodiscard]] u32 Height() const {
         return h;
     }
@@ -154,20 +182,6 @@ public:
     void SetLayerOpacity(float opacity) {
         layer_opacity = std::clamp(opacity, 0.0f, 1.0f);
     }
-    /// draw_opacity * layer_opacity, exposed so a caller can tell whether "this
-    /// exact draw" would be a plain, reusable-later blend (1.0, the common case) or a one-tick-only
-    /// fade (a page transition or an animating widget-group's own SetLayerOpacity) whose output
-    /// must never be cached and replayed on a later, differently-faded tick.
-    [[nodiscard]] float CurrentOpacity() const {
-        return EffectiveOpacity();
-    }
-    /// An unblended, un-tinted copy of `rw`x`rh` pixels from `src` (row-major, stride
-    /// `src_stride`) straight into the canvas at (x, y), clipped like every other draw call here.
-    /// For replaying a previously-rendered widget's own output verbatim -- the caller is
-    /// responsible for only ever doing that when the source pixels are still valid for exactly
-    /// this draw (same resolved inputs, same opacity, same canvas size).
-    void BlitRaw(s32 x, s32 y, s32 rw, s32 rh, const u32* src, s32 src_stride);
-
     /// Restricts every drawing operation, Clear() included, to a rectangle (intersected with the
     /// canvas); w or h <= 0 means the whole canvas. An animation redraws only its own box this way.
     void SetClip(s32 x, s32 y, s32 cw, s32 ch);
@@ -194,16 +208,43 @@ private:
     const FontMetrics* icon_metrics{nullptr};
     bool icon_pending{false};
     bool icon_silhouette{false};
-    struct LayoutKey {
+    bool color_markup{false};
+    bool outline_copy{false};
+    /// Text layout cache (LayoutLines): least-recently-used, keyed by a hash of the text, the
+    /// layout parameters and the fonts' content (not their addresses: a font can be reassigned
+    /// in place, and a freed one's address reused). The key is kept whole to rule out collisions.
+    struct LayoutEntry {
+        u64 hash{};
         std::string text;
-        s32 scale, wrap, lines;
-        const FontMetrics* font;
-        u32 font_cap;
-        const FontMetrics* icons;
-        bool icons_pending;
-        bool operator==(const LayoutKey&) const = default;
+        s32 scale{}, wrap{}, lines{};
+        u64 fonts{};
+        bool markup{};
+        std::vector<std::string> out;
     };
-    mutable std::vector<std::pair<LayoutKey, std::vector<std::string>>> layout_cache;
+    static constexpr size_t LayoutCacheSize = 512;
+    struct LayoutCache {
+        std::list<LayoutEntry> lru; ///< most recently used first
+        std::unordered_map<u64, std::list<LayoutEntry>::iterator> index;
+        /// Content hash of the text font and the icon font as layout sees them, recomputed on
+        /// the first layout after SetFont / SetIconFont; a new value empties the cache.
+        u64 fonts{};
+        bool fonts_changed{true};
+        LayoutCache() = default;
+        // `index` points into `lru`: a copied canvas starts with an empty cache of its own.
+        LayoutCache(const LayoutCache&) {}
+        LayoutCache& operator=(const LayoutCache& other) {
+            if (this != &other) {
+                lru.clear();
+                index.clear();
+                fonts_changed = true;
+            }
+            return *this;
+        }
+        LayoutCache(LayoutCache&&) = default;
+        LayoutCache& operator=(LayoutCache&&) = default;
+    };
+    mutable LayoutCache layout;
+    [[nodiscard]] u64 FontsFingerprint() const;
     [[nodiscard]] float EffectiveOpacity() const {
         return draw_opacity * layer_opacity;
     }
@@ -428,10 +469,6 @@ void RenderDebugPage(Canvas& canvas, const Manifest& manifest, const StateSnapsh
 /// region's rect at the offset published as "@scroll:<id>", shifted up by that offset and tagged
 /// with the rect as their scroll_clip.
 std::vector<Widget> ExpandWidgets(const Page& page, const StateSnapshot& snapshot);
-/// The elements of one repeating widget (`source.repeat > 0`, a member of `page`), appended to
-/// `out` exactly as ExpandWidgets builds them (the dirty scan hashes them per element).
-void ExpandRepeatTemplate(const Page& page, const Widget& source, const StateSnapshot& snapshot,
-                          std::vector<Widget>& out);
 struct ScrollMemo;
 /// ExpandWidgets into reusable storage: slots [0, returned count) hold the expansion, copy-assigned
 /// over whatever Widgets were there (their strings keep their capacity), later slots are leftovers.
@@ -482,9 +519,18 @@ struct ScrollMemo {
 /// The scroll offset of a region clamped to [0, max_offset] from the snapshot.
 s32 ScrollOffset(const ScrollRegion& region, const StateSnapshot& snapshot);
 /// Half-open element range [first, last) of a template whose rows touch the region's rect at the
-/// given offset (clamped to [0, rows)). Pure; shared by ExpandWidgets and tests.
+/// given offset (clamped to [0, rows)). Pure; shared by ExpandWidgets and tests. An element paints
+/// its rect's rows, widened to [paint_top, paint_bottom) relative to its rect's top when those
+/// reach further (a label's text past a zero or short rect height: RowPaintSpan).
 std::pair<s64, s64> VisibleElementRange(const Widget& widget, const ScrollRegion& region,
-                                        s32 base_y, s32 offset, s64 rows);
+                                        s32 base_y, s32 offset, s64 rows, s32 paint_top = 0,
+                                        s32 paint_bottom = 0);
+/// Vertical span {top, bottom} a repeat template's element can paint, relative to its rect's top,
+/// beyond its rect: the text of a Label / Value / Button (built-in metrics plus a descender
+/// margin for a game font, capped at `max_h`); {0, 0} for other widgets. For the scroll-row cull,
+/// so a label whose rect scrolled above the viewport while its text still shows is drawn
+/// (clipped), not dropped.
+std::array<s32, 2> RowPaintSpan(const Widget& widget, const StateSnapshot& snapshot, s32 max_h);
 /// Thumb rect of a region's scrollbar, {0,0,0,0} when the list fits or no bar is configured.
 std::array<s32, 4> ScrollBarThumb(const ScrollRegion& region, const ScrollMetrics& m, s32 offset);
 /// One axis of an x_bind/y_bind widget's live on-screen offset: `base` when `bind` is empty,
@@ -520,6 +566,8 @@ bool WidgetHiddenHolding(const Widget& widget, const StateSnapshot& snapshot,
                          const std::string& held_point);
 /// The plain stand-in the canvas draws for a code point its font lacks (’ -> ', é -> e), 0 = none.
 char32_t TextFallbackCodepoint(char32_t c);
+/// Bytes of `text` taken by colour tags (Canvas::SetColorMarkup): they draw nothing.
+size_t TextMarkupBytes(std::string_view text);
 /// Hit-tests a tap in canvas pixels; returns the action name of the widget hit, or "".
 std::string HitTest(const Page& page, const StateSnapshot& snapshot, s32 x, s32 y);
 /// Index of the topmost visible expanded widget under (x, y) that `accept` admits, or -1.

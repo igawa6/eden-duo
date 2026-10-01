@@ -77,7 +77,9 @@ typedef struct EdenDsmodModuleExtensions {
     EdenDsmodBool (*on_action)(void* instance, const char* action, int64_t argument);
     // Runs on a single asset worker and may overlap sample/tick; implementation must isolate
     // decoder state. Keys include the "module:" prefix. The host joins the worker before
-    // destroying the module instance.
+    // destroying the module instance. `host` is a worker copy: read_memory, get_read_pointer,
+    // is_mapped, read_romfs, log, get_tick and get_heap_* work as usual; publish_* do nothing and
+    // get_i64/get_f64/get_text return the fallback (except get_i64 "__relocation_delta").
     EdenDsmodBool (*load_image)(void* instance, const EdenDsmodHostApi* host, const char* key,
                                 void* receiver, EdenDsmodImageSink sink);
 } EdenDsmodModuleExtensions;
@@ -228,7 +230,8 @@ typedef struct EdenDsmodModuleDataExtensions {
     uint64_t abi_hash;
     // Any thread, may block (e.g. while the module generates the data); calls are serialized by
     // the host. `key` includes the "module:" prefix. Calls `sink` at most once and returns true,
-    // or returns false (unknown key, generation failed).
+    // or returns false (unknown key, generation failed). `host` is the same worker copy
+    // load_image gets (no publishing, no snapshot reads).
     EdenDsmodBool (*load_data)(void* instance, const EdenDsmodHostApi* host, const char* key,
                                void* receiver, EdenDsmodDataSink sink);
 } EdenDsmodModuleDataExtensions;

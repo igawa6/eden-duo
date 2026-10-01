@@ -4,9 +4,10 @@
 // Text: the built-in 3x5 font, UTF-8 decoding (a byte that is not well-formed UTF-8 draws as
 // Latin-1), the plain stand-in for a code point a font lacks, and the Canvas text calls:
 // MeasureText, LayoutText (wrap, max_lines, ellipsis; cached per canvas), DrawTextBlock,
-// DrawTextAligned, DrawText, FindGlyph, and inline icons from a second font (TextIconBase code
-// points). With a game font set, a glyph is an alpha mask blitted by DrawImageRegion
-// (mod_ui_image.cpp) in the caller's colour; the built-in font draws FillRect cells.
+// DrawTextAligned, DrawText, FindGlyph, inline icons from a second font (TextIconBase code
+// points), and colour tags ("{c:#AARRGGBB}".."{/c}", SetColorMarkup). With a game font set, a
+// glyph is an alpha mask blitted by DrawImageRegion (mod_ui_image.cpp) in the caller's colour;
+// the built-in font draws FillRect cells.
 // Not here: the map's label bitmaps (mod_ui_map_widget.cpp), text bounds for dirty rects
 // (WidgetTextBounds, mod_ui_widget_state.cpp).
 
@@ -16,6 +17,7 @@
 #include <string_view>
 #include <vector>
 
+#include "common/cityhash.h"
 #include "core/mods/mod_msbt.h"
 #include "core/mods/mod_ui.h"
 
@@ -148,7 +150,101 @@ char32_t FallbackCodepoint(char32_t c) {
 bool IsIconCodepoint(char32_t c) {
     return c >= TextIconBase && c <= TextIconLast;
 }
+
+/// A colour tag at text[i]: "{c:#AARRGGBB}" (open) or "{/c}" (close). len 0 = not a tag.
+struct MarkupTag {
+    size_t len{0};
+    bool close{false};
+    u32 color{0};
+};
+MarkupTag ReadMarkupTag(std::string_view text, size_t i) {
+    const std::string_view rest = text.substr(i);
+    if (rest.starts_with("{/c}")) {
+        return {4, true, 0};
+    }
+    if (rest.size() < 13 || !rest.starts_with("{c:#") || rest[12] != '}') {
+        return {};
+    }
+    u32 color = 0;
+    for (size_t k = 4; k < 12; ++k) {
+        const char c = rest[k];
+        const u32 digit = c >= '0' && c <= '9'   ? static_cast<u32>(c - '0')
+                          : c >= 'a' && c <= 'f' ? static_cast<u32>(c - 'a' + 10)
+                          : c >= 'A' && c <= 'F' ? static_cast<u32>(c - 'A' + 10)
+                                                 : 16u;
+        if (digit == 16u) {
+            return {};
+        }
+        color = (color << 4) | digit;
+    }
+    return {13, false, color};
+}
+
+/// The end of the whole tag when `markup` is on and one starts at text[i], else of one code point.
+size_t NextUnitEnd(std::string_view text, size_t i, bool markup) {
+    if (markup) {
+        if (const MarkupTag tag = ReadMarkupTag(text, i); tag.len > 0) {
+            return i + tag.len;
+        }
+    }
+    NextCodepoint(text, i);
+    return i;
+}
+
+/// Drops trailing spaces; with `markup`, also the spaces before trailing colour tags, which stay
+/// ("red {/c}" -> "red{/c}"), so a centred line or an ellipsis is not pushed off by a blank.
+void TrimTrailingSpaces(std::string& s, bool markup) {
+    std::string tags;
+    while (true) {
+        while (!s.empty() && s.back() == ' ') {
+            s.pop_back();
+        }
+        if (!markup || s.empty() || s.back() != '}') {
+            break;
+        }
+        const size_t brace = s.rfind('{');
+        if (brace == std::string::npos || brace + ReadMarkupTag(s, brace).len != s.size()) {
+            break;
+        }
+        tags.insert(0, s, brace);
+        s.resize(brace);
+    }
+    s += tags;
+}
+
+/// Whether `s` holds anything besides colour tags (with `markup`; else whether it is non-empty).
+bool HasTextBesidesTags(std::string_view s, bool markup) {
+    if (!markup) {
+        return !s.empty();
+    }
+    return TextMarkupBytes(s) < s.size();
+}
+
+/// Whether a colour span is still open at the end of `s`.
+bool SpanOpenAtEnd(std::string_view s) {
+    bool open = false;
+    for (size_t i = 0; i < s.size();) {
+        const MarkupTag tag = ReadMarkupTag(s, i);
+        if (tag.len > 0) {
+            open = !tag.close;
+            i += tag.len;
+        } else {
+            ++i;
+        }
+    }
+    return open;
+}
 } // namespace
+
+size_t TextMarkupBytes(std::string_view text) {
+    size_t bytes = 0;
+    for (size_t i = 0; i < text.size();) {
+        const size_t len = ReadMarkupTag(text, i).len;
+        bytes += len;
+        i += len > 0 ? len : 1;
+    }
+    return bytes;
+}
 
 char32_t TextFallbackCodepoint(char32_t c) {
     return FallbackCodepoint(c);
@@ -163,6 +259,10 @@ s32 Canvas::MeasureText(std::string_view text, s32 scale) const {
         const f32 ratio = wanted / static_cast<f32>(font_metrics->line_height);
         f32 pen = 0.0f;
         for (size_t i = 0; i < text.size();) {
+            if (const size_t tag = color_markup ? ReadMarkupTag(text, i).len : 0; tag > 0) {
+                i += tag;
+                continue;
+            }
             const char32_t cp = NextCodepoint(text, i);
             if (cp == '\n') {
                 continue;
@@ -179,6 +279,10 @@ s32 Canvas::MeasureText(std::string_view text, s32 scale) const {
     s32 glyphs = 0; // 3 px glyph + 1 px gap per codepoint, built-in font
     f32 icons = 0.0f;
     for (size_t i = 0; i < text.size();) {
+        if (const size_t tag = color_markup ? ReadMarkupTag(text, i).len : 0; tag > 0) {
+            i += tag;
+            continue;
+        }
         const char32_t cp = NextCodepoint(text, i);
         if (cp == '\n') {
             continue;
@@ -253,25 +357,75 @@ f32 Canvas::DrawIcon(f32 pen, f32 baseline, char32_t glyph, f32 cap, s32 scale, 
     return static_cast<f32>(MeasureText(alt, scale));
 }
 
+namespace {
+u64 MixLayoutHash(u64 h, u64 v) {
+    h ^= v + 0x9E3779B97F4A7C15ull + (h << 6) + (h >> 2);
+    return h;
+}
+
+/// Everything about a font that text layout reads: its glyph table, the out-of-run glyphs and the
+/// metrics that scale them.
+u64 FontContentHash(const FontMetrics& font) {
+    u64 h = Common::CityHash64(reinterpret_cast<const char*>(font.glyphs.data()),
+                               font.glyphs.size() * sizeof(FontGlyph));
+    h = MixLayoutHash(h, font.line_height);
+    h = MixLayoutHash(h, font.first_codepoint);
+    h = MixLayoutHash(h, font.ascent);
+    h = MixLayoutHash(h, font.extra.size());
+    u64 extra = 0; // order-free: an unordered_map's iteration order is not part of its content
+    for (const auto& [c, g] : font.extra) {
+        u64 e = MixLayoutHash(c, (u64{g.x} << 48) | (u64{g.y} << 32) | (u64{g.w} << 16) | g.h);
+        e = MixLayoutHash(e, (u64{static_cast<u16>(g.bearing_x)} << 32) |
+                                 (u64{static_cast<u16>(g.bearing_y)} << 16) | g.advance);
+        extra += e;
+    }
+    return MixLayoutHash(h, extra);
+}
+} // namespace
+
+u64 Canvas::FontsFingerprint() const {
+    u64 h = HasFont() ? MixLayoutHash(1, FontContentHash(*font_metrics)) : 2;
+    // Inline icons take their advance from the icon font only while it can draw them; otherwise
+    // from whether it is still loading.
+    const bool icons = icon_atlas != nullptr && icon_metrics != nullptr && icon_atlas->Valid();
+    h = MixLayoutHash(h, icons ? FontContentHash(*icon_metrics) : 3);
+    return MixLayoutHash(h, icon_pending ? 5 : 7);
+}
+
 std::vector<std::string> Canvas::LayoutText(std::string_view text, s32 scale, s32 wrap_width,
                                             s32 max_lines) const {
+    return LayoutLines(text, scale, wrap_width, max_lines);
+}
+
+const std::vector<std::string>& Canvas::LayoutLines(std::string_view text, s32 scale,
+                                                    s32 wrap_width, s32 max_lines) const {
     if (scale <= 0) {
         scale = 1;
     }
-    LayoutKey key{std::string{text},
-                  scale,
-                  wrap_width,
-                  max_lines,
-                  HasFont() ? font_metrics : nullptr,
-                  HasFont() ? font_metrics->line_height ^
-                                  (static_cast<u32>(font_metrics->extra.size()) << 16)
-                            : 0,
-                  icon_atlas != nullptr ? icon_metrics : nullptr,
-                  icon_pending};
-    for (const auto& [k, v] : layout_cache) {
-        if (k == key) {
-            return v;
+    if (layout.fonts_changed) {
+        layout.fonts_changed = false;
+        if (const u64 fp = FontsFingerprint(); fp != layout.fonts) {
+            layout.fonts = fp;
+            layout.lru.clear();
+            layout.index.clear();
         }
+    }
+    u64 hash = Common::CityHash64(text.data(), text.size());
+    hash = MixLayoutHash(hash, static_cast<u32>(scale));
+    hash = MixLayoutHash(hash, static_cast<u32>(wrap_width));
+    hash = MixLayoutHash(hash, static_cast<u32>(max_lines));
+    hash = MixLayoutHash(hash, color_markup ? 11 : 13);
+    const auto same = [&](const LayoutEntry& e) {
+        return e.scale == scale && e.wrap == wrap_width && e.lines == max_lines &&
+               e.markup == color_markup && e.fonts == layout.fonts && e.text == text;
+    };
+    if (const auto found = layout.index.find(hash); found != layout.index.end()) {
+        if (same(*found->second)) {
+            layout.lru.splice(layout.lru.begin(), layout.lru, found->second);
+            return found->second->out;
+        }
+        layout.lru.erase(found->second); // a hash collision: the newer text takes the slot
+        layout.index.erase(found);
     }
     const auto width_of = [&](std::string_view part) { return MeasureText(part, scale); };
     std::vector<std::string> lines;
@@ -309,11 +463,12 @@ std::vector<std::string> Canvas::LayoutText(std::string_view text, s32 scale, s3
                     // A word longer than a whole line (or text without spaces): by character.
                     std::string piece;
                     for (size_t i = 0; i < word.size();) {
-                        size_t j = i;
-                        NextCodepoint(word, j);
+                        const size_t j = NextUnitEnd(word, i, color_markup);
                         std::string next = piece;
                         next += word.substr(i, j - i);
-                        if (!piece.empty() && width_of(next) > wrap_width) {
+                        // A piece of colour tags only (no width) never makes a line of its own.
+                        if (HasTextBesidesTags(piece, color_markup) &&
+                            width_of(next) > wrap_width) {
                             lines.push_back(std::move(piece));
                             piece = std::string{word.substr(i, j - i)};
                         } else {
@@ -331,9 +486,8 @@ std::vector<std::string> Canvas::LayoutText(std::string_view text, s32 scale, s3
             }
             lines.push_back(std::move(cur));
             for (size_t i = first_line; i < lines.size(); ++i) {
-                while (!lines[i].empty() && lines[i].back() == ' ') {
-                    lines[i].pop_back(); // a trailing space would pull a centred line off-centre
-                }
+                // a trailing space would pull a centred line off-centre
+                TrimTrailingSpaces(lines[i], color_markup);
             }
         }
         if (nl == std::string_view::npos) {
@@ -341,33 +495,73 @@ std::vector<std::string> Canvas::LayoutText(std::string_view text, s32 scale, s3
         }
         start = nl + 1;
     }
+    if (color_markup) {
+        // A span left open at a line's end is re-opened at the next line's start: each line is
+        // drawn on its own, from the draw colour.
+        std::string open;
+        for (auto& line : lines) {
+            const std::string carried = open;
+            for (size_t i = 0; i < line.size();) {
+                const MarkupTag tag = ReadMarkupTag(line, i);
+                if (tag.len > 0) {
+                    open = tag.close ? std::string{} : line.substr(i, tag.len);
+                }
+                i += tag.len > 0 ? tag.len : 1;
+            }
+            line.insert(0, carried);
+        }
+    }
     if (max_lines > 0 && lines.size() > static_cast<size_t>(max_lines)) {
         lines.resize(static_cast<size_t>(max_lines));
         const bool has_ellipsis = HasFont() && font_metrics->Find(0x2026) != nullptr &&
                                   font_metrics->Find(0x2026)->advance > 0;
         const std::string ellipsis = has_ellipsis ? "\xE2\x80\xA6" : "...";
         std::string& last = lines.back();
-        const auto trim_spaces = [&last] {
-            while (!last.empty() && last.back() == ' ') {
-                last.pop_back();
-            }
-        };
+        const auto trim_spaces = [&last, this] { TrimTrailingSpaces(last, color_markup); };
         trim_spaces();
         while (!last.empty() && wrap_width > 0 && width_of(last + ellipsis) > wrap_width) {
             size_t cut = last.size() - 1;
             while (cut > 0 && (static_cast<unsigned char>(last[cut]) & 0xC0) == 0x80) {
                 --cut;
             }
+            if (color_markup && last.back() == '}') {
+                // A tag is dropped whole, never cut into (which would print its remains).
+                const size_t brace = last.rfind('{');
+                if (brace != std::string::npos &&
+                    brace + ReadMarkupTag(last, brace).len == last.size()) {
+                    cut = brace;
+                }
+            }
             last.resize(cut);
             trim_spaces();
         }
+        if (color_markup) {
+            // A span opened right at the cut colours nothing: drop its tag. One the cut ended
+            // early is closed: the ellipsis is not part of it.
+            while (last.ends_with('}')) {
+                const size_t brace = last.rfind('{');
+                const MarkupTag tag =
+                    brace == std::string::npos ? MarkupTag{} : ReadMarkupTag(last, brace);
+                if (tag.len == 0 || tag.close || brace + tag.len != last.size()) {
+                    break;
+                }
+                last.resize(brace);
+                trim_spaces();
+            }
+            if (SpanOpenAtEnd(last)) {
+                last += "{/c}";
+            }
+        }
         last += ellipsis;
     }
-    if (layout_cache.size() >= 64) {
-        layout_cache.erase(layout_cache.begin());
+    if (layout.lru.size() >= LayoutCacheSize) {
+        layout.index.erase(layout.lru.back().hash);
+        layout.lru.pop_back();
     }
-    layout_cache.emplace_back(std::move(key), lines);
-    return lines;
+    layout.lru.push_front(LayoutEntry{hash, std::string{text}, scale, wrap_width, max_lines,
+                                      layout.fonts, color_markup, std::move(lines)});
+    layout.index.emplace(hash, layout.lru.begin());
+    return layout.lru.front().out;
 }
 
 void Canvas::DrawTextBlock(s32 x, s32 y, std::string_view text, s32 scale, u32 argb, s32 align,
@@ -376,7 +570,8 @@ void Canvas::DrawTextBlock(s32 x, s32 y, std::string_view text, s32 scale, u32 a
         scale = 1;
     }
     const s32 pitch = scale * 5 + (line_gap >= 0 ? line_gap : scale * 3);
-    const auto lines = LayoutText(text, scale, wrap_width, max_lines);
+    // By reference: nothing below lays text out again (DrawTextAligned only measures and draws).
+    const auto& lines = LayoutLines(text, scale, wrap_width, max_lines);
     for (size_t i = 0; i < lines.size(); ++i) {
         DrawTextAligned(x, y + static_cast<s32>(i) * pitch, lines[i], scale, argb, align);
     }
@@ -406,6 +601,24 @@ void Canvas::DrawText(s32 x, s32 y, std::string_view text, s32 scale, u32 argb) 
     if (scale <= 0) {
         scale = 1;
     }
+    // Colour tags: always skipped, obeyed only off an outline copy. A package outlines a label
+    // with offset copies of it in the outline colour ("outline_copy": everything in one colour);
+    // those must not pick up the spans, only the main copy does.
+    const u32 base = argb;
+    const auto markup_tag = [&](size_t& i) {
+        if (!color_markup) {
+            return false;
+        }
+        const MarkupTag tag = ReadMarkupTag(text, i);
+        if (tag.len == 0) {
+            return false;
+        }
+        if (!outline_copy) {
+            argb = tag.close ? base : tag.color;
+        }
+        i += tag.len;
+        return true;
+    };
     if (HasFont()) {
         // The game's own font. Its atlas keeps coverage in alpha, so each glyph is a mask that
         // the caller's colour is painted through -- the same label code gets the game's
@@ -416,35 +629,68 @@ void Canvas::DrawText(s32 x, s32 y, std::string_view text, s32 scale, u32 argb) 
         // own design size.
         const f32 wanted = static_cast<f32>(scale) * 5.0f;
         const f32 ratio = wanted / static_cast<f32>(font_metrics->line_height);
-        f32 pen = static_cast<f32>(x);
         const f32 baseline = static_cast<f32>(y) + wanted;
-        for (size_t i = 0; i < text.size();) {
-            const char32_t cp = NextCodepoint(text, i);
-            if (cp == '\n') {
-                continue;
+        // Optional outline: the glyph mask stamped in the outline colour around a ring first
+        // (16 directions), then the fill on top -- the game's HUD lettering. Optional rise: glyph
+        // i sits i * text_rise pixels higher, as the game's HUD digits step up.
+        const bool outline = text_outline_px > 0 && (text_outline >> 24) != 0;
+        for (int pass = outline ? 0 : 1; pass < 2; ++pass) {
+            f32 pen = static_cast<f32>(x);
+            s32 index = 0;
+            argb = base; // colour spans restart with each pass
+            for (size_t i = 0; i < text.size();) {
+                // The outline pass skips colour tags too; it always paints the outline colour.
+                if (markup_tag(i)) {
+                    continue;
+                }
+                const char32_t cp = NextCodepoint(text, i);
+                if (cp == '\n') {
+                    continue;
+                }
+                if (IsIconCodepoint(cp)) {
+                    if (pass == 1)
+                        pen += DrawIcon(pen, baseline, cp - TextIconBase, wanted, scale, argb);
+                    else
+                        pen += wanted; // placeholder advance in the outline pass
+                    continue;
+                }
+                const auto* g = FindGlyph(cp);
+                if (g == nullptr) {
+                    pen += wanted * 0.5f;
+                    continue;
+                }
+                // Only digits rise ("35 WONDER SEEDS": the 3 and 5 step up, the words do not).
+                const bool digit = cp >= '0' && cp <= '9';
+                const f32 lift = digit ? text_rise * static_cast<f32>(index++) : 0.0f;
+                if (g->w > 0 && g->h > 0) {
+                    const s32 gx = static_cast<s32>(pen + static_cast<f32>(g->bearing_x) * ratio);
+                    const s32 gy = static_cast<s32>(baseline - lift -
+                                                    static_cast<f32>(g->bearing_y) * ratio);
+                    const s32 gw = std::max(1, static_cast<s32>(static_cast<f32>(g->w) * ratio));
+                    const s32 gh = std::max(1, static_cast<s32>(static_cast<f32>(g->h) * ratio));
+                    if (pass == 0) {
+                        const f32 r = static_cast<f32>(text_outline_px);
+                        for (int k = 0; k < 16; ++k) {
+                            const f32 a = static_cast<f32>(k) * 0.39269908f; // 2*pi/16
+                            DrawImageMask(gx + static_cast<s32>(std::lround(r * std::cos(a))),
+                                          gy + static_cast<s32>(std::lround(r * std::sin(a))), gw,
+                                          gh, *font_atlas, g->x, g->y, g->w, g->h, text_outline);
+                        }
+                    } else {
+                        DrawImageRegion(gx, gy, gw, gh, *font_atlas, g->x, g->y, g->w, g->h,
+                                        argb);
+                    }
+                }
+                pen += static_cast<f32>(g->advance) * ratio;
             }
-            if (IsIconCodepoint(cp)) {
-                pen += DrawIcon(pen, baseline, cp - TextIconBase, wanted, scale, argb);
-                continue;
-            }
-            const auto* g = FindGlyph(cp);
-            if (g == nullptr) {
-                pen += wanted * 0.5f;
-                continue;
-            }
-            if (g->w > 0 && g->h > 0) {
-                const s32 gx = static_cast<s32>(pen + static_cast<f32>(g->bearing_x) * ratio);
-                const s32 gy = static_cast<s32>(baseline - static_cast<f32>(g->bearing_y) * ratio);
-                const s32 gw = std::max(1, static_cast<s32>(static_cast<f32>(g->w) * ratio));
-                const s32 gh = std::max(1, static_cast<s32>(static_cast<f32>(g->h) * ratio));
-                DrawImageRegion(gx, gy, gw, gh, *font_atlas, g->x, g->y, g->w, g->h, argb);
-            }
-            pen += static_cast<f32>(g->advance) * ratio;
         }
         return;
     }
     s32 cx = x;
     for (size_t i = 0; i < text.size();) {
+        if (markup_tag(i)) {
+            continue;
+        }
         char32_t cp = NextCodepoint(text, i);
         if (cp == '\n') {
             continue;

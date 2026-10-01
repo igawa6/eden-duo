@@ -89,6 +89,22 @@ private:
     bool active{};
 };
 
+/// A guest float as an integer, defined for every input: NaN -> 0, out of range -> the nearest
+/// s64 (what arm64's fcvtzs does). A plain cast is UB there, and x86 and arm64 disagree on it, so
+/// loading-screen garbage (NaN, 1e30) read differently on the desktop and the handheld.
+constexpr s64 SaturatingToS64(f64 value) {
+    if (value != value) {
+        return 0;
+    }
+    if (value >= 9223372036854775808.0) {
+        return std::numeric_limits<s64>::max();
+    }
+    if (value < -9223372036854775808.0) {
+        return std::numeric_limits<s64>::min();
+    }
+    return static_cast<s64>(value);
+}
+
 constexpr u64 MillisecondsToModTicks(u64 milliseconds) {
     return std::max<u64>(1, (milliseconds * ModTickHz + 999) / 1000);
 }
@@ -101,7 +117,7 @@ constexpr u32 MaxTextLength = 256;
 constexpr std::array<const char*, 6> HapticStrengthNames{"off",     "light", "click",
                                                          "confirm", "heavy", "reject"};
 constexpr std::array<const char*, static_cast<size_t>(HapticKind::Count)> HapticKindNames{
-    "tap", "write", "select", "drag", "drop", "marker", "refused", "hold"};
+    "tap", "write", "select", "drag", "drop", "marker", "refused", "hold", "swipe"};
 } // namespace
 
 InputCommon::VirtualGamepad::VirtualButton ParseButton(const std::string& name, bool& ok);

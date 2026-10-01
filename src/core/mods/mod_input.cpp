@@ -4,7 +4,8 @@
 // Second-screen touch input: from raw touch points to taps, drags, pans and scrolls, and the
 // interaction state that pages read back.
 //   - Gestures: UpdateGestures (tap slop, pan, pinch-zoom on pan_zoom widgets, drag-and-drop,
-//     scroll-region drags; ignored during a page transition, absorbed by input_block widgets),
+//     scroll-region drags, press-and-hold, horizontal / vertical swipe; ignored during a page transition,
+//     absorbed by input_block widgets),
 //     UpdateScrollGesture, GlideViews / ReturnIdleViews / GetViewState, ApplyViewCorrections.
 //   - DrainTaps: hit-tests queued taps and drops against the widgets and the previous render's
 //     map draw records (map_draw_records_published), runs the matching action (RunAction,
@@ -31,6 +32,7 @@
 #include "core/core.h"
 #include "core/mods/mod_runtime.h"
 #include "core/mods/mod_runtime_shared.h"
+#include "core/mods/mod_view_default.h"
 #include "video_core/dsmod/aux_routing.h"
 #include "video_core/gpu.h"
 
@@ -82,7 +84,16 @@ std::string ModRuntime::PannableAt(const StateSnapshot& snapshot, s32 x, s32 y) 
 
 std::pair<float, float> ModRuntime::ZoomLimits(const std::string& key) const {
     if (const auto* w = FindWidgetByKey(key)) {
-        return {w->min_zoom, w->max_zoom};
+        float lo = w->min_zoom;
+        // A map with a bound view rect (runtime 14): the renderer publishes how far out the pinch
+        // may go -- down to the whole-area fit -- as "<key>#zmin". The caller holds view_mutex.
+        if (w->map_extras != nullptr && w->map_extras->HasViewRect()) {
+            if (const auto it = map_follow_state.find(key + "#zmin");
+                it != map_follow_state.end() && it->second[0] > 0.0f) {
+                lo = it->second[0];
+            }
+        }
+        return {std::min(lo, w->max_zoom), w->max_zoom};
     }
     return {1.0f, 8.0f};
 }
@@ -231,12 +242,45 @@ void ModRuntime::UpdateGestures(const StateSnapshot& snapshot,
         // Press-and-hold (runtime 13): an on_hold widget under the first finger arms the hold.
         // Like a tap (not a pan or drag), a hold reaches on_hold widgets drawn above an
         // input_block and never those beneath one.
+        // Horizontal swipe (runtime 14): the topmost swipe widget under the first finger arms the
+        // swipe, chosen the same way; never on a map / pan_zoom widget, over a pannable widget
+        // (the finger pans it) or on a draggable one (the finger drags it).
+        // Vertical swipe (unreleased runtime 15 addition): the same widget choice; never armed
+        // over a scroll region that can scroll (a vertical drag scrolls the list there).
         hold_action.clear();
+        swipe_left_action.clear();
+        swipe_right_action.clear();
+        swipe_up_action.clear();
+        swipe_down_action.clear();
         {
             bool has_hold = false;
             s32 need_ms = 0;
+            bool swipe_left = false;
+            bool swipe_right = false;
+            bool swipe_up = false;
+            bool swipe_down = false;
+            s32 swipe_px = 0;
             if (!gesture_ignored && !drag_state.candidate && current_page < manifest.pages.size()) {
                 const auto expanded = ExpandWidgets(manifest.pages[current_page], snapshot);
+                if (gesture_target.empty()) {
+                    const s64 swipe_hit = HitTestIndex(expanded, snapshot, gesture_down_x,
+                                                       gesture_down_y, SwipeHitFilter);
+                    if (swipe_hit >= 0 && SwipeArms(expanded[static_cast<size_t>(swipe_hit)])) {
+                        const Widget& sw = expanded[static_cast<size_t>(swipe_hit)];
+                        swipe_left_action = sw.on_swipe_left;
+                        swipe_right_action = sw.on_swipe_right;
+                        swipe_left = !sw.on_swipe_left.empty();
+                        swipe_right = !sw.on_swipe_right.empty();
+                        if ((!sw.on_swipe_up.empty() || !sw.on_swipe_down.empty()) &&
+                            ScrollRegionAt(snapshot, gesture_down_x, gesture_down_y).empty()) {
+                            swipe_up_action = sw.on_swipe_up;
+                            swipe_down_action = sw.on_swipe_down;
+                            swipe_up = !sw.on_swipe_up.empty();
+                            swipe_down = !sw.on_swipe_down.empty();
+                        }
+                        swipe_px = sw.swipe_px;
+                    }
+                }
                 const s64 hold_hit = HitTestIndex(
                     expanded, snapshot, gesture_down_x, gesture_down_y,
                     [](const Widget& w) { return !w.on_hold.empty() || w.input_block; });
@@ -248,6 +292,8 @@ void ModRuntime::UpdateGestures(const StateSnapshot& snapshot,
                 }
             }
             hold_tracker.Down(SteadyMs(), has_hold, need_ms, current_page);
+            swipe_tracker.Down(SteadyMs(), gesture_down_x, gesture_down_y, swipe_left, swipe_right,
+                               swipe_px, current_page, swipe_up, swipe_down);
         }
         // A scrollable list under the finger owns a gesture no draggable widget claimed: a
         // vertical drag scrolls it (never pans a map beneath), a still finger is still a tap on
@@ -348,8 +394,18 @@ void ModRuntime::UpdateGestures(const StateSnapshot& snapshot,
             gesture_moved = true;
         }
     }
+    // Horizontal swipe: judged when the finger leaves the slop; a horizontal start owns the
+    // gesture, so a scroll region under it does not start a vertical drag.
+    if (!now.empty()) {
+        swipe_tracker.Move(SteadyMs(), now.front().x, now.front().y,
+                           now.size() > 1 || drag_state.active || gesture_ignored ||
+                               page_anim.active || page_anim_request.has_value() ||
+                               hold_tracker.Fired(),
+                           current_page);
+    }
     if (!scroll_target.empty() && !now.empty()) {
-        UpdateScrollGesture(snapshot, now.size(), now.front().y, gesture_moved, false);
+        UpdateScrollGesture(snapshot, now.size(), now.front().y,
+                            gesture_moved && !swipe_tracker.OwnsGesture(), false);
     }
     // Press-and-hold: fires once, on the tick the still single finger reaches hold_ms.
     if (!now.empty() &&
@@ -383,6 +439,7 @@ void ModRuntime::UpdateGestures(const StateSnapshot& snapshot,
 
     // Every finger gone: the gesture is over. A still one was a tap on whatever it landed on.
     if (now.empty() && !live_fingers.empty()) {
+        const SwipeDir swipe_dir = swipe_tracker.Up();
         if (!scroll_target.empty()) {
             UpdateScrollGesture(snapshot, 0, live_fingers.front().y, gesture_moved, true);
         }
@@ -424,6 +481,26 @@ void ModRuntime::UpdateGestures(const StateSnapshot& snapshot,
         } else if (hold_tracker.Fired()) {
             LOG_INFO(Core, "DSMod: aux hold at canvas({},{}) released (no tap)", gesture_down_x,
                      gesture_down_y);
+        } else if (swipe_dir != SwipeDir::None) {
+            // A fired swipe (runtime 14): queued like a hold, with the widget's action; the lift
+            // is not a tap (the finger left the slop).
+            PendingTap swipe{gesture_down_x, gesture_down_y};
+            const char* dir_name = "right";
+            swipe.swipe_action = swipe_right_action;
+            if (swipe_dir == SwipeDir::Left) {
+                dir_name = "left";
+                swipe.swipe_action = swipe_left_action;
+            } else if (swipe_dir == SwipeDir::Up) {
+                dir_name = "up";
+                swipe.swipe_action = swipe_up_action;
+            } else if (swipe_dir == SwipeDir::Down) {
+                dir_name = "down";
+                swipe.swipe_action = swipe_down_action;
+            }
+            LOG_INFO(Core, "DSMod: aux swipe {} from canvas({},{}) -> '{}'", dir_name, swipe.x,
+                     swipe.y, swipe.swipe_action);
+            std::scoped_lock lk{tap_mutex};
+            pending_taps.push_back(std::move(swipe));
         } else if (!gesture_moved) {
             const PendingTap tap{gesture_down_x, gesture_down_y};
             LOG_INFO(Core, "DSMod: aux tap at canvas({},{})", tap.x, tap.y);
@@ -440,6 +517,10 @@ void ModRuntime::UpdateGestures(const StateSnapshot& snapshot,
         }
         hold_tracker.Up();
         hold_action.clear();
+        swipe_left_action.clear();
+        swipe_right_action.clear();
+        swipe_up_action.clear();
+        swipe_down_action.clear();
         gesture_target.clear();
         gesture_moved = false;
         gesture_blocked = false;
@@ -462,8 +543,8 @@ void ModRuntime::ReturnIdleViews() {
     const auto now = std::chrono::steady_clock::now();
     std::scoped_lock lk{view_mutex};
     for (auto& [key, view] : view_state) {
-        const bool custom = std::fabs(view.zoom - 1.0f) > 0.001f || std::fabs(view.pan_x) > 0.5f ||
-                            std::fabs(view.pan_y) > 0.5f;
+        // away from its home: its bound default view, else zoom 1 / no pan (mod_view_default.h)
+        const bool custom = !view.gliding && ViewAwayFromHome(view);
         if (view.gliding || !custom || (!live_fingers.empty() && gesture_target == key)) {
             continue;
         }
@@ -476,14 +557,39 @@ void ModRuntime::ReturnIdleViews() {
             now - touched->second < std::chrono::milliseconds{widget->view_idle_ms}) {
             continue;
         }
-        view.gliding = true;
-        view.goal_zoom = 1.0f;
-        view.goal_pan_x = 0.0f;
-        view.goal_pan_y = 0.0f;
+        GlideViewHome(view);
         LOG_INFO(Core,
                  "DSMod: view '{}' idle for {} ms, gliding home from zoom {:.2f} pan "
                  "({:.0f},{:.0f})",
                  key, widget->view_idle_ms, view.zoom, view.pan_x, view.pan_y);
+    }
+}
+
+void ModRuntime::ApplyViewDefaults(const StateSnapshot& snapshot) {
+    if (current_page >= manifest.pages.size()) {
+        return;
+    }
+    const Page& page = manifest.pages[current_page];
+    std::scoped_lock lk{view_mutex};
+    for (size_t i = 0; i < page.widgets.size(); ++i) {
+        const Widget& w = page.widgets[i];
+        if (!w.pan_zoom || !w.view_default) {
+            continue;
+        }
+        const ViewDefaultBinds& b = *w.view_default;
+        const std::string key = WidgetKey(page, i);
+        const auto home =
+            DefaultView(w.rect[2], w.rect[3], SnapshotNumber(snapshot, b.zoom_bind),
+                        SnapshotNumber(snapshot, b.cx_bind), SnapshotNumber(snapshot, b.cy_bind),
+                        w.min_zoom, w.max_zoom);
+        const auto reset = b.reset_bind.empty() ? std::optional<f64>{}
+                                                : SnapshotNumber(snapshot, b.reset_bind);
+        const bool held = !live_fingers.empty() && gesture_target == key;
+        auto& view = view_state[key];
+        if (ApplyViewDefault(view, home, reset, held)) {
+            LOG_DEBUG(Core, "DSMod: view '{}' home zoom {:.3f} pan ({:.0f},{:.0f}), view zoom {:.3f}",
+                      key, view.home_zoom, view.home_pan_x, view.home_pan_y, view.zoom);
+        }
     }
 }
 
@@ -879,6 +985,7 @@ void ModRuntime::DrainTaps(const StateSnapshot& snapshot) {
             }
         }
         last_map_tap = std::pair{wx, wy};
+        ++map_tap_seq;
         out_line(fmt::format("DSMod map tap ({},{}) -> world ({:.3f},{:.3f}) map ({:.3f},{:.3f})",
                              tap.x, tap.y, wx, wy, vx, vy));
         map_tap_ctx = {true, vx, vy, wx, wy, -1, {}};
@@ -902,6 +1009,17 @@ void ModRuntime::DrainTaps(const StateSnapshot& snapshot) {
                 QueueHaptic(HapticKind::Hold, -1, -1, "hold '" + tap.hold_action + "'");
             } else if (ran.result == ActionResult::Refused) {
                 QueueHaptic(HapticKind::Refused, -1, -1, "hold '" + tap.hold_action + "'");
+            }
+            continue;
+        }
+        if (!tap.swipe_action.empty()) {
+            // A fired swipe (runtime 14): the swipe widget's action, no hit test; the swipe haptic
+            // (manifest haptics "swipe", strength "light" by default) when it ran.
+            const Ran ran = run_named(tap.swipe_action, std::nullopt, "swipe", tap.x, tap.y);
+            if (ran.result == ActionResult::Done) {
+                QueueHaptic(HapticKind::Swipe, -1, -1, "swipe '" + tap.swipe_action + "'");
+            } else if (ran.result == ActionResult::Refused) {
+                QueueHaptic(HapticKind::Refused, -1, -1, "swipe '" + tap.swipe_action + "'");
             }
             continue;
         }
@@ -1105,9 +1223,26 @@ void ModRuntime::FlushHaptic() {
                                          static_cast<u8>(manifest.haptics.respect_system ? 1 : 0)});
 }
 
-void ModRuntime::PublishMapState(StateSnapshot& snapshot) {
+void ModRuntime::PublishMapTap(StateSnapshot& snapshot) const {
+    if (!last_map_tap) {
+        return;
+    }
+    snapshot.floats["@map_tap_x"] = last_map_tap->first;
+    snapshot.floats["@map_tap_y"] = last_map_tap->second;
+    snapshot.ints["@map_tap_x"] = SaturatingToS64(last_map_tap->first);
+    snapshot.ints["@map_tap_y"] = SaturatingToS64(last_map_tap->second);
+    snapshot.ints["@map_tap_seq"] = map_tap_seq;
+}
+
+void ModRuntime::PublishFlags(StateSnapshot& snapshot) {
     for (const auto& [name, value] : flags) {
-        snapshot.ints["@flag:" + name] = value;
+        snapshot.ints[flag_keys(name)] = value;
+    }
+}
+
+void ModRuntime::PublishMapState(StateSnapshot& snapshot, bool with_flags) {
+    if (with_flags) {
+        PublishFlags(snapshot);
     }
     if (!map_groups_ready) {
         map_groups.clear();
@@ -1184,7 +1319,7 @@ void ModRuntime::PublishMapState(StateSnapshot& snapshot) {
     for (const auto& group : map_groups) {
         const auto sel = map_selections.find(group);
         const s64 idx = sel == map_selections.end() ? -1 : sel->second;
-        snapshot.ints["@map_sel:" + group] = idx;
+        snapshot.ints[map_sel_keys(group)] = idx;
         s64 sx = -1, sy = -1;
         if (idx >= 0 && records_current) {
             std::scoped_lock rlk{map_records_mutex};
@@ -1197,15 +1332,10 @@ void ModRuntime::PublishMapState(StateSnapshot& snapshot) {
                 }
             }
         }
-        snapshot.ints["@map_sel_sx:" + group] = sx;
-        snapshot.ints["@map_sel_sy:" + group] = sy;
+        snapshot.ints[map_sel_sx_keys(group)] = sx;
+        snapshot.ints[map_sel_sy_keys(group)] = sy;
     }
-    if (last_map_tap) {
-        snapshot.floats["@map_tap_x"] = last_map_tap->first;
-        snapshot.floats["@map_tap_y"] = last_map_tap->second;
-        snapshot.ints["@map_tap_x"] = static_cast<s64>(last_map_tap->first);
-        snapshot.ints["@map_tap_y"] = static_cast<s64>(last_map_tap->second);
-    }
+    PublishMapTap(snapshot);
     for (const auto& [name, action] : manifest.actions) {
         if (action.kind != ActionKind::SlotWrite) {
             continue;
@@ -1219,15 +1349,15 @@ void ModRuntime::PublishMapState(StateSnapshot& snapshot) {
         const bool plain = slot->second.count <= 1 && slot->second.count_bind.empty();
         s64 used = 0;
         for (s64 i = 0; i < n; ++i) {
-            const auto v =
-                snapshot.ints.find(plain ? action.slot : action.slot + std::to_string(i));
+            const auto v = snapshot.ints.find(
+                plain ? action.slot : element_keys(action.slot, static_cast<size_t>(i)));
             if (v != snapshot.ints.end() &&
                 NormaliseToType(slot->second.type, v->second) != free_value) {
                 ++used;
             }
         }
-        snapshot.ints["@slot_used:" + name] = used;
-        snapshot.ints["@slot_full:" + name] = used >= n ? 1 : 0;
+        snapshot.ints[slot_used_keys(name)] = used;
+        snapshot.ints[slot_full_keys(name)] = used >= n ? 1 : 0;
     }
 }
 
@@ -1250,14 +1380,14 @@ void ModRuntime::PublishInteraction(StateSnapshot& snapshot) {
         interact_groups_ready = true;
     }
     for (const auto& group : interact_groups) {
-        snapshot.ints["@sel:" + group] = -1;
-        snapshot.ints["@last:" + group] = -1;
+        snapshot.ints[sel_keys(group)] = -1;
+        snapshot.ints[last_keys(group)] = -1;
     }
     for (const auto& [group, value] : selections) {
-        snapshot.ints["@sel:" + group] = value;
+        snapshot.ints[sel_keys(group)] = value;
     }
     for (const auto& [group, value] : last_selection) {
-        snapshot.ints["@last:" + group] = value;
+        snapshot.ints[last_keys(group)] = value;
     }
     const bool active = drag_state.active && drag_state.page == current_page;
     snapshot.ints["@drag"] = active ? 1 : 0;

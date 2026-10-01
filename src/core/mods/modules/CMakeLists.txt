@@ -127,6 +127,60 @@ dsmod_add_module(dsmod-mk8d
     EXPORTS eden_dsmod_get_module eden_dsmod_get_extensions eden_dsmod_get_write_extensions
     INCLUDE_DIRECTORIES "${EDEN_SOURCE_ROOT}/externals/bc_decoder")
 
+# Super Mario Bros. Wonder 1.2.1: read-only reader, globals resolved from accessor code, art
+# decoded from the player's romfs (zstd -> SARC -> BNTX). zstd's decompressor is compiled in
+# from the emulator's CPM cache (decoder only, no asm, so Linux and Android build the same code).
+enable_language(C)
+file(GLOB WONDER_ZSTD_LIB LIST_DIRECTORIES true "${EDEN_CPM_CACHE}/zstd/*/lib")
+list(GET WONDER_ZSTD_LIB 0 WONDER_ZSTD_LIB)
+set(WONDER_ZSTD_SOURCES
+    "${WONDER_ZSTD_LIB}/common/entropy_common.c"
+    "${WONDER_ZSTD_LIB}/common/error_private.c"
+    "${WONDER_ZSTD_LIB}/common/fse_decompress.c"
+    "${WONDER_ZSTD_LIB}/common/xxhash.c"
+    "${WONDER_ZSTD_LIB}/common/zstd_common.c"
+    "${WONDER_ZSTD_LIB}/decompress/huf_decompress.c"
+    "${WONDER_ZSTD_LIB}/decompress/zstd_ddict.c"
+    "${WONDER_ZSTD_LIB}/decompress/zstd_decompress.c"
+    "${WONDER_ZSTD_LIB}/decompress/zstd_decompress_block.c")
+set_source_files_properties(${WONDER_ZSTD_SOURCES} PROPERTIES
+    COMPILE_DEFINITIONS "ZSTD_DISABLE_ASM=1;ZSTD_MULTITHREAD=0;XXH_NAMESPACE=WONDER_")
+set(WONDER_ASSET_SOURCES
+    wonder_assets.cpp
+    wonder_assets.h
+    wonder_catalog.cpp
+    wonder_catalog.h
+    wonder_font.cpp
+    wonder_font.h
+    wonder_glyphs.cpp
+    wonder_glyphs.h
+    third_party/stb_truetype.h
+    "${EDEN_SOURCE_ROOT}/externals/bc_decoder/bc_decoder.cpp"
+    ${WONDER_ZSTD_SOURCES})
+dsmod_add_module(dsmod-wonder EXCLUDE_FROM_ALL
+    TITLE 010015100B514000
+    SOURCES 010015100B514000.cpp ${WONDER_ASSET_SOURCES}
+    EXPORTS eden_dsmod_get_module eden_dsmod_get_extensions eden_dsmod_get_font_extensions
+    INCLUDE_DIRECTORIES "${EDEN_SOURCE_ROOT}/externals/bc_decoder" "${WONDER_ZSTD_LIB}")
+if (NOT ANDROID)
+    add_executable(wonder-assets-tool EXCLUDE_FROM_ALL wonder_assets_tool.cpp ${WONDER_ASSET_SOURCES})
+    target_compile_features(wonder-assets-tool PRIVATE cxx_std_20)
+    target_include_directories(wonder-assets-tool PRIVATE "${EDEN_SOURCE_ROOT}/src"
+        "${EDEN_SOURCE_ROOT}/externals/bc_decoder" "${WONDER_ZSTD_LIB}")
+    add_executable(wonder-font-tool EXCLUDE_FROM_ALL wonder_font_tool.cpp ${WONDER_ASSET_SOURCES})
+    target_compile_features(wonder-font-tool PRIVATE cxx_std_20)
+    target_include_directories(wonder-font-tool PRIVATE "${EDEN_SOURCE_ROOT}/src"
+        "${EDEN_SOURCE_ROOT}/externals/bc_decoder" "${WONDER_ZSTD_LIB}")
+    add_executable(wonder-catalog-tool EXCLUDE_FROM_ALL wonder_catalog_tool.cpp ${WONDER_ASSET_SOURCES})
+    target_compile_features(wonder-catalog-tool PRIVATE cxx_std_20)
+    target_include_directories(wonder-catalog-tool PRIVATE "${EDEN_SOURCE_ROOT}/src"
+        "${EDEN_SOURCE_ROOT}/externals/bc_decoder" "${WONDER_ZSTD_LIB}")
+    add_executable(wonder-glyph-tool EXCLUDE_FROM_ALL wonder_glyph_tool.cpp ${WONDER_ASSET_SOURCES})
+    target_compile_features(wonder-glyph-tool PRIVATE cxx_std_20)
+    target_include_directories(wonder-glyph-tool PRIVATE "${EDEN_SOURCE_ROOT}/src"
+        "${EDEN_SOURCE_ROOT}/externals/bc_decoder" "${WONDER_ZSTD_LIB}")
+endif()
+
 # P5R: the ABI glue (01005CA01580E000.cpp) plus the Reader's area files (p5r_reader.h lists them).
 set(P5R_READER_SOURCES
     01005CA01580E000.cpp

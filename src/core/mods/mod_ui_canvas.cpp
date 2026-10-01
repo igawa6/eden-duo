@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 // Canvas basics and shape primitives: the pixel buffer (Resize), the clip (SetClip), Clear,
-// FillRect, Pill, FrameRect, ClearRect, BlitRaw (the chrome cache's raw copy) and FillTriangle.
-// Every call clips to [clip_x0, clip_x1) x [clip_y0, clip_y1). Clear, ClearRect and BlitRaw store
+// FillRect, Pill, FrameRect, ClearRect and FillTriangle.
+// Every call clips to [clip_x0, clip_x1) x [clip_y0, clip_y1). Clear and ClearRect store
 // pixels as given; the others blend with Blend (mod_ui_internal.h) at the canvas opacity
 // (ApplyDrawOpacity, mod_ui_image.cpp).
 // Not here: images (mod_ui_image.cpp), text (mod_ui_text.cpp).
@@ -122,29 +122,6 @@ void Canvas::ClearRect(s32 x, s32 y, s32 rw, s32 rh, u32 argb) {
     for (s32 py = y0; py < y1; ++py) {
         std::fill_n(pixels.data() + static_cast<size_t>(py) * w + static_cast<size_t>(x0),
                     static_cast<size_t>(x1 - x0), argb);
-    }
-}
-
-void Canvas::BlitRaw(s32 x, s32 y, s32 rw, s32 rh, const u32* src, s32 src_stride) {
-    // Same clip-intersect shape as ClearRect just above -- a raw row copy, no Blend()/tint/opacity
-    // math, because the caller (RenderPage's chrome cache) only ever hands this already-final,
-    // already-blended pixels captured from a real draw at CurrentOpacity()==1, so re-blending here
-    // would be redundant work, not a correctness requirement.
-    if (rw <= 0 || rh <= 0 || src == nullptr || src_stride <= 0) {
-        return;
-    }
-    const s32 x0 = std::max(clip_x0, x);
-    const s32 y0 = std::max(clip_y0, y);
-    const s32 x1 = std::min(clip_x1, x + rw);
-    const s32 y1 = std::min(clip_y1, y + rh);
-    if (x1 <= x0 || y1 <= y0) {
-        return;
-    }
-    for (s32 py = y0; py < y1; ++py) {
-        const u32* src_row =
-            src + static_cast<size_t>(py - y) * static_cast<size_t>(src_stride) + (x0 - x);
-        u32* dst_row = pixels.data() + static_cast<size_t>(py) * w + static_cast<size_t>(x0);
-        std::memcpy(dst_row, src_row, static_cast<size_t>(x1 - x0) * sizeof(u32));
     }
 }
 

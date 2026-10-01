@@ -51,6 +51,9 @@ struct Manifest {
     std::string data_file; ///< the per-build data json name, for hot-reload.
     /// Shared value->name lists (items, characters).
     std::map<std::string, std::vector<std::string>> tables;
+    /// Byte length of each table's longest name (filled with `tables` at parse): the text bound
+    /// of a table Value without scanning the table per widget per pass.
+    std::map<std::string, size_t> table_max_len;
     /// The package's own dualscreen/ folder, kept open so "file:" assets can be read from it.
     FileSys::VirtualDir asset_dir;
     u32 poll_hz{60};
@@ -92,6 +95,9 @@ struct Manifest {
     /// lands inside the metadata string region, which is where every other class name lives too.
     s64 metadata_anchor{};
     std::unordered_map<std::string, s64> flag_defaults;
+    /// "persist_flags" (runtime 15): runtime flags saved on change and restored at load
+    /// (mod_persist.h).
+    std::vector<std::string> persist_flags;
     std::unordered_map<std::string, Action> actions;
     std::unordered_map<std::string, CallSequence> sequences;
     std::unordered_map<std::string, DataPoint> points; ///< merged from the build-id data file
@@ -133,6 +139,9 @@ struct Manifest {
     /// A published address to derive a shippable pointer chain for.
     std::string trace_target;
     bool dump_registry{false};
+    /// "module_tick_hidden": tick the native module while the second screen is hidden (true) or
+    /// not (false). Unset: the module's own flag decides, else whether it has actions.
+    std::optional<bool> module_tick_hidden;
     std::string describe_string; ///< report where the game uses this string (DescribeStringUses)
     bool valid{false};
 };

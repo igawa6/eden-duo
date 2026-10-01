@@ -3,11 +3,13 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
 #include <limits>
+#include <optional>
 
 #include <nlohmann/json.hpp>
 
@@ -90,6 +92,21 @@ bool ValidString(const char* string, size_t limit) {
 }
 } // namespace
 
+/// get_i64("__source:<prefix>"): 1 when the source is available, 0 when it is known but not
+/// (no DLC installed), nullopt for a name that is not a source query or an unknown prefix.
+std::optional<s64> ModRuntime::SourceQuery(ModRuntime& rt, const char* name) {
+    constexpr std::string_view Query{"__source:"};
+    const std::string_view text{name};
+    if (!text.starts_with(Query)) {
+        return std::nullopt;
+    }
+    const std::string_view prefix = text.substr(Query.size());
+    if (!rt.asset_sources->Known(prefix)) {
+        return std::nullopt;
+    }
+    return rt.asset_sources->Available(prefix) ? 1 : 0;
+}
+
 void ModRuntime::ShutdownGameModule() {
     // The areas fetch may be blocked inside the module's load_data: let it finish before the
     // module goes (it holds no lock the rest of shutdown needs).
@@ -157,8 +174,9 @@ void ModRuntime::InitializeGameModule() {
     module_host.abi_version = EDEN_DSMOD_MODULE_ABI_VERSION;
     module_host.struct_size = sizeof(module_host);
     module_host.abi_hash = EDEN_DSMOD_MODULE_ABI_HASH;
-    module_host.capabilities =
-        EDEN_DSMOD_CAP_ROMFS_READ | EDEN_DSMOD_CAP_MAP_OUTPUT | EDEN_DSMOD_CAP_EXTENSIONS;
+    module_host.capabilities = EDEN_DSMOD_CAP_ROMFS_READ | EDEN_DSMOD_CAP_MAP_OUTPUT |
+                               EDEN_DSMOD_CAP_EXTENSIONS | EDEN_DSMOD_CAP_TICK_WHEN_HIDDEN |
+                               EDEN_DSMOD_CAP_NO_TICK_WHEN_HIDDEN;
     module_host.userdata = this;
     module_host.title_id = manifest.title_id;
     module_host.main_base = main_region_begin;
@@ -289,6 +307,9 @@ void ModRuntime::InitializeGameModule() {
         if (std::strcmp(name, "__relocation_delta") == 0) {
             return rt.nce_vtable_delta;
         }
+        if (const auto source = SourceQuery(rt, name)) {
+            return *source;
+        }
         if (rt.module_snapshot) {
             const auto value = rt.module_snapshot->ints.find(name);
             if (value != rt.module_snapshot->ints.end()) {
@@ -333,36 +354,24 @@ void ModRuntime::InitializeGameModule() {
         auto& rt = *static_cast<ModRuntime*>(p);
         std::scoped_lock asset_lock{rt.module_romfs_mutex};
         std::string source{path};
-        if (!source.starts_with("romfs:") && !source.starts_with("file:")) {
+        // A bare path is a romfs path, as it always was. A prefix names a registered source; an
+        // unknown one is refused (it used to be read as the romfs path "romfs:<prefix>:...",
+        // which could only ever miss, so a module could not tell it from a missing file).
+        if (const auto prefix = AssetSources::PrefixOf(source); prefix.empty()) {
             source.insert(0, "romfs:");
+        } else if (!rt.asset_sources->IsDirectorySource(source)) {
+            static std::atomic<bool> warned{false};
+            if (!warned.exchange(true)) {
+                LOG_WARNING(Core, "DSMod module: read_romfs('{}'): '{}:' is not a file source "
+                                  "this runtime knows",
+                            source, prefix);
+            }
+            return 0;
         }
         // Range reads keep large ROMFS archives out of the 60 Hz reader path and avoid
         // allocating/rereading the entire file for every size/chunk request.
         if (source.find('#') == std::string::npos) {
-            FileSys::VirtualFile file;
-            if (source.starts_with("file:")) {
-                file = rt.manifest.asset_dir
-                           ? rt.manifest.asset_dir->GetFileRelative(source.substr(5))
-                           : nullptr;
-            } else {
-                if (!rt.romfs_tried) {
-                    // Initialize the existing session-owned ROMFS root with an empty-path probe.
-                    rt.ReadAssetBytesRaw("romfs:");
-                }
-                auto relative = source.substr(6);
-                while (!relative.empty() && relative.front() == '/')
-                    relative.erase(0, 1);
-                file = rt.romfs_root ? rt.romfs_root->GetFileRelative(relative) : nullptr;
-            }
-            if (!file)
-                return 0;
-            if (!output)
-                return file->GetSize();
-            if (offset >= file->GetSize())
-                return 0;
-            return file->Read(static_cast<u8*>(output),
-                              std::min(size, file->GetSize() - static_cast<size_t>(offset)),
-                              offset);
+            return rt.asset_sources->ReadRange(source, offset, output, size);
         }
         const auto bytes = rt.ReadAssetBytes(source);
         if (!output) {
@@ -375,17 +384,41 @@ void ModRuntime::InitializeGameModule() {
         std::memcpy(output, bytes.data() + offset, count);
         return count;
     };
+    module_host.capabilities |= EDEN_DSMOD_CAP_SOURCE_PREFIXES | asset_sources->Capabilities();
+    // The host handed to callbacks that run off the tick thread (load_image on the module asset
+    // worker and the Nx worker, load_data on the areas thread or any asset reader). Reading guest
+    // memory and romfs is safe from any thread; the tick's published state is not: the snapshot
+    // maps are being rebuilt while a worker runs, and a text pointer into them would dangle. So
+    // publishing does nothing here, get_i64/get_f64/get_text answer only the session constants
+    // (today "__relocation_delta") and otherwise return the caller's fallback, and get_tick reads
+    // an atomic copy of the tick counter.
+    module_worker_host = module_host;
+    module_worker_host.get_tick = [](void* p) {
+        return static_cast<ModRuntime*>(p)->bridge_tick_count.load(std::memory_order_acquire);
+    };
+    module_worker_host.publish_i64 = [](void*, const char*, s64) {};
+    module_worker_host.publish_f64 = [](void*, const char*, double) {};
+    module_worker_host.publish_text = [](void*, const char*, const char*) {};
+    module_worker_host.publish_address = [](void*, const char*, u64) {};
+    module_worker_host.publish_map = [](void*, const EdenDsmodMapFrame*) {};
+    module_worker_host.get_i64 = [](void* p, const char* name, s64 fallback) -> s64 {
+        if (!ValidString(name, MaxName)) {
+            return fallback;
+        }
+        auto& rt = *static_cast<ModRuntime*>(p);
+        if (std::strcmp(name, "__relocation_delta") == 0) {
+            return rt.worker_relocation_delta.load(std::memory_order_acquire);
+        }
+        return SourceQuery(rt, name).value_or(fallback);
+    };
+    module_worker_host.get_f64 = [](void*, const char*, double fallback) { return fallback; };
+    module_worker_host.get_text = [](void*, const char*) -> const char* { return nullptr; };
     if ((game_module->Api()->capabilities & ~module_host.capabilities) != 0) {
         module_error = "This dual-screen module requires unsupported host capabilities.";
         ShutdownGameModule();
         return;
     }
     try {
-        // A data-generating module (runtime 12) starts reading romfs from inside create() on its
-        // own thread: resolve the session filesystem here, on its owner thread, first.
-        if (game_module->DataExtensions() || !manifest.map_areas_src.empty()) {
-            ReadAssetBytesRaw("romfs:");
-        }
         const auto file = manifest.asset_dir->GetFile("manifest.json");
         auto config = nlohmann::json::parse(file->ReadAllBytes());
         config["_build_match"] = !manifest.build_id_file.empty();
@@ -412,6 +445,25 @@ void ModRuntime::InitializeGameModule() {
     }
 }
 
+bool ModRuntime::ModuleTicksWhileHidden() const {
+    if (!game_module_instance || !game_module) {
+        return false;
+    }
+    // Explicit wins: the package's manifest, then the module's own flag. Without either, the
+    // long-standing inference: a module with actions may have a guest mailbox to retire.
+    if (manifest.module_tick_hidden) {
+        return *manifest.module_tick_hidden;
+    }
+    const u64 caps = game_module->Api()->capabilities;
+    if ((caps & EDEN_DSMOD_CAP_TICK_WHEN_HIDDEN) != 0) {
+        return true;
+    }
+    if ((caps & EDEN_DSMOD_CAP_NO_TICK_WHEN_HIDDEN) != 0) {
+        return false;
+    }
+    return game_module->Extensions() && game_module->Extensions()->on_action;
+}
+
 void ModRuntime::RunGameModule(StateSnapshot& snapshot, bool tick) {
     snapshot.ints["module_ready"] = game_module_instance ? 1 : 0;
     snapshot.ints["module_error"] = module_error.empty() ? 0 : 1;
@@ -422,6 +474,9 @@ void ModRuntime::RunGameModule(StateSnapshot& snapshot, bool tick) {
     if (!game_module_instance) {
         return;
     }
+    // The tap's actions run after this tick's module call and the snapshot is cleared every tick,
+    // so a module action that defers to its next sample reads the tap position from here.
+    PublishMapTap(snapshot);
     module_snapshot = &snapshot;
     module_host.main_base = main_region_begin;
     module_host.main_size = main_region_size;
@@ -450,6 +505,7 @@ void ModRuntime::RunGameModule(StateSnapshot& snapshot, bool tick) {
         RecordModuleProfile(tick, std::chrono::steady_clock::now() - profile_start);
     }
     module_snapshot = nullptr;
+    worker_relocation_delta.store(nce_vtable_delta, std::memory_order_release);
     if (const auto scenario = snapshot.texts.find("scenario"); scenario != snapshot.texts.end()) {
         live_scenario = scenario->second;
     }

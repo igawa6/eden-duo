@@ -313,3 +313,67 @@ TEST_CASE("DSMod repeat: {i+N} / {i-N} index expressions", "[dsmod][ui][scroll]"
         }
     }
 }
+
+TEST_CASE("DSMod scroll: a label half above the viewport draws its visible glyphs, clipped",
+          "[dsmod][ui][scroll]") {
+    // The label's rect has no height (the usual "rect":[x,y,0,0]); its text is 10 px tall. With
+    // the list scrolled 5 px, row 0's text spans 15..25 across the viewport top at 20: culling by
+    // its rect alone dropped it while an image row beside it (with a real height) still drew.
+    constexpr u32 Bg = 0xFF000000u;
+    constexpr u32 Txt = 0xFFFFFFFFu;
+    Manifest manifest;
+    manifest.background = Bg;
+    Page page;
+    ScrollRegion region;
+    region.id = "l";
+    region.rect = {0, 20, 100, 40};
+    page.scrolls.push_back(region);
+    Widget label;
+    label.type = WidgetType::Label;
+    label.rect = {2, 20, 0, 0};
+    label.text = "HHHH";
+    label.text_scale = 2;
+    label.color = Txt;
+    label.repeat = 4;
+    label.repeat_dy = 20;
+    label.scroll = "l";
+    page.widgets.push_back(label);
+    StateSnapshot s;
+    s.ints[ScrollOffsetKey("l")] = 5;
+
+    // Row 0 is materialised although its rect's top is above the viewport.
+    const auto expanded = ExpandWidgets(page, s);
+    REQUIRE(!expanded.empty());
+    REQUIRE(expanded.front().rect[1] == 15);
+    // The span a label paints, relative to its rect's top; nothing extra for other widgets.
+    const auto span = RowPaintSpan(label, s, 40);
+    REQUIRE(span[0] <= 0);
+    REQUIRE(span[1] >= 10);
+    Widget rect_w;
+    rect_w.type = WidgetType::Rect;
+    REQUIRE(RowPaintSpan(rect_w, s, 40) == std::array<s32, 2>{0, 0});
+
+    Canvas canvas;
+    canvas.Resize(100, 100);
+    REQUIRE(RenderPage(canvas, manifest, page, s));
+    const auto px = [&](s32 x, s32 y) { return canvas.Pixels()[static_cast<size_t>(y) * 100 + x]; };
+    const auto any_text = [&](s32 y0, s32 y1) {
+        for (s32 y = y0; y < y1; ++y) {
+            for (s32 x = 0; x < 100; ++x) {
+                if (px(x, y) == Txt) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    };
+    REQUIRE(any_text(20, 25));        // row 0's lower half shows inside the viewport
+    REQUIRE_FALSE(any_text(0, 20));   // nothing above the viewport
+    REQUIRE_FALSE(any_text(60, 100)); // nothing below it
+    REQUIRE(any_text(35, 45));        // row 1 (35..45) whole
+    // Scrolled so row 0 is far above the viewport: still culled (fully outside costs nothing).
+    s.ints[ScrollOffsetKey("l")] = 40; // row 0 at -20, row 1 at 0 (its text reaches 20..)
+    const auto later = ExpandWidgets(page, s);
+    REQUIRE(!later.empty());
+    REQUIRE(later.front().rect[1] == 0);
+}

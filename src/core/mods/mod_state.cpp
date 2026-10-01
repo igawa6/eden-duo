@@ -30,6 +30,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include "common/logging.h"
+#include "core/core.h"
 #include "core/hle/kernel/k_process.h"
 #include "core/mods/mod_runtime.h"
 #include "core/mods/mod_runtime_shared.h"
@@ -58,30 +59,40 @@ bool ModRuntime::AddressIsSane(VAddr address, u64 size) const {
 /// every sweep quietly found nothing. Ask the page table; the constants remain only as the
 /// fallback for the moment before a process exists.
 VAddr ModRuntime::HeapLow() const {
-    if (heap_low == 0) {
-        if (auto* const process = system.ApplicationProcess(); process != nullptr) {
-            const u64 start = GetInteger(process->GetPageTable().GetHeapRegionStart());
-            // The *region* is a 128 GB reservation, almost all unmapped. Sweeping it whole means
-            // 33M page probes that never finish in time -- which is exactly why energy and the
-            // player read `unresolved` under NCE while the old fixed 1.25 GB window worked. Bound
-            // the walk to the committed heap plus a margin, so it stays a couple of GB.
-            const u64 committed = process->GetPageTable().GetNormalMemorySize();
-            const u64 region = process->GetPageTable().GetHeapRegionSize();
-            if (start != 0 && committed != 0) {
-                heap_low = start;
-                const u64 span = std::min<u64>(region, committed + 0x40000000ULL); // +1 GB slack
-                heap_high = start + span;
-                LOG_INFO(Core, "DSMod: heap {:X}..{:X} (committed {} MiB of {} MiB region)",
-                         heap_low, heap_high, committed >> 20, region >> 20);
+    // Any thread may ask (the tick thread, module callbacks on asset workers). The bounds are
+    // found under heap_bounds_mutex and published high first, then low (release); a caller that
+    // sees low != 0 therefore sees high too.
+    if (heap_low.load(std::memory_order_acquire) == 0) {
+        std::scoped_lock lock{heap_bounds_mutex};
+        if (heap_low.load(std::memory_order_relaxed) == 0) {
+            if (auto* const process = system.ApplicationProcess(); process != nullptr) {
+                const u64 start = GetInteger(process->GetPageTable().GetHeapRegionStart());
+                // The *region* is a 128 GB reservation, almost all unmapped. Sweeping it whole
+                // means 33M page probes that never finish in time -- which is exactly why energy
+                // and the player read `unresolved` under NCE while the old fixed 1.25 GB window
+                // worked. Bound the walk to the committed heap plus a margin, so it stays a
+                // couple of GB.
+                const u64 committed = process->GetPageTable().GetNormalMemorySize();
+                const u64 region = process->GetPageTable().GetHeapRegionSize();
+                if (start != 0 && committed != 0) {
+                    const u64 span =
+                        std::min<u64>(region, committed + 0x40000000ULL); // +1 GB slack
+                    heap_high.store(start + span, std::memory_order_relaxed);
+                    heap_low.store(start, std::memory_order_release);
+                    LOG_INFO(Core, "DSMod: heap {:X}..{:X} (committed {} MiB of {} MiB region)",
+                             start, start + span, committed >> 20, region >> 20);
+                }
             }
         }
     }
-    return heap_low != 0 ? heap_low : 0x21'80000000ULL;
+    const VAddr low = heap_low.load(std::memory_order_acquire);
+    return low != 0 ? low : 0x21'80000000ULL;
 }
 
 VAddr ModRuntime::HeapHigh() const {
     HeapLow();
-    return heap_high != 0 ? heap_high : 0x21'D0000000ULL;
+    const VAddr high = heap_high.load(std::memory_order_acquire);
+    return high != 0 ? high : 0x21'D0000000ULL;
 }
 
 /// Renders one captured register in whatever form makes it identifiable. A wide spy sweep is only
@@ -481,7 +492,7 @@ bool ModRuntime::ReadPoint(const DataPoint& point, s64& value_out, s64 array_ind
         const u32 raw = memory.Read32(address);
         f32 as_float{};
         std::memcpy(&as_float, &raw, sizeof(as_float));
-        value_out = static_cast<s64>(as_float);
+        value_out = SaturatingToS64(as_float);
         return true;
     }
     }
@@ -549,7 +560,7 @@ void ModRuntime::SampleState(StateSnapshot& out) {
     // a widget binds to it without caring which of the two it was.
     for (const auto& [name, value] : sequence_values) {
         out.floats[name] = value;
-        out.ints[name] = static_cast<s64>(value);
+        out.ints[name] = SaturatingToS64(value);
     }
     for (const auto& [name, value] : sequence_addresses) {
         out.addresses[name] = value;
@@ -560,7 +571,7 @@ void ModRuntime::SampleState(StateSnapshot& out) {
     // The slots this runtime is steering are state too: publish them as "@name" so a page can
     // mark the selected cell the way the game marks it.
     for (const auto& [cname, cval] : counters) {
-        out.ints["@" + cname] = cval;
+        out.ints[counter_keys(cname)] = cval;
     }
     for (const auto& [name, point] : manifest.points) {
         // A plain point is an array of one, so both kinds go through the same loop. How many
@@ -572,8 +583,9 @@ void ModRuntime::SampleState(StateSnapshot& out) {
             }
         }
         for (s64 i = 0; i < count; ++i) {
-            const std::string key =
-                point.count > 1 || !point.count_bind.empty() ? name + std::to_string(i) : name;
+            const std::string& key = point.count > 1 || !point.count_bind.empty()
+                                          ? element_keys(name, static_cast<size_t>(i))
+                                          : name;
             VAddr address{};
             out.addresses[key] = ResolvePoint(point, address, i) ? address : 0;
             if (point.type == ValueType::Utf16String || point.type == ValueType::CString ||
@@ -666,12 +678,6 @@ void ModRuntime::EvaluateDerived(StateSnapshot& snapshot, bool volatile_only) {
         }
         derived_order_list = list.data();
         derived_order_size = list.size();
-        derived_reads_interaction = std::ranges::any_of(list, [](const DerivedPoint& d) {
-            const auto at = [](const std::string& name) { return name.starts_with('@'); };
-            return at(d.select) || at(d.select_then) || at(d.select_else) ||
-                   at(d.hold_last_nonzero) || at(d.hold_gate) ||
-                   std::ranges::any_of(d.terms, [&](const auto& t) { return at(t.first); });
-        });
         // Which values the post-tap pass must recompute.
         derived_volatile.assign(list.size(), 0);
         const auto is_volatile_key = [](const std::string& name) {
@@ -730,6 +736,12 @@ void ModRuntime::EvaluateDerived(StateSnapshot& snapshot, bool volatile_only) {
                 }
             }
         }
+        // The post-tap pass runs whenever any value is volatile. This used to be a separate,
+        // narrower test (select/hold/terms only) that missed "cmp" and "nonzero" over "@flag:",
+        // so a package whose only interaction reads were those (P5R) drew one frame of
+        // pre-tap derived values after every tap.
+        derived_reads_interaction =
+            std::ranges::any_of(derived_volatile, [](u8 v) { return v != 0; });
     }
     const auto lookup = [&snapshot](const std::string& key) -> std::optional<f64> {
         if (const auto f = snapshot.floats.find(key); f != snapshot.floats.end()) {
@@ -760,7 +772,8 @@ void ModRuntime::EvaluateDerived(StateSnapshot& snapshot, bool volatile_only) {
                 s64 hits = 0;
                 bool missing = d.any_eq_count <= 0;
                 for (s64 k = 0; k < d.any_eq_count && !missing; ++k) {
-                    const auto v = snapshot.ints.find(d.any_eq_array + std::to_string(k));
+                    const auto v =
+                        snapshot.ints.find(element_keys(d.any_eq_array, static_cast<size_t>(k)));
                     if (v == snapshot.ints.end()) {
                         missing = true;
                     } else if (v->second == d.any_eq_value) {
@@ -870,60 +883,134 @@ void ModRuntime::EvaluateDerived(StateSnapshot& snapshot, bool volatile_only) {
     }
 }
 
-bool ModRuntime::WritePointValue(const DataPoint& point, s64 value, s64 array_index,
-                                 std::optional<f64> as_float) {
+std::optional<ModRuntime::GuestStore> ModRuntime::PlanPointWrite(
+    const DataPoint& point, s64 value, s64 array_index, std::optional<f64> as_float) const {
     if (point.popcount || point.is_pointer) {
         LOG_WARNING(Core, "DSMod: refusing to write a {} point",
                     point.popcount ? "popcount" : "pointer");
-        return false;
+        return std::nullopt;
     }
     u32 width = IntegerWidth(point.type);
     if (width == 0) {
         if (point.type != ValueType::F32) {
-            return false; // strings are read-only
+            return std::nullopt; // strings are read-only
         }
         width = 4; // historical behaviour: an integer written into the word
     }
     VAddr address{};
     if (!ResolvePoint(point, address, array_index) || !AddressIsSane(address, width)) {
-        return false;
+        return std::nullopt;
     }
-    auto& memory = system.ApplicationMemory();
+    GuestStore store{.address = address, .width = width};
     if (point.type == ValueType::F32 && as_float.has_value()) {
         // A float source (a map position) lands as the float itself, not as an integer word.
         const f32 f = static_cast<f32>(*as_float);
         u32 bits{};
         std::memcpy(&bits, &f, sizeof(bits));
-        memory.Write32(address, bits);
-        return true;
+        store.bits = bits;
+        return store;
     }
-    u64 raw = static_cast<u64>(value);
+    const u64 raw = static_cast<u64>(value);
     if (point.shift != 0 || point.has_mask) {
         // Only the point's own bits change: a flag point cannot clobber its neighbours.
-        const u64 old = width == 1   ? memory.Read8(address)
-                        : width == 2 ? memory.Read16(address)
-                        : width == 4 ? memory.Read32(address)
-                                     : memory.Read64(address);
         const u64 field_mask = point.has_mask ? point.mask : ~u64{0};
-        const u64 field = point.shift >= 64 ? 0 : field_mask << point.shift;
-        const u64 bits = point.shift >= 64 ? 0 : (raw & field_mask) << point.shift;
-        raw = (old & ~field) | (bits & field);
+        store.field = point.shift >= 64 ? 0 : field_mask << point.shift;
+        store.bits = point.shift >= 64 ? 0 : (raw & field_mask) << point.shift;
+    } else {
+        store.bits = raw;
     }
-    switch (width) {
-    case 1:
-        memory.Write8(address, static_cast<u8>(raw));
-        break;
-    case 2:
-        memory.Write16(address, static_cast<u16>(raw));
-        break;
-    case 8:
-        memory.Write64(address, raw);
-        break;
-    default:
-        memory.Write32(address, static_cast<u32>(raw));
-        break;
+    return store;
+}
+
+std::optional<ModRuntime::GuestExpect> ModRuntime::ExpectUnchanged(const DataPoint& point,
+                                                                   s64 array_index) const {
+    const u32 width = point.type == ValueType::F32 ? 4 : IntegerWidth(point.type);
+    VAddr address{};
+    if (width == 0 || !ResolvePoint(point, address, array_index) ||
+        !AddressIsSane(address, width)) {
+        return std::nullopt;
     }
-    return true;
+    auto& memory = system.ApplicationMemory();
+    const u64 now = width == 1   ? memory.Read8(address)
+                    : width == 2 ? memory.Read16(address)
+                    : width == 4 ? memory.Read32(address)
+                                 : memory.Read64(address);
+    return GuestExpect{.address = address, .width = width, .bits = now};
+}
+
+bool ModRuntime::RunWithGuestStopped(const std::function<void()>& fn) {
+    // Single core: this CoreTiming callback already runs between guest time slices. Multi-core:
+    // suspend the application's threads without pausing core timing (which this thread drives).
+    if (!system.IsMulticore()) {
+        fn();
+        return true;
+    }
+    return system.RunWithGuestThreadsSuspended(fn);
+}
+
+bool ModRuntime::ApplyGuestStores(std::span<const GuestExpect> expects,
+                                  std::span<const GuestStore> stores) {
+    auto& memory = system.ApplicationMemory();
+    const auto width_mask = [](u32 width) {
+        return width >= 8 ? ~u64{0} : (u64{1} << (width * 8)) - 1;
+    };
+    const auto read = [&memory](VAddr address, u32 width) -> u64 {
+        return width == 1   ? memory.Read8(address)
+               : width == 2 ? memory.Read16(address)
+               : width == 4 ? memory.Read32(address)
+                            : memory.Read64(address);
+    };
+    const auto partial = [&](const GuestStore& s) {
+        return (s.field & width_mask(s.width)) != width_mask(s.width);
+    };
+    bool applied = false;
+    const auto apply = [&] {
+        for (const auto& e : expects) {
+            if (((read(e.address, e.width) ^ e.bits) & e.field & width_mask(e.width)) != 0) {
+                return; // the guest changed underneath: write nothing
+            }
+        }
+        for (const auto& s : stores) {
+            u64 raw = s.bits;
+            if (partial(s)) {
+                raw = (read(s.address, s.width) & ~s.field) | (s.bits & s.field);
+            }
+            switch (s.width) {
+            case 1:
+                memory.Write8(s.address, static_cast<u8>(raw));
+                break;
+            case 2:
+                memory.Write16(s.address, static_cast<u16>(raw));
+                break;
+            case 8:
+                memory.Write64(s.address, raw);
+                break;
+            default:
+                memory.Write32(s.address, static_cast<u32>(raw));
+                break;
+            }
+        }
+        applied = true;
+    };
+    // One whole-word store is already a single store: no reason to stop the guest for it.
+    if (expects.empty() && stores.size() == 1 && !partial(stores.front())) {
+        apply();
+        return applied;
+    }
+    // Several stores, a read-modify-write or a check: done while no guest thread runs, so the
+    // guest never sees half a slot, both halves of a swap holding one item, or a lost update to
+    // a neighbouring bit. When the application cannot be stalled right now (a pause/resume in
+    // progress) the batch is applied as before this path existed, rather than dropping the tap.
+    if (!RunWithGuestStopped(apply)) {
+        apply();
+    }
+    return applied;
+}
+
+bool ModRuntime::WritePointValue(const DataPoint& point, s64 value, s64 array_index,
+                                 std::optional<f64> as_float) {
+    const auto store = PlanPointWrite(point, value, array_index, as_float);
+    return store && ApplyGuestStores({}, std::span{&*store, 1});
 }
 
 /// True while player 1's left stick is pushed past a drift dead zone, or a direction (d-pad or the
@@ -1294,48 +1381,24 @@ bool ModRuntime::InGameplayHonest() const {
 /// Re-apply state the game keeps undoing. Rules are cheap: a tick counter comparison, and at most
 /// one guest call in flight at a time (RunAction is a no-op for Call while one is armed).
 void ModRuntime::ApplyEnforceRules(const StateSnapshot& snapshot) {
-    // A call that never traps back would otherwise block every later call for the rest of the
-    // session, silently. Give up on it and unpatch, so the mod keeps working.
-    // Only a call that went in and never came back is stuck. Waiting for the hook is not: the
-    // game calls it when it calls it, and unpatching from this thread while a guest thread is
-    // about to trap on it is a race that corrupts the borrow.
-    // Only a call that went in and never came back is stuck. *Waiting* for the hook is not a
-    // fault: the hook is whatever the game happens to call, and a game standing still in a save
-    // room can go a minute without running a line of script. Giving up on the wait and re-arming
-    // on the next poll opens a gap, and the one call the game does make lands in it -- which is
-    // how a sequence can work perfectly in the menus and never fire again in play.
-    {
-        std::scoped_lock bridge_lock{guest_bridge_mutex};
-        if (call_state == CallState::InCall && tick_count - call_started_tick > StuckCallTicks) {
-            // Give up on the attempt, but do not touch guest memory to do it. Unpatching from this
-            // thread while a guest thread is about to trap on the same address is a race, and the
-            // leftover breakpoint is harmless: whichever thread hits it next finds it in
-            // patched_original, puts the instruction back and carries on.
-            LOG_WARNING(Core,
-                        "DSMod: a call went in and never came back; abandoning it after {} ticks",
-                        StuckCallTicks);
-            call_state = CallState::Idle;
-            call_seq = nullptr;
-        }
-    }
-    ApplyPatches();
+    MaintainGuestBridge();
 #if EDEN_DSMOD_BUILD_DEV_TOOLS
     ApplyEnforceRulesDevToolsImpl(snapshot);
-#endif
-    if (!cmd_action.empty()) {
+    if (!dev.cmd_action.empty()) {
         // A console-fired action. A sequence can only be armed while the call machinery is idle
         // (StartSequence silently declines otherwise), so hold it until then and take the turn
         // ahead of the polled sequences.
-        const auto it = manifest.actions.find(cmd_action);
+        const auto it = manifest.actions.find(dev.cmd_action);
         if (it == manifest.actions.end()) {
-            LOG_INFO(Core, "DSMod action '{}': no such action", cmd_action);
-            cmd_action.clear();
-        } else if (call_state == CallState::Idle && (!cmd_action_ingame || last_in_game != 0)) {
-            LOG_INFO(Core, "DSMod action '{}': running", cmd_action);
+            LOG_INFO(Core, "DSMod action '{}': no such action", dev.cmd_action);
+            dev.cmd_action.clear();
+        } else if (call_state == CallState::Idle && (!dev.cmd_action_ingame || last_in_game != 0)) {
+            LOG_INFO(Core, "DSMod action '{}': running", dev.cmd_action);
             RunAction(it->second, snapshot);
-            cmd_action.clear();
+            dev.cmd_action.clear();
         }
     }
+#endif
     RunPolledSequences(snapshot);
     if (manifest.enforce.empty()) {
         return;
@@ -1366,6 +1429,34 @@ void ModRuntime::ApplyEnforceRules(const StateSnapshot& snapshot) {
             RunAction(action->second, snapshot);
         }
     }
+}
+
+void ModRuntime::MaintainGuestBridge() {
+    // A call that never traps back would otherwise block every later call for the rest of the
+    // session, silently. Give up on it and unpatch, so the mod keeps working.
+    // Only a call that went in and never came back is stuck. Waiting for the hook is not: the
+    // game calls it when it calls it, and unpatching from this thread while a guest thread is
+    // about to trap on it is a race that corrupts the borrow.
+    // Only a call that went in and never came back is stuck. *Waiting* for the hook is not a
+    // fault: the hook is whatever the game happens to call, and a game standing still in a save
+    // room can go a minute without running a line of script. Giving up on the wait and re-arming
+    // on the next poll opens a gap, and the one call the game does make lands in it -- which is
+    // how a sequence can work perfectly in the menus and never fire again in play.
+    {
+        std::scoped_lock bridge_lock{guest_bridge_mutex};
+        if (call_state == CallState::InCall && tick_count - call_started_tick > StuckCallTicks) {
+            // Give up on the attempt, but do not touch guest memory to do it. Unpatching from this
+            // thread while a guest thread is about to trap on the same address is a race, and the
+            // leftover breakpoint is harmless: whichever thread hits it next finds it in
+            // patched_original, puts the instruction back and carries on.
+            LOG_WARNING(Core,
+                        "DSMod: a call went in and never came back; abandoning it after {} ticks",
+                        StuckCallTicks);
+            call_state = CallState::Idle;
+            call_seq = nullptr;
+        }
+    }
+    ApplyPatches();
 }
 
 } // namespace Core::Mods

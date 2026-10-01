@@ -289,16 +289,20 @@ bool ModRuntime::DrivePageTransition(const StateSnapshot& snapshot, u64 sig, u32
         const auto t0 = std::chrono::steady_clock::now();
         canvas.Resize(target_w, target_h);
         LoadFont();
+        // The canvas keeps raw pointers: the atlases are held in canvas_font_ref /
+        // canvas_icon_ref until the next SetFont, not by a temporary.
         if (font_metrics.Valid()) {
-            // Same reasoning as PublishUi's identical block (mod_redraw.cpp).
-            canvas.SetFont(GetImage(manifest.font_atlas_src).get(), &font_metrics);
+            canvas_font_ref = GetImage(manifest.font_atlas_src);
+            canvas.SetFont(canvas_font_ref.get(), &font_metrics);
+        } else {
+            canvas_font_ref.reset();
+            canvas.SetFont(nullptr, nullptr);
         }
         {
-            std::shared_ptr<const Image> icon_atlas;
             bool icon_pending = false;
             const FontMetrics* const icons =
-                manifest.msbt.Enabled() ? NxIconFont(icon_atlas, icon_pending) : nullptr;
-            canvas.SetIconFont(icon_atlas.get(), icons, icon_pending);
+                manifest.msbt.Enabled() ? NxIconFont(canvas_icon_ref, icon_pending) : nullptr;
+            canvas.SetIconFont(canvas_icon_ref.get(), icons, icon_pending);
         }
         // 1. The page being left, frozen as it was on screen: the canvas already holds it after a
         //    CPU frame (or the previous target, when a transition is interrupted); otherwise

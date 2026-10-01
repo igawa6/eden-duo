@@ -59,6 +59,7 @@ extern "C" {
 #include "core/constants.h"
 #include "core/core.h"
 #include "core/mods/mod_module.h"
+#include "core/mods/mod_runtime.h"
 #include "core/cpu_manager.h"
 #include "core/crypto/key_manager.h"
 #include "core/file_sys/card_image.h"
@@ -243,11 +244,15 @@ const Core::PerfStatsResults& EmulationSession::PerfStats() {
     // Reuse the result requested by the Android FPS overlay. Do not make another resetting query:
     // other frontends and overlays own the cadence of these cumulative counters.
     if (m_system.ModRuntime()) {
+        // EDEN_DSMOD_PROFILE turns the 5 s line on or off; unset means on in developer builds
+        // (dsmod_env.txt) and off in a published build, which writes no periodic log lines.
         static const bool profile = [] {
             const char* value = std::getenv("EDEN_DSMOD_PROFILE");
-            return !value ||
-                   (std::strcmp(value, "0") != 0 && std::strcmp(value, "false") != 0 &&
-                    std::strcmp(value, "FALSE") != 0);
+            if (value == nullptr) {
+                return EDEN_DSMOD_BUILD_DEV_TOOLS != 0;
+            }
+            return std::strcmp(value, "0") != 0 && std::strcmp(value, "false") != 0 &&
+                   std::strcmp(value, "FALSE") != 0;
         }();
         static auto report_at = std::chrono::steady_clock::now();
         const auto now = std::chrono::steady_clock::now();
@@ -276,20 +281,9 @@ void EmulationSession::SurfaceChanged() {
     m_window->OnSurfaceChanged(m_native_window);
 }
 
-EmuWindow_Android* EmulationSession::AuxWindow() {
-    return m_aux_window.get();
-}
-
-ANativeWindow* EmulationSession::AuxNativeWindow() const {
-    return m_aux_native_window;
-}
-
-void EmulationSession::SetAuxNativeWindow(ANativeWindow* native_window) {
-    m_aux_native_window = native_window;
-}
-
 void EmulationSession::AttachAuxWindowLocked() {
-    if (!m_aux_native_window || m_load_result != Core::SystemResultStatus::Success) {
+    // m_aux_mutex held. Attaches only while the game's renderer exists.
+    if (!m_aux_native_window || !m_aux_renderer_ready) {
         return;
     }
     if (m_aux_window) {
@@ -304,28 +298,48 @@ void EmulationSession::AttachAuxWindowLocked() {
 }
 
 void EmulationSession::DetachAuxWindowLocked() {
-    if (m_aux_window && m_load_result == Core::SystemResultStatus::Success) {
+    // m_aux_mutex held. Synchronous: the renderer lets go of the surface before this returns.
+    if (m_aux_window && m_aux_renderer_ready) {
         m_system.Renderer().SetAuxWindow(nullptr);
     }
     m_aux_window.reset();
+}
+
+void EmulationSession::ReleaseAuxNativeWindowLocked() {
     if (m_aux_native_window) {
         ANativeWindow_release(m_aux_native_window);
         m_aux_native_window = nullptr;
     }
 }
 
-void EmulationSession::AuxSurfaceChanged() {
-    std::scoped_lock lock(m_mutex);
-    if (!IsRunning()) {
-        // Cached in m_aux_native_window; attached at the end of InitializeEmulation.
-        return;
-    }
+// The aux surface calls come from the UI thread. They take only m_aux_mutex, never m_mutex:
+// InitializeEmulation holds m_mutex for the whole game load, and waiting on it here froze the UI
+// (ANR risk) while a game booted. A surface that arrives before the renderer exists is kept and
+// attached by InitializeEmulation as soon as the renderer is up; one that arrives later is
+// attached right here, whether or not RunEmulation has started yet.
+void EmulationSession::AuxSurfaceChanged(ANativeWindow* native_window) {
+    std::scoped_lock lock(m_aux_mutex);
+    DetachAuxWindowLocked();
+    ReleaseAuxNativeWindowLocked();
+    m_aux_native_window = native_window;
     AttachAuxWindowLocked();
 }
 
 void EmulationSession::AuxSurfaceDestroyed() {
-    std::scoped_lock lock(m_mutex);
+    std::scoped_lock lock(m_aux_mutex);
     DetachAuxWindowLocked();
+    ReleaseAuxNativeWindowLocked();
+}
+
+bool EmulationSession::SetAuxTouch(std::span<const VideoCore::DSMod::AuxTouchPoint> points) {
+    // Under m_aux_mutex the GPU cannot be torn down (ShutdownEmulation clears
+    // m_aux_renderer_ready under the same lock before ShutdownMainProcess).
+    std::scoped_lock lock(m_aux_mutex);
+    if (!m_aux_renderer_ready) {
+        return false;
+    }
+    m_system.GPU().DSModAux().SetTouch(points);
+    return true;
 }
 
 void EmulationSession::ConfigureFilesystemProvider(const std::string& filepath) {
@@ -395,8 +409,9 @@ void EmulationSession::SetAppletId(int applet_id) {
 namespace {
 // Developer builds only: an Android app inherits no shell environment, so the EDEN_DSMOD_*
 // switches the desktop takes from the environment (profiling, self-checks, kill switches) are read from
-// <user dir>/dsmod_env.txt instead -- one KEY=VALUE per line, '#' starts a comment. Applied before
-// each game starts; variables read once per process keep their first value until the app restarts.
+// <user dir>/dsmod_env.txt instead -- one KEY=VALUE per line, '#' starts a comment. Applied once,
+// when the app directory is set and before any emulation thread exists (setenv is not safe against
+// a concurrent getenv); edits take effect after the app restarts.
 void ApplyDsmodEnvFile() {
 #if EDEN_DSMOD_BUILD_DEV_TOOLS
     const auto path = Common::FS::GetEdenPath(Common::FS::EdenPath::EdenDir) / "dsmod_env.txt";
@@ -439,7 +454,6 @@ Core::SystemResultStatus EmulationSession::InitializeEmulation(const std::string
                                                                const std::size_t program_index,
                                                                const bool frontend_initiated) {
     std::scoped_lock lock(m_mutex);
-    ApplyDsmodEnvFile();
 
     // Create the render window.
     m_window = std::make_unique<EmuWindow_Android>(m_native_window, m_vulkan_library);
@@ -486,8 +500,12 @@ Core::SystemResultStatus EmulationSession::InitializeEmulation(const std::string
     m_system.GetCpuManager().OnGpuReady();
     m_system.RegisterExitCallback([&] { HaltEmulation(); });
 
-    // DSMod: a second-screen surface may already be waiting.
-    AttachAuxWindowLocked();
+    // DSMod: the renderer exists from here on; a second-screen surface may already be waiting.
+    {
+        std::scoped_lock aux_lock(m_aux_mutex);
+        m_aux_renderer_ready = true;
+        AttachAuxWindowLocked();
+    }
 
     // Register an ExecuteProgram callback such that Core can execute a sub-program
     m_system.RegisterExecuteProgramCallback([&](std::size_t program_index_) {
@@ -517,10 +535,12 @@ void EmulationSession::ShutdownEmulation() {
 
     // Shutdown the main emulated process
     if (m_load_result == Core::SystemResultStatus::Success) {
-        if (m_aux_window) {
-            m_system.Renderer().SetAuxWindow(nullptr);
+        {
+            // The aux surface itself stays cached for the next game.
+            std::scoped_lock aux_lock(m_aux_mutex);
+            DetachAuxWindowLocked();
+            m_aux_renderer_ready = false;
         }
-        m_aux_window.reset();
         m_system.DetachDebugger();
         m_system.ShutdownMainProcess();
         m_load_result = Core::SystemResultStatus::ErrorNotInitialized;
@@ -530,7 +550,11 @@ void EmulationSession::ShutdownEmulation() {
     }
 
     // Tear down the render window.
-    m_aux_window.reset();
+    {
+        std::scoped_lock aux_lock(m_aux_mutex);
+        m_aux_window.reset();
+        m_aux_renderer_ready = false;
+    }
     m_window.reset();
 }
 
@@ -874,21 +898,31 @@ void Java_org_yuzu_yuzu_1emu_NativeLibrary_surfaceDestroyed(JNIEnv* env, jobject
 }
 
 void Java_org_yuzu_yuzu_1emu_NativeLibrary_auxSurfaceChanged(JNIEnv* env, jobject instance,
-                                                             [[maybe_unused]] jobject surf) {
+                                                             jobject surf) {
     auto& session = EmulationSession::GetInstance();
-    // Always start from a clean state: detach + release any previous aux surface.
-    session.AuxSurfaceDestroyed();
-    session.SetAuxNativeWindow(ANativeWindow_fromSurface(env, surf));
-    session.AuxSurfaceChanged();
+    ANativeWindow* const window = surf != nullptr ? ANativeWindow_fromSurface(env, surf) : nullptr;
+    if (window == nullptr) {
+        session.AuxSurfaceDestroyed();
+        return;
+    }
+    // Detach + release of any previous aux surface, the swap and the attach are one locked step.
+    session.AuxSurfaceChanged(window);
 }
 
 void Java_org_yuzu_yuzu_1emu_NativeLibrary_auxSurfaceDestroyed(JNIEnv* env, jobject instance) {
     EmulationSession::GetInstance().AuxSurfaceDestroyed();
 }
 
+jint Java_org_yuzu_yuzu_1emu_NativeLibrary_dualScreenRuntimeVersion(JNIEnv* env,
+                                                                     jobject instance) {
+    return static_cast<jint>(Core::Mods::DualScreenRuntimeVersion);
+}
+
 void Java_org_yuzu_yuzu_1emu_NativeLibrary_setAppDirectory(JNIEnv* env, jobject instance,
                                                            [[maybe_unused]] jstring j_directory) {
     Common::FS::SetAppDirectory(Common::Android::GetJString(env, j_directory));
+    static std::once_flag dsmod_env_applied;
+    std::call_once(dsmod_env_applied, ApplyDsmodEnvFile);
 }
 
 void Java_org_yuzu_yuzu_1emu_NativeLibrary_setDualScreenCodeDirectory(

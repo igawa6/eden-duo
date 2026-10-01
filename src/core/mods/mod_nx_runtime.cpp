@@ -65,10 +65,8 @@ bool EndsWithNoCase(std::string_view text, std::string_view suffix) {
     return true;
 }
 
-struct Roots {
-    FileSys::VirtualDir romfs;
-    FileSys::VirtualDir package;
-};
+/// Where a job's "<prefix>:" sources resolve: the runtime's source registry (mod_sources.h).
+using Roots = std::shared_ptr<AssetSources>;
 
 enum class JobKind : u8 { Image, Font, Msbt };
 
@@ -608,12 +606,12 @@ NxAssetState* MakeNxAssetState(ModRuntime* rt) {
 LocateStatus NxAssetState::Locate(const std::string& src, const Roots& roots, Located& out,
                                   std::string& error) {
     out = {};
-    const bool romfs = src.starts_with("romfs:");
-    const size_t scheme = romfs ? 6 : src.starts_with("file:") ? 5 : 0;
-    if (scheme == 0) {
+    const std::string_view prefix = AssetSources::PrefixOf(src);
+    if (!roots || prefix.empty() || !roots->IsDirectorySource(src)) {
         error = "unsupported scheme";
         return LocateStatus::Error;
     }
+    const size_t scheme = prefix.size() + 1;
     const size_t hash = src.find('#');
     std::string path =
         src.substr(scheme, hash == std::string::npos ? std::string::npos : hash - scheme);
@@ -627,7 +625,7 @@ LocateStatus NxAssetState::Locate(const std::string& src, const Roots& roots, Lo
         std::scoped_lock lock{io_mutex};
         auto& file = files[out.chain];
         if (!file) {
-            const auto& root = romfs ? roots.romfs : roots.package;
+            const auto root = roots->Root(prefix);
             file = root ? root->GetFileRelative(path) : nullptr;
         }
         out.file = file;
@@ -636,8 +634,9 @@ LocateStatus NxAssetState::Locate(const std::string& src, const Roots& roots, Lo
         }
     }
     if (!out.file) {
-        error = romfs ? (roots.romfs ? "no such romfs file" : "game romfs unavailable")
-                      : "no such package file";
+        error = prefix == "file" ? std::string{"no such package file"}
+                : roots->Root(prefix) ? fmt::format("no such {} file", prefix)
+                                      : fmt::format("game {} unavailable", prefix);
         return LocateStatus::NotFound;
     }
     out.size = out.file->GetSize();
@@ -1582,8 +1581,8 @@ void NxAssetState::RunCompositeStep(const std::string& name) {
 // ---------------------------------------------------------------------------------------------
 // ModRuntime side (tick thread)
 
-bool ModRuntime::IsNxAssetSource(const std::string& src) {
-    if (!src.starts_with("romfs:") && !src.starts_with("file:")) {
+bool ModRuntime::IsNxAssetSource(const std::string& src) const {
+    if (!asset_sources->IsDirectorySource(src)) {
         return false;
     }
     const size_t hash = src.find('#');
@@ -1612,14 +1611,11 @@ std::shared_ptr<const Image> ModRuntime::GetNxImage(const std::string& src) {
     if (s.pending.contains(src) || s.failed.contains(src) || s.fallback.contains(src)) {
         return nullptr;
     }
-    if (src.starts_with("romfs:") && !romfs_tried) {
-        ReadAssetBytesRaw("romfs:"); // opens the session romfs on this (the owner) thread
-    }
     s.pending.insert(src);
     {
         std::scoped_lock lock{s.queue_mutex};
         s.jobs.push_back(
-            {JobKind::Image, src, {romfs_root, manifest.asset_dir}, s.generation, NxClock::now()});
+            {JobKind::Image, src, asset_sources, s.generation, NxClock::now()});
     }
     s.EnsureWorker();
     s.cv.notify_one();
@@ -1654,11 +1650,8 @@ std::shared_ptr<const Image> ModRuntime::GetCompositeImage(const std::string& na
 }
 
 bool ModRuntime::ReadNxMember(const std::string& src, std::vector<u8>& out) {
-    if (!src.starts_with("romfs:") && !src.starts_with("file:")) {
+    if (!asset_sources->IsDirectorySource(src)) {
         return false;
-    }
-    if (src.starts_with("romfs:") && !romfs_tried) {
-        ReadAssetBytesRaw("romfs:");
     }
     auto& s = *nx_assets;
     // Only an archive at the top decides this path; anything else keeps the older handling.
@@ -1666,12 +1659,12 @@ bool ModRuntime::ReadNxMember(const std::string& src, std::vector<u8>& out) {
     Located at;
     std::string error;
     const LocateStatus status =
-        s.Locate(src.substr(0, hash), {romfs_root, manifest.asset_dir}, at, error);
+        s.Locate(src.substr(0, hash), asset_sources, at, error);
     if (status != LocateStatus::Ok || std::memcmp(at.magic.data(), "SARC", 4) != 0) {
         return false;
     }
     out.clear();
-    if (s.Locate(src, {romfs_root, manifest.asset_dir}, at, error) != LocateStatus::Ok) {
+    if (s.Locate(src, asset_sources, at, error) != LocateStatus::Ok) {
         LOG_WARNING(Core, "DSMod: '{}': {}", src, error);
         return true;
     }
@@ -1690,15 +1683,12 @@ bool ModRuntime::RequestNxFont() {
                         ".bffnt")) {
         return false;
     }
-    if (manifest.font_metrics_src.starts_with("romfs:") && !romfs_tried) {
-        ReadAssetBytesRaw("romfs:");
-    }
     s.font_key = manifest.font_metrics_src;
     {
         std::scoped_lock lock{s.queue_mutex};
         s.jobs.push_front({JobKind::Font,
                            s.font_key,
-                           {romfs_root, manifest.asset_dir},
+                           asset_sources,
                            s.generation,
                            NxClock::now()});
     }
@@ -1965,14 +1955,9 @@ void ModRuntime::PumpNxAssets(const StateSnapshot& snapshot) {
             request.def = def;
             request.alpha = alpha;
             request.serial = live.serial;
-            request.roots = {romfs_root, manifest.asset_dir};
+            request.roots = asset_sources;
             request.generation = s.generation;
             request.dirty = true;
-        }
-        if (!romfs_tried) {
-            ReadAssetBytesRaw("romfs:");
-            std::scoped_lock lock{s.queue_mutex};
-            s.requests[name].roots = {romfs_root, manifest.asset_dir};
         }
         s.EnsureWorker();
         s.cv.notify_one();
@@ -2247,15 +2232,12 @@ void ModRuntime::RequestMsbt(const std::string& alias) {
     if (IsNxAssetSource(manifest.font_metrics_src) || EndsWithNoCase(font_file, ".bffnt")) {
         job->font_src = manifest.font_metrics_src;
     }
-    if ((path.starts_with("romfs:") || job->font_src.starts_with("romfs:")) && !romfs_tried) {
-        ReadAssetBytesRaw("romfs:");
-    }
     m.queued.insert(alias);
     const size_t used_labels = job->labels.size();
     {
         std::scoped_lock lock{s.queue_mutex};
         Job queued{
-            JobKind::Msbt, path, {romfs_root, manifest.asset_dir}, s.generation, NxClock::now()};
+            JobKind::Msbt, path, asset_sources, s.generation, NxClock::now()};
         queued.msbt = std::move(job);
         s.jobs.push_back(std::move(queued));
         if (!manifest.msbt.icon_font.empty() && !m.icon_requested) {
@@ -2263,7 +2245,7 @@ void ModRuntime::RequestMsbt(const std::string& alias) {
             m.icon_key = manifest.msbt.icon_font;
             Job icon{JobKind::Font,
                      m.icon_key,
-                     {romfs_root, manifest.asset_dir},
+                     asset_sources,
                      s.generation,
                      NxClock::now()};
             icon.icon_font = true;

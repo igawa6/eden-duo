@@ -78,15 +78,15 @@ constexpr s64 ObjectWalkBack = 0x2000;
 /// Log a window of guest memory around a published address, as words and as floats. Sampling it
 /// while the game moves is what turns "the player object is somewhere in here" into an offset.
 void ModRuntime::DumpWatchedMemoryImpl() {
-    if (dump_spec.empty() || (tick_count % 120) != 0) {
+    if (dev.dump_spec.empty() || (tick_count % 120) != 0) {
         return;
     }
     // "name:a>b:bytes[,name:c:bytes...]" -- several chains per run. Each run costs minutes of
     // menu navigation before the game is even playable, so following one pointer at a time is
     // the expensive way to find anything.
-    for (size_t start = 0; start <= dump_spec.size();) {
-        const auto comma = dump_spec.find(',', start);
-        DumpOneWatch(dump_spec.substr(start, comma - start));
+    for (size_t start = 0; start <= dev.dump_spec.size();) {
+        const auto comma = dev.dump_spec.find(',', start);
+        DumpOneWatch(dev.dump_spec.substr(start, comma - start));
         if (comma == std::string::npos) {
             break;
         }
@@ -94,15 +94,15 @@ void ModRuntime::DumpWatchedMemoryImpl() {
     }
 }
 
-void ModRuntime::DumpOneWatchImpl([[maybe_unused]] const std::string& dump_spec) {
-    const auto colon = dump_spec.find(':');
-    const auto colon2 = dump_spec.rfind(':');
+void ModRuntime::DumpOneWatchImpl([[maybe_unused]] const std::string& spec) {
+    const auto colon = spec.find(':');
+    const auto colon2 = spec.rfind(':');
     if (colon == std::string::npos || colon2 == colon) {
         return;
     }
-    const auto name = dump_spec.substr(0, colon);
-    const auto path = dump_spec.substr(colon + 1, colon2 - colon - 1);
-    const u64 bytes = std::strtoull(dump_spec.substr(colon2 + 1).c_str(), nullptr, 0);
+    const auto name = spec.substr(0, colon);
+    const auto path = spec.substr(colon + 1, colon2 - colon - 1);
+    const u64 bytes = std::strtoull(spec.substr(colon2 + 1).c_str(), nullptr, 0);
     const auto found = sequence_addresses.find(name);
     if (found == sequence_addresses.end() || found->second == 0) {
         return;
@@ -150,47 +150,47 @@ void ModRuntime::ScanForMovingFloatsImpl() {
     if (!InGameplay()) {
         return;
     }
-    if (scan_spec.empty() || (tick_count % 120) != 0) {
+    if (dev.scan_spec.empty() || (tick_count % 120) != 0) {
         return;
     }
-    const auto colon = scan_spec.find(':');
+    const auto colon = dev.scan_spec.find(':');
     if (colon == std::string::npos) {
         return;
     }
-    const auto anchor_name = scan_spec.substr(0, colon);
+    const auto anchor_name = dev.scan_spec.substr(0, colon);
     const auto found = sequence_addresses.find(anchor_name);
     if (found == sequence_addresses.end() || found->second == 0) {
         return;
     }
     auto& memory = system.ApplicationMemory();
-    if (scan_end == 0) {
+    if (dev.scan_end == 0) {
         if (tick_count < 9000) { // ~150 s: past the menus, into gameplay
             return;
         }
         // "<anchor>:<megabytes>[:<minimum magnitude>]". A span of hundreds of megabytes is fine:
         // collection is incremental, a slice per invocation, so the emulator never stalls on one
         // tick while the net is cast over the whole heap.
-        const auto rest = scan_spec.substr(colon + 1);
+        const auto rest = dev.scan_spec.substr(colon + 1);
         const auto second = rest.find(':');
         const u64 span = std::strtoull(rest.substr(0, second).c_str(), nullptr, 0) << 20;
-        scan_min_magnitude = second == std::string::npos
+        dev.scan_min_magnitude = second == std::string::npos
                                  ? 1.0f
                                  : std::strtof(rest.substr(second + 1).c_str(), nullptr);
-        scan_cursor =
+        dev.scan_cursor =
             static_cast<VAddr>(found->second) > span ? static_cast<VAddr>(found->second) - span : 0;
-        scan_end = found->second + (span >> 4); // mostly below the anchor: heaps grow upward
-        LOG_INFO(Core, "DSMod scan: sweeping {:016X}..{:016X}", scan_cursor, scan_end);
+        dev.scan_end = found->second + (span >> 4); // mostly below the anchor: heaps grow upward
+        LOG_INFO(Core, "DSMod scan: sweeping {:016X}..{:016X}", dev.scan_cursor, dev.scan_end);
         return;
     }
-    if (scan_cursor < scan_end) {
+    if (dev.scan_cursor < dev.scan_end) {
         constexpr size_t MaxCandidates = 900000;
         constexpr u64 SlicePerTick = 96ULL << 20;
-        const VAddr slice_end = std::min<VAddr>(scan_cursor + SlicePerTick, scan_end);
+        const VAddr slice_end = std::min<VAddr>(dev.scan_cursor + SlicePerTick, dev.scan_end);
         // Work through host pointers, a page at a time. Reading candidate words one guest access
         // at a time slowed the tick thread so far that a 15-second reporting window took minutes
         // of wall clock -- the scan looked dead while it was merely glacial.
-        for (VAddr page = scan_cursor & ~0xFFFULL;
-             page < slice_end && scan_addresses.size() < MaxCandidates; page += 0x1000) {
+        for (VAddr page = dev.scan_cursor & ~0xFFFULL;
+             page < slice_end && dev.scan_addresses.size() < MaxCandidates; page += 0x1000) {
             const u8* const host = memory.GetPointerSilent(page);
             if (host == nullptr) {
                 continue;
@@ -200,7 +200,7 @@ void ModRuntime::ScanForMovingFloatsImpl() {
                 std::memcpy(&bits, host + in_page, sizeof(bits));
                 float value{};
                 std::memcpy(&value, &bits, sizeof(value));
-                if (!std::isfinite(value) || std::fabs(value) <= scan_min_magnitude ||
+                if (!std::isfinite(value) || std::fabs(value) <= dev.scan_min_magnitude ||
                     std::fabs(value) >= 1e7f) {
                     continue;
                 }
@@ -211,59 +211,59 @@ void ModRuntime::ScanForMovingFloatsImpl() {
                 if (wide >= 0x2000000000ULL && wide < 0x8000000000ULL) {
                     continue;
                 }
-                scan_addresses.push_back(page + in_page);
-                scan_host.push_back(host + in_page);
-                scan_low.push_back(value);
-                scan_high.push_back(value);
-                if (scan_addresses.size() >= MaxCandidates) {
+                dev.scan_addresses.push_back(page + in_page);
+                dev.scan_host.push_back(host + in_page);
+                dev.scan_low.push_back(value);
+                dev.scan_high.push_back(value);
+                if (dev.scan_addresses.size() >= MaxCandidates) {
                     break;
                 }
             }
         }
-        scan_cursor = slice_end;
-        if (scan_cursor >= scan_end || scan_addresses.size() >= MaxCandidates) {
-            scan_cursor = scan_end;
-            scan_started = tick_count;
+        dev.scan_cursor = slice_end;
+        if (dev.scan_cursor >= dev.scan_end || dev.scan_addresses.size() >= MaxCandidates) {
+            dev.scan_cursor = dev.scan_end;
+            dev.scan_started = tick_count;
             LOG_INFO(Core, "DSMod scan: watching {} candidate floats around {} ({:016X})",
-                     scan_addresses.size(), anchor_name, found->second);
+                     dev.scan_addresses.size(), anchor_name, found->second);
         }
         return;
     }
-    for (size_t i = 0; i < scan_host.size(); ++i) {
+    for (size_t i = 0; i < dev.scan_host.size(); ++i) {
         float value{};
-        std::memcpy(&value, scan_host[i], sizeof(value));
+        std::memcpy(&value, dev.scan_host[i], sizeof(value));
         if (!std::isfinite(value)) {
             continue;
         }
-        scan_low[i] = std::min(scan_low[i], value);
-        scan_high[i] = std::max(scan_high[i], value);
+        dev.scan_low[i] = std::min(dev.scan_low[i], value);
+        dev.scan_high[i] = std::max(dev.scan_high[i], value);
     }
-    if (tick_count - scan_started < 900) { // one reporting window of walking
+    if (tick_count - dev.scan_started < 900) { // one reporting window of walking
         return;
     }
-    std::vector<size_t> best(scan_addresses.size());
+    std::vector<size_t> best(dev.scan_addresses.size());
     std::iota(best.begin(), best.end(), size_t{0});
     std::ranges::sort(best, [this](size_t a, size_t b) {
-        return (scan_high[a] - scan_low[a]) > (scan_high[b] - scan_low[b]);
+        return (dev.scan_high[a] - dev.scan_low[a]) > (dev.scan_high[b] - dev.scan_low[b]);
     });
     for (size_t rank = 0; rank < std::min<size_t>(12, best.size()); ++rank) {
         const size_t i = best[rank];
-        if (rank > 0 && scan_high[i] - scan_low[i] <= 0.01f) {
+        if (rank > 0 && dev.scan_high[i] - dev.scan_low[i] <= 0.01f) {
             break; // nothing else is moving at all
         }
-        LOG_INFO(Core, "DSMod scan: {:016X} swung {:.1f} ({:.1f} .. {:.1f})", scan_addresses[i],
-                 scan_high[i] - scan_low[i], scan_low[i], scan_high[i]);
-        if (rank == 0 && scan_high[i] - scan_low[i] > 1.0f) {
-            scan_best = fmt::format("{:016X}", scan_addresses[i]);
-            TraceChainTo(scan_addresses[i]);
+        LOG_INFO(Core, "DSMod scan: {:016X} swung {:.1f} ({:.1f} .. {:.1f})", dev.scan_addresses[i],
+                 dev.scan_high[i] - dev.scan_low[i], dev.scan_low[i], dev.scan_high[i]);
+        if (rank == 0 && dev.scan_high[i] - dev.scan_low[i] > 1.0f) {
+            dev.scan_best = fmt::format("{:016X}", dev.scan_addresses[i]);
+            TraceChainTo(dev.scan_addresses[i]);
         }
     }
     // The winner's surroundings, and its owner. A position is a vector, so its neighbours say
     // which component this is; and the nearest preceding vtable pointer both finds the object's
     // start and names its class -- which is the first step of turning a lucky absolute address
     // into a pointer chain a package can actually ship.
-    if (!best.empty() && scan_high[best[0]] - scan_low[best[0]] > 1.0f) {
-        const VAddr hit = scan_addresses[best[0]];
+    if (!best.empty() && dev.scan_high[best[0]] - dev.scan_low[best[0]] > 1.0f) {
+        const VAddr hit = dev.scan_addresses[best[0]];
         std::string hood;
         for (s64 off = -0x20; off <= 0x2C; off += 4) {
             const VAddr at = hit + off;
@@ -289,12 +289,12 @@ void ModRuntime::ScanForMovingFloatsImpl() {
     // Re-baseline every window. Without this a value that rose from zero once during start-up
     // outranks a coordinate that genuinely oscillates, because the range is measured for all time
     // -- which is exactly what the first run reported: round numbers climbing from 0.
-    for (size_t i = 0; i < scan_host.size(); ++i) {
+    for (size_t i = 0; i < dev.scan_host.size(); ++i) {
         float value{};
-        std::memcpy(&value, scan_host[i], sizeof(value));
-        scan_low[i] = scan_high[i] = std::isfinite(value) ? value : 0.0f;
+        std::memcpy(&value, dev.scan_host[i], sizeof(value));
+        dev.scan_low[i] = dev.scan_high[i] = std::isfinite(value) ? value : 0.0f;
     }
-    scan_started = tick_count;
+    dev.scan_started = tick_count;
 }
 
 /// Write every mapped page of the module and heap to one file, through host pointers. This is the
@@ -303,17 +303,17 @@ void ModRuntime::ScanForMovingFloatsImpl() {
 /// pointers leading to it from the module's static data. Format: repeated [u64 addr][u32
 /// len][bytes].
 void ModRuntime::DumpHeapSnapshotImpl() {
-    if (heapdump_done || heapdump_path.empty() || scan_best.empty()) {
+    if (dev.heapdump_done || dev.heapdump_path.empty() || dev.scan_best.empty()) {
         return;
     }
     // Wait for the scan to name a target. A snapshot without one is unusable: the address a scan
     // finds dies with the boot, so the two have to come from the same run.
-    LOG_INFO(Core, "DSMod: snapshotting for target {}", scan_best);
-    heapdump_done = true;
+    LOG_INFO(Core, "DSMod: snapshotting for target {}", dev.scan_best);
+    dev.heapdump_done = true;
     auto& memory = system.ApplicationMemory();
-    FILE* const out = std::fopen(heapdump_path.c_str(), "wb");
+    FILE* const out = std::fopen(dev.heapdump_path.c_str(), "wb");
     if (out == nullptr) {
-        LOG_ERROR(Core, "DSMod: cannot write heap snapshot to {}", heapdump_path);
+        LOG_ERROR(Core, "DSMod: cannot write heap snapshot to {}", dev.heapdump_path);
         return;
     }
     u64 written = 0;
@@ -351,7 +351,7 @@ void ModRuntime::DumpHeapSnapshotImpl() {
     dump_range(main_region_begin, main_region_begin + main_region_size);
     dump_range(HeapLow(), HeapHigh());
     std::fclose(out);
-    LOG_INFO(Core, "DSMod: heap snapshot, {} MB -> {}", written >> 20, heapdump_path);
+    LOG_INFO(Core, "DSMod: heap snapshot, {} MB -> {}", written >> 20, dev.heapdump_path);
 }
 
 /// Work out how a package could reach this address on a later boot.
@@ -438,13 +438,13 @@ void ModRuntime::TraceChainToImpl([[maybe_unused]] VAddr target) {
 }
 
 void ModRuntime::RecheckRoutesImpl() {
-    if (path_routes.empty() || (tick_count % 120) != 0) {
+    if (dev.path_routes.empty() || (tick_count % 120) != 0) {
         return;
     }
     auto& memory = system.ApplicationMemory();
-    ++path_checks;
+    ++dev.path_checks;
     std::string report;
-    for (auto& route : path_routes) {
+    for (auto& route : dev.path_routes) {
         // Replay the route exactly as it was found. Assuming a fixed number of hops scored
         // every deep route as broken, which said more about the check than the route.
         bool ok = false;
@@ -473,9 +473,9 @@ void ModRuntime::RecheckRoutesImpl() {
             ++route.good;
         }
         report += fmt::format(" main+{:X}[{}]:{}/{}", route.root, route.hops.size(), route.good,
-                              path_checks);
+                              dev.path_checks);
     }
-    LOG_INFO(Core, "DSMod path: routes still resolving after {} check(s):{}", path_checks, report);
+    LOG_INFO(Core, "DSMod path: routes still resolving after {} check(s):{}", dev.path_checks, report);
 }
 
 void ModRuntime::PathFromStaticsImpl([[maybe_unused]] VAddr target, [[maybe_unused]] int depth,
@@ -524,14 +524,14 @@ void ModRuntime::PathFromStaticsImpl([[maybe_unused]] VAddr target, [[maybe_unus
                     // re-check it rather than reporting the first hit.
                     auto hops = step.hops;
                     hops.push_back(off);
-                    path_routes.push_back({step.root, std::move(hops),
+                    dev.path_routes.push_back({step.root, std::move(hops),
                                            static_cast<s64>(target) - static_cast<s64>(word)});
                     LOG_INFO(Core,
                              "DSMod path: candidate main+{:X} +{:#x} (target{:+#x}) "
                              "at depth {}",
                              step.root, off, static_cast<s64>(target) - static_cast<s64>(word),
                              level);
-                    if (path_routes.size() >= 24) {
+                    if (dev.path_routes.size() >= 24) {
                         return;
                     }
                     continue;
@@ -660,13 +660,13 @@ void ModRuntime::TraceWithSlackImpl([[maybe_unused]] VAddr object,
 }
 
 void ModRuntime::MotionScanImpl() {
-    if (motion_spec.empty() || !InGameplay() || (tick_count % 5) != 0) {
+    if (dev.motion_spec.empty() || !InGameplay() || (tick_count % 5) != 0) {
         return;
     }
     auto& memory = system.ApplicationMemory();
     constexpr u64 LegTicks = 240; // ~4 s of holding one direction
 
-    if (motion_phase == 0) {
+    if (dev.motion_phase == 0) {
         // "<published name>@<window>" restricts the search to memory around an object the game
         // handed us. The minimap has to know where the player is in order to draw the dot, and
         // its manager is a singleton -- so a coordinate found inside it is reachable from a
@@ -675,8 +675,8 @@ void ModRuntime::MotionScanImpl() {
         // "1" and "free" both mean the whole heap. "free" only ever described the input side
         // (a person drives, not the runtime); falling into the anchor branch made it a name to
         // look up, which never resolved, so phase 0 returned every tick and nothing was watched.
-        if (motion_spec != "1" && motion_spec != "free") {
-            std::string anchor = motion_spec;
+        if (dev.motion_spec != "1" && dev.motion_spec != "free") {
+            std::string anchor = dev.motion_spec;
             u64 window = 0x10000;
             if (const auto at = anchor.rfind('@'); at != std::string::npos) {
                 window = std::strtoull(anchor.c_str() + at + 1, nullptr, 0);
@@ -695,12 +695,12 @@ void ModRuntime::MotionScanImpl() {
         // own thread and freezes the game for seconds -- unnoticeable when a script is playing,
         // indistinguishable from a hang when a person is.
         constexpr u64 PagesPerTick = 4096;
-        if (motion_sweep_at == 0) {
-            motion_sweep_at = from & ~0xFFFULL;
+        if (dev.motion_sweep_at == 0) {
+            dev.motion_sweep_at = from & ~0xFFFULL;
         }
-        const VAddr sweep_end = std::min<VAddr>(to, motion_sweep_at + PagesPerTick * 0x1000);
-        for (VAddr page = motion_sweep_at; page < sweep_end; page += 0x1000) {
-            if (motion_at.size() >= (4u << 20)) {
+        const VAddr sweep_end = std::min<VAddr>(to, dev.motion_sweep_at + PagesPerTick * 0x1000);
+        for (VAddr page = dev.motion_sweep_at; page < sweep_end; page += 0x1000) {
+            if (dev.motion_at.size() >= (4u << 20)) {
                 break;
             }
             const u8* const host = memory.GetPointerSilent(page);
@@ -723,21 +723,21 @@ void ModRuntime::MotionScanImpl() {
                 if (!coordish(v) || !coordish(next)) {
                     continue;
                 }
-                motion_at.push_back(page + at);
-                motion_last.push_back(v);
-                motion_score.push_back(0);
-                motion_dir.push_back(0);
-                motion_turns.push_back(0);
+                dev.motion_at.push_back(page + at);
+                dev.motion_last.push_back(v);
+                dev.motion_score.push_back(0);
+                dev.motion_dir.push_back(0);
+                dev.motion_turns.push_back(0);
             }
         }
-        motion_sweep_at = sweep_end;
-        if (motion_sweep_at < to && motion_at.size() < (4u << 20)) {
+        dev.motion_sweep_at = sweep_end;
+        if (dev.motion_sweep_at < to && dev.motion_at.size() < (4u << 20)) {
             return; // more to sweep next tick
         }
         LOG_INFO(Core, "DSMod motion: watching {} float(s) that could be a coordinate",
-                 motion_at.size());
-        motion_phase = 1;
-        motion_started = tick_count;
+                 dev.motion_at.size());
+        dev.motion_phase = 1;
+        dev.motion_started = tick_count;
         return;
     }
 
@@ -748,8 +748,8 @@ void ModRuntime::MotionScanImpl() {
     // What identifies a coordinate then is simply that it keeps taking new values: walking a
     // real route through rooms moves it through hundreds, where a counter or a flag has a
     // handful and an idle field has one.
-    const bool driven = motion_spec != "free";
-    const bool going_right = ((tick_count - motion_started) / LegTicks) % 2 == 0;
+    const bool driven = dev.motion_spec != "free";
+    const bool going_right = ((tick_count - dev.motion_started) / LegTicks) % 2 == 0;
     if (driven) {
         if (auto* pad = system.GetInputSubsystem() ? system.GetInputSubsystem()->GetVirtualGamepad()
                                                    : nullptr) {
@@ -767,12 +767,12 @@ void ModRuntime::MotionScanImpl() {
     constexpr size_t SlicePerTick = 1u << 18;
     const u8* page_host = nullptr;
     VAddr page_base = 1; // never a real page base
-    for (size_t step = 0; step < SlicePerTick && !motion_at.empty(); ++step) {
-        if (motion_cursor >= motion_at.size()) {
-            motion_cursor = 0;
+    for (size_t step = 0; step < SlicePerTick && !dev.motion_at.empty(); ++step) {
+        if (dev.motion_cursor >= dev.motion_at.size()) {
+            dev.motion_cursor = 0;
         }
-        const size_t i = motion_cursor++;
-        const VAddr addr = motion_at[i];
+        const size_t i = dev.motion_cursor++;
+        const VAddr addr = dev.motion_at[i];
         if (const VAddr base = addr & ~0xFFFULL; base != page_base) {
             page_base = base;
             page_host = memory.GetPointerSilent(base);
@@ -785,8 +785,8 @@ void ModRuntime::MotionScanImpl() {
         if (!std::isfinite(now)) {
             continue;
         }
-        const f32 moved = now - motion_last[i];
-        motion_last[i] = now;
+        const f32 moved = now - dev.motion_last[i];
+        dev.motion_last[i] = now;
         if (std::fabs(moved) < 0.01f) {
             continue; // standing still proves nothing either way
         }
@@ -796,29 +796,29 @@ void ModRuntime::MotionScanImpl() {
             // sample and never stop -- which is exactly what the first run of this produced.
             // A coordinate reverses every time the player does; a clock never reverses once.
             if (std::fabs(moved) >= 200.0f) {
-                motion_score[i] -= 2; // a teleport, a camera cut, a respawn
+                dev.motion_score[i] -= 2; // a teleport, a camera cut, a respawn
                 continue;
             }
             const s8 dir = moved > 0.0f ? s8{1} : s8{-1};
-            if (motion_dir[i] != 0 && dir != motion_dir[i]) {
-                ++motion_turns[i];
-                motion_score[i] += 4; // a turn is worth far more than another step
+            if (dev.motion_dir[i] != 0 && dir != dev.motion_dir[i]) {
+                ++dev.motion_turns[i];
+                dev.motion_score[i] += 4; // a turn is worth far more than another step
             } else {
-                motion_score[i] += 1;
+                dev.motion_score[i] += 1;
             }
-            motion_dir[i] = dir;
+            dev.motion_dir[i] = dir;
             continue;
         }
         // Agreeing with the stick earns a point; disagreeing loses one. Nothing is discarded --
         // a coordinate stops for a wall or a ledge, and a single stall must not be fatal.
-        motion_score[i] += ((moved > 0.0f) == going_right) ? 1 : -1;
+        dev.motion_score[i] += ((moved > 0.0f) == going_right) ? 1 : -1;
     }
 
     // Ranking sorts the whole candidate set, so do it on a timer rather than every sample.
-    if (tick_count - motion_started < LegTicks * 4 || (tick_count - motion_started) % 300 != 0) {
+    if (tick_count - dev.motion_started < LegTicks * 4 || (tick_count - dev.motion_started) % 300 != 0) {
         return;
     }
-    std::vector<size_t> order(motion_at.size());
+    std::vector<size_t> order(dev.motion_at.size());
     for (size_t i = 0; i < order.size(); ++i) {
         order[i] = i;
     }
@@ -826,15 +826,15 @@ void ModRuntime::MotionScanImpl() {
     const size_t top = std::min<size_t>(256, order.size());
     std::ranges::partial_sort(
         order.begin(), order.begin() + top, order.end(),
-        [&](size_t a, size_t b) { return motion_score[a] > motion_score[b]; });
+        [&](size_t a, size_t b) { return dev.motion_score[a] > dev.motion_score[b]; });
     std::string report;
     for (size_t k = 0; k < order.size() && k < 10; ++k) {
         const size_t i = order[k];
-        if (motion_score[i] <= 0) {
+        if (dev.motion_score[i] <= 0) {
             break;
         }
-        report += fmt::format(" {:012X}:{:+d}/{}turns@{:g}", motion_at[i], motion_score[i],
-                              motion_turns[i], motion_last[i]);
+        report += fmt::format(" {:012X}:{:+d}/{}turns@{:g}", dev.motion_at[i], dev.motion_score[i],
+                              dev.motion_turns[i], dev.motion_last[i]);
     }
     LOG_INFO(Core, "DSMod motion: best agreement with the stick:{}",
              report.empty() ? " (nothing yet)" : report);
@@ -845,7 +845,7 @@ void ModRuntime::MotionScanImpl() {
     // merely tracks the player has no high-scoring neighbour.
     std::map<VAddr, size_t> top_at;
     for (size_t k = 0; k < top; ++k) {
-        top_at[motion_at[order[k]]] = order[k];
+        top_at[dev.motion_at[order[k]]] = order[k];
     }
     std::string vecs;
     int shown = 0;
@@ -862,14 +862,14 @@ void ModRuntime::MotionScanImpl() {
         if (ny == top_at.end()) {
             continue;
         }
-        if (std::fabs(motion_last[idx]) > 1000.0f && motion_score[idx] > vec_best_score) {
-            vec_best_score = motion_score[idx];
+        if (std::fabs(dev.motion_last[idx]) > 1000.0f && dev.motion_score[idx] > vec_best_score) {
+            vec_best_score = dev.motion_score[idx];
             vec_best = addr;
         }
         const auto nz = top_at.find(addr + 8);
         vecs += fmt::format(
-            " {:012X}=({:g},{:g}{})", addr, motion_last[idx], motion_last[ny->second],
-            nz == top_at.end() ? std::string{} : fmt::format(",{:g}", motion_last[nz->second]));
+            " {:012X}=({:g},{:g}{})", addr, dev.motion_last[idx], dev.motion_last[ny->second],
+            nz == top_at.end() ? std::string{} : fmt::format(",{:g}", dev.motion_last[nz->second]));
         if (++shown >= 10) {
             break;
         }
@@ -880,10 +880,10 @@ void ModRuntime::MotionScanImpl() {
     // Once one candidate is clearly ahead, show where it lives and what sits beside it. A map
     // needs two coordinates, and the other one is almost always the next float along -- so the
     // neighbourhood is the answer to the second half of the question.
-    if (!order.empty() && !motion_traced &&
-        (vec_best != 0 ? vec_best_score >= 30 : motion_score[order[0]] >= 30)) {
-        motion_traced = true;
-        const VAddr best = vec_best != 0 ? vec_best : motion_at[order[0]];
+    if (!order.empty() && !dev.motion_traced &&
+        (vec_best != 0 ? vec_best_score >= 30 : dev.motion_score[order[0]] >= 30)) {
+        dev.motion_traced = true;
+        const VAddr best = vec_best != 0 ? vec_best : dev.motion_at[order[0]];
         std::string around;
         for (s64 off = -0x20; off <= 0x20; off += 4) {
             const VAddr at_addr = best + static_cast<VAddr>(off);
@@ -897,7 +897,7 @@ void ModRuntime::MotionScanImpl() {
                                        : fmt::format(" {:+#x}:?", off);
         }
         LOG_INFO(Core, "DSMod motion: winner {:016X} score {}, around:{}", best,
-                 motion_score[order[0]], around);
+                 dev.motion_score[order[0]], around);
         // Wider view: an identifying field is more likely a little further out than right
         // beside the coordinates.
         // Name module pointers relative to the module, in the run that read them. An absolute
@@ -926,19 +926,19 @@ void ModRuntime::MotionScanImpl() {
     RecheckRoutes();
     if (false) {
     }
-    motion_started = tick_count;
+    dev.motion_started = tick_count;
 }
 
 void ModRuntime::ArrayDumpImpl() {
-    if (arraydump_spec.empty() || arraydump_done || !InGameplay()) {
+    if (dev.arraydump_spec.empty() || dev.arraydump_done || !InGameplay()) {
         return;
     }
-    arraydump_done = true;
+    dev.arraydump_done = true;
     auto& memory = system.ApplicationMemory();
     constexpr s64 Stride = 0x18;
     constexpr int MinRun = 8;
     const s64 vtable_offset = std::strtoll(
-        arraydump_spec.c_str() + (arraydump_spec.starts_with("main+") ? 5 : 0), nullptr, 0);
+        dev.arraydump_spec.c_str() + (dev.arraydump_spec.starts_with("main+") ? 5 : 0), nullptr, 0);
     const u64 vtable = main_region_begin + static_cast<u64>(vtable_offset);
     LOG_INFO(Core, "DSMod array: runs of >= {} entries at stride {:#x}, vtable main+{:X}", MinRun,
              Stride, vtable_offset);
@@ -1013,14 +1013,14 @@ void ModRuntime::ArrayDumpImpl() {
 }
 
 void ModRuntime::ClassDumpImpl() {
-    if (classdump_spec.empty() || classdump_done || !InGameplay()) {
+    if (dev.classdump_spec.empty() || dev.classdump_done || !InGameplay()) {
         return;
     }
-    classdump_done = true;
+    dev.classdump_done = true;
     auto& memory = system.ApplicationMemory();
     // "main+0x...@15" narrows to instances holding exactly that amount. Missile capacity is not
     // in the array the other five came from, so it has to be looked for by the number itself.
-    std::string spec = classdump_spec;
+    std::string spec = dev.classdump_spec;
     f32 want_value = 0.0f;
     bool want_set = false;
     if (const auto at_sign = spec.find('@'); at_sign != std::string::npos) {
@@ -1096,21 +1096,21 @@ void ModRuntime::ClassDumpImpl() {
 }
 
 void ModRuntime::RangeWatchImpl() {
-    if (range_spec.empty() || !InGameplay() || (tick_count % 30) != 0) {
+    if (dev.range_spec.empty() || !InGameplay() || (tick_count % 30) != 0) {
         return;
     }
     auto& memory = system.ApplicationMemory();
-    const auto comma = range_spec.find(':');
-    const f32 low = std::strtof(range_spec.c_str(), nullptr);
+    const auto comma = dev.range_spec.find(':');
+    const f32 low = std::strtof(dev.range_spec.c_str(), nullptr);
     const f32 high =
-        comma == std::string::npos ? low : std::strtof(range_spec.c_str() + comma + 1, nullptr);
+        comma == std::string::npos ? low : std::strtof(dev.range_spec.c_str() + comma + 1, nullptr);
     // An optional third field: the capacity the HUD shows, e.g. "2:16:15" for 15 missiles. A
     // counter's maximum is not a guess when the screen is displaying it.
-    const auto second = range_spec.find(':', comma == std::string::npos ? 0 : comma + 1);
+    const auto second = dev.range_spec.find(':', comma == std::string::npos ? 0 : comma + 1);
     const f32 range_ceiling =
-        second == std::string::npos ? 0.0f : std::strtof(range_spec.c_str() + second + 1, nullptr);
+        second == std::string::npos ? 0.0f : std::strtof(dev.range_spec.c_str() + second + 1, nullptr);
 
-    if (range_phase == 0) {
+    if (dev.range_phase == 0) {
         // Every float that looks like it could be a counter: inside the range, and a whole
         // number. Ammunition is counted, never fractional, and that alone discards most of a
         // heap full of positions, timers and interpolation weights.
@@ -1121,9 +1121,9 @@ void ModRuntime::RangeWatchImpl() {
         // something distinctive.
         constexpr size_t MaxWatched = 4u << 20;
         for (VAddr page = HeapLow(); page < HeapHigh(); page += 0x1000) {
-            if (range_at.size() >= MaxWatched) {
+            if (dev.range_at.size() >= MaxWatched) {
                 LOG_WARNING(Core, "DSMod range: stopped at {} candidates -- narrow the range",
-                            range_at.size());
+                            dev.range_at.size());
                 break;
             }
             const u8* const host = memory.GetPointerSilent(page);
@@ -1137,7 +1137,7 @@ void ModRuntime::RangeWatchImpl() {
                     value != std::floor(value)) {
                     continue;
                 }
-                if (range_pair_max > 0.0f) {
+                if (dev.range_pair_max > 0.0f) {
                     // Require the capacity beside it. Alone, "a whole number under sixteen"
                     // describes tens of thousands of words; paired with its own maximum it
                     // describes an ammunition counter.
@@ -1146,23 +1146,23 @@ void ModRuntime::RangeWatchImpl() {
                     }
                     f32 beside{};
                     std::memcpy(&beside, host + at + 4, sizeof(beside));
-                    if (beside != range_pair_max) {
+                    if (beside != dev.range_pair_max) {
                         continue;
                     }
                 }
                 {
-                    range_at.push_back(page + at);
-                    range_min.push_back(value);
-                    range_max.push_back(value);
-                    range_seen.push_back(
+                    dev.range_at.push_back(page + at);
+                    dev.range_min.push_back(value);
+                    dev.range_max.push_back(value);
+                    dev.range_seen.push_back(
                         value >= 0.0f && value < 32.0f ? (1u << static_cast<int>(value)) : 0u);
                 }
             }
         }
         LOG_INFO(Core, "DSMod range: watching {} whole-numbered float(s) in [{:g}, {:g}]",
-                 range_at.size(), low, high);
-        range_phase = 1;
-        range_started = tick_count;
+                 dev.range_at.size(), low, high);
+        dev.range_phase = 1;
+        dev.range_started = tick_count;
         return;
     }
 
@@ -1194,36 +1194,36 @@ void ModRuntime::RangeWatchImpl() {
         }
     }
 
-    for (size_t i = 0; i < range_at.size(); ++i) {
-        if (!AddressIsSane(range_at[i], 4)) {
+    for (size_t i = 0; i < dev.range_at.size(); ++i) {
+        if (!AddressIsSane(dev.range_at[i], 4)) {
             continue;
         }
-        const u32 raw = memory.Read32(range_at[i]);
+        const u32 raw = memory.Read32(dev.range_at[i]);
         f32 value{};
         std::memcpy(&value, &raw, sizeof(value));
         if (!std::isfinite(value)) {
             continue;
         }
-        range_min[i] = std::min(range_min[i], value);
-        range_max[i] = std::max(range_max[i], value);
+        dev.range_min[i] = std::min(dev.range_min[i], value);
+        dev.range_max[i] = std::max(dev.range_max[i], value);
         if (value >= 0.0f && value < 32.0f && value == std::floor(value)) {
-            range_seen[i] |= 1u << static_cast<int>(value);
+            dev.range_seen[i] |= 1u << static_cast<int>(value);
         }
     }
 
-    if (tick_count - range_started < 900) {
+    if (tick_count - dev.range_started < 900) {
         return;
     }
-    range_started = tick_count;
+    dev.range_started = tick_count;
     // Report by how far each one travelled. A counter being spent has the largest honest swing;
     // anything that never moved says nothing, and is not evidence against itself either.
-    std::vector<size_t> order(range_at.size());
+    std::vector<size_t> order(dev.range_at.size());
     for (size_t i = 0; i < order.size(); ++i) {
         order[i] = i;
     }
     // Rank by how many steps it took, not how far it went.
     std::ranges::sort(order, [&](size_t a, size_t b) {
-        return std::popcount(range_seen[a]) > std::popcount(range_seen[b]);
+        return std::popcount(dev.range_seen[a]) > std::popcount(dev.range_seen[b]);
     });
     // Ranking by the widest swing was wrong: a missile count that goes fifteen to twelve moves
     // by three, and is buried under anything that happened to sweep zero to a hundred. What
@@ -1232,10 +1232,10 @@ void ModRuntime::RangeWatchImpl() {
     std::string report;
     int shown = 0;
     for (const size_t i : order) {
-        if (range_max[i] == range_min[i] || shown >= 16) {
+        if (dev.range_max[i] == dev.range_min[i] || shown >= 16) {
             continue;
         }
-        const u32 raw = AddressIsSane(range_at[i], 4) ? memory.Read32(range_at[i]) : 0;
+        const u32 raw = AddressIsSane(dev.range_at[i], 4) ? memory.Read32(dev.range_at[i]) : 0;
         f32 current{};
         std::memcpy(&current, &raw, sizeof(current));
         if (!std::isfinite(current) || current != std::floor(current) || current < 0.0f) {
@@ -1249,24 +1249,24 @@ void ModRuntime::RangeWatchImpl() {
         // had cleared, and it threw away the answer instead: the missiles drained all the way to
         // nought, which is exactly what being spent looks like. The capacity sitting beside it
         // already rules out freed memory, so when that is being required, zero is allowed.
-        if (current < 0.0f || current >= range_max[i] || range_min[i] < 0.0f) {
+        if (current < 0.0f || current >= dev.range_max[i] || dev.range_min[i] < 0.0f) {
             continue;
         }
         // The step count is what tells a counter from a discarded allocation, and it needs no
         // assumption about where the capacity is stored. Fifteen missiles fired one at a time
         // pass through fifteen values; memory the game cleared holds two, whatever it was and
         // then nought.
-        if (std::popcount(range_seen[i]) < 4) {
+        if (std::popcount(dev.range_seen[i]) < 4) {
             continue;
         }
-        if (range_ceiling > 0.0f && range_max[i] != range_ceiling) {
+        if (range_ceiling > 0.0f && dev.range_max[i] != range_ceiling) {
             continue;
         }
-        report += fmt::format(" {:012X}:{:g}->{:g}({} steps)", range_at[i], range_max[i], current,
-                              std::popcount(range_seen[i]));
+        report += fmt::format(" {:012X}:{:g}->{:g}({} steps)", dev.range_at[i], dev.range_max[i], current,
+                              std::popcount(dev.range_seen[i]));
         ++shown;
     }
-    LOG_INFO(Core, "DSMod range: spent counters among {}:{}", range_at.size(),
+    LOG_INFO(Core, "DSMod range: spent counters among {}:{}", dev.range_at.size(),
              report.empty() ? " (none yet)" : report);
 
     // Trace a short list straight away, in the run that found it. A heap address means nothing
@@ -1274,23 +1274,23 @@ void ModRuntime::RangeWatchImpl() {
     // field within it, and that is the only form a package can use.
     if (shown > 0 && shown <= 4) {
         for (const size_t i : order) {
-            if (range_max[i] == range_min[i] || !AddressIsSane(range_at[i], 4)) {
+            if (dev.range_max[i] == dev.range_min[i] || !AddressIsSane(dev.range_at[i], 4)) {
                 continue;
             }
-            const u32 raw = memory.Read32(range_at[i]);
+            const u32 raw = memory.Read32(dev.range_at[i]);
             f32 current{};
             std::memcpy(&current, &raw, sizeof(current));
-            if (!std::isfinite(current) || current >= range_max[i] || current < 0.0f) {
+            if (!std::isfinite(current) || current >= dev.range_max[i] || current < 0.0f) {
                 continue;
             }
-            if (range_pair_max > 0.0f && range_max[i] != range_pair_max) {
+            if (dev.range_pair_max > 0.0f && dev.range_max[i] != dev.range_pair_max) {
                 continue;
             }
-            if (!range_traced.insert(range_at[i]).second) {
+            if (!dev.range_traced.insert(dev.range_at[i]).second) {
                 continue; // already followed this one
             }
-            LOG_INFO(Core, "DSMod range: tracing {:016X} ({:g} of {:g}, {} steps)", range_at[i],
-                     current, range_max[i], std::popcount(range_seen[i]));
+            LOG_INFO(Core, "DSMod range: tracing {:016X} ({:g} of {:g}, {} steps)", dev.range_at[i],
+                     current, dev.range_max[i], std::popcount(dev.range_seen[i]));
             // Show the object this value lives in, here, in the run that identified it. The
             // class turned out to be a generic float wrapper used all over the engine, so what
             // distinguishes the inventory's instance from a tuning parameter's has to be read
@@ -1298,32 +1298,32 @@ void ModRuntime::RangeWatchImpl() {
             for (s64 base = -0x40; base <= 0x40; base += 0x20) {
                 std::string row;
                 for (s64 off = base; off < base + 0x20; off += 8) {
-                    const VAddr at_addr = range_at[i] + static_cast<VAddr>(off);
+                    const VAddr at_addr = dev.range_at[i] + static_cast<VAddr>(off);
                     if (AddressIsSane(at_addr, 8)) {
                         row += fmt::format(" {:+#x}:{:016X}", off, memory.Read64(at_addr));
                     }
                 }
                 LOG_INFO(Core, "DSMod range:  around{}", row);
             }
-            TraceChainTo(range_at[i]);
+            TraceChainTo(dev.range_at[i]);
         }
     }
 }
 
 void ModRuntime::FieldProbeImpl() {
-    if (field_spec.empty() || field_done || !InGameplay()) {
+    if (dev.field_spec.empty() || dev.field_done || !InGameplay()) {
         return;
     }
-    field_done = true;
+    dev.field_done = true;
     auto& memory = system.ApplicationMemory();
 
-    const auto at_sign = field_spec.find('@');
+    const auto at_sign = dev.field_spec.find('@');
     if (at_sign == std::string::npos) {
         LOG_ERROR(Core, "DSMod field: expected \"<value>@<offset>\"");
         return;
     }
-    const f32 wanted = std::strtof(field_spec.substr(0, at_sign).c_str(), nullptr);
-    const s64 offset = std::strtoll(field_spec.substr(at_sign + 1).c_str(), nullptr, 0);
+    const f32 wanted = std::strtof(dev.field_spec.substr(0, at_sign).c_str(), nullptr);
+    const s64 offset = std::strtoll(dev.field_spec.substr(at_sign + 1).c_str(), nullptr, 0);
     LOG_INFO(Core, "DSMod field: looking for {} at +{:#x} of a referenced object", wanted, offset);
 
     const VAddr HeapFrom = HeapLow(), HeapTo = HeapHigh();
@@ -1385,17 +1385,17 @@ void ModRuntime::FieldProbeImpl() {
 }
 
 void ModRuntime::HeapFindImpl() {
-    if (heapfind_spec.empty() || heapfind_done || !InGameplay()) {
+    if (dev.heapfind_spec.empty() || dev.heapfind_done || !InGameplay()) {
         return;
     }
-    heapfind_done = true;
+    dev.heapfind_done = true;
     auto& memory = system.ApplicationMemory();
 
     // "aabb..,ccdd.." -- one or more literal byte strings, hex, comma separated.
     std::vector<std::vector<u8>> wanted;
-    for (size_t at = 0; at <= heapfind_spec.size();) {
-        const auto comma = heapfind_spec.find(',', at);
-        const auto piece = heapfind_spec.substr(at, comma - at);
+    for (size_t at = 0; at <= dev.heapfind_spec.size();) {
+        const auto comma = dev.heapfind_spec.find(',', at);
+        const auto piece = dev.heapfind_spec.substr(at, comma - at);
         std::vector<u8> bytes;
         for (size_t i = 0; i + 1 < piece.size(); i += 2) {
             bytes.push_back(static_cast<u8>(std::strtoul(piece.substr(i, 2).c_str(), nullptr, 16)));
@@ -1466,7 +1466,7 @@ void ModRuntime::HeapFindImpl() {
 
 void ModRuntime::DiffScanImpl() {
     // Phases are several seconds long, so there is no need to look every frame.
-    if (diff_spec.empty() || (tick_count % 30) != 0) {
+    if (dev.diff_spec.empty() || (tick_count % 30) != 0) {
         return;
     }
     auto& memory = system.ApplicationMemory();
@@ -1482,12 +1482,12 @@ void ModRuntime::DiffScanImpl() {
         return true;
     };
 
-    if (diff_phase == 0) {
-        if (const auto at = diff_spec.rfind('@'); at != std::string::npos) {
-            diff_window = std::strtoull(diff_spec.substr(at + 1).c_str(), nullptr, 0);
-            diff_anchor = diff_spec.substr(0, at);
+    if (dev.diff_phase == 0) {
+        if (const auto at = dev.diff_spec.rfind('@'); at != std::string::npos) {
+            dev.diff_window = std::strtoull(dev.diff_spec.substr(at + 1).c_str(), nullptr, 0);
+            dev.diff_anchor = dev.diff_spec.substr(0, at);
         } else {
-            diff_anchor = diff_spec;
+            dev.diff_anchor = dev.diff_spec;
         }
         // Do not touch the pad until the game is actually being played. The anchor object exists
         // long before that, and holding the trigger through the intro menus both navigates them
@@ -1498,7 +1498,7 @@ void ModRuntime::DiffScanImpl() {
         if (!InGameplay()) {
             return;
         }
-        const auto found = sequence_addresses.find(diff_anchor);
+        const auto found = sequence_addresses.find(dev.diff_anchor);
         if (found == sequence_addresses.end() || found->second == 0) {
             return; // wait for the game to hand us the object
         }
@@ -1509,19 +1509,19 @@ void ModRuntime::DiffScanImpl() {
         // Every aligned word in reach that could plausibly be a small counter. Being generous
         // here costs nothing: the fire/rest test removes coincidences far more sharply than any
         // guess about the range would.
-        const VAddr from = anchor_at > diff_window ? anchor_at - diff_window : 0;
-        const VAddr to = anchor_at + diff_window;
+        const VAddr from = anchor_at > dev.diff_window ? anchor_at - dev.diff_window : 0;
+        const VAddr to = anchor_at + dev.diff_window;
         for (VAddr at = from & ~3ULL; at < to; at += 4) {
             s32 value{};
             if (sample(at, value) && value >= 0 && value <= 9999) {
-                diff_candidates.push_back(at);
-                diff_last.push_back(value);
+                dev.diff_candidates.push_back(at);
+                dev.diff_last.push_back(value);
             }
         }
         LOG_INFO(Core, "DSMod diff: watching {} word(s) around {} ({:016X}) -- firing now",
-                 diff_candidates.size(), diff_anchor, anchor_at);
-        diff_phase = 1;
-        diff_started = tick_count;
+                 dev.diff_candidates.size(), dev.diff_anchor, anchor_at);
+        dev.diff_phase = 1;
+        dev.diff_started = tick_count;
         return;
     }
 
@@ -1529,7 +1529,7 @@ void ModRuntime::DiffScanImpl() {
     // pressed on the same frame it only shoots the beam, which is why an earlier search watched
     // a count that never moved. Doing this from inside the runtime is what makes the phase
     // exactly knowable -- an external script and a sampler have no shared clock.
-    if (diff_phase == 1) {
+    if (dev.diff_phase == 1) {
         auto* pad =
             system.GetInputSubsystem() ? system.GetInputSubsystem()->GetVirtualGamepad() : nullptr;
         if (pad != nullptr) {
@@ -1544,59 +1544,59 @@ void ModRuntime::DiffScanImpl() {
         }
     }
 
-    const u64 elapsed = tick_count - diff_started;
-    if (diff_phase == 1 && elapsed < FirePhaseTicks) {
+    const u64 elapsed = tick_count - dev.diff_started;
+    if (dev.diff_phase == 1 && elapsed < FirePhaseTicks) {
         return;
     }
-    if (diff_phase == 2 && elapsed < RestPhaseTicks) {
+    if (dev.diff_phase == 2 && elapsed < RestPhaseTicks) {
         return;
     }
 
     std::vector<VAddr> kept;
     std::vector<s32> kept_last;
-    const bool was_firing = diff_phase == 1;
-    for (size_t i = 0; i < diff_candidates.size(); ++i) {
+    const bool was_firing = dev.diff_phase == 1;
+    for (size_t i = 0; i < dev.diff_candidates.size(); ++i) {
         s32 now{};
-        if (!sample(diff_candidates[i], now)) {
+        if (!sample(dev.diff_candidates[i], now)) {
             continue;
         }
         // Firing spends the counter; resting leaves it alone. A coincidence fails one or the
         // other within a cycle or two, and the two tests together are what no unrelated word
         // survives -- a value that drifts constantly fails the rest, and a constant fails the fire.
-        const bool ok = was_firing ? now < diff_last[i] : now == diff_last[i];
+        const bool ok = was_firing ? now < dev.diff_last[i] : now == dev.diff_last[i];
         if (ok) {
-            kept.push_back(diff_candidates[i]);
+            kept.push_back(dev.diff_candidates[i]);
             kept_last.push_back(now);
         }
     }
-    ++diff_cycles;
+    ++dev.diff_cycles;
     LOG_INFO(Core, "DSMod diff: after {} ({}): {} of {} survived", was_firing ? "firing" : "rest",
-             diff_cycles, kept.size(), diff_candidates.size());
+             dev.diff_cycles, kept.size(), dev.diff_candidates.size());
     if (kept.empty()) {
         // Do not narrow to nothing: an empty set is almost always a missed phase (no ammo left to
         // spend, or a load screen) rather than proof that the counter is not here. Re-baseline
         // and keep going.
-        for (size_t i = 0; i < diff_candidates.size(); ++i) {
+        for (size_t i = 0; i < dev.diff_candidates.size(); ++i) {
             s32 now{};
-            if (sample(diff_candidates[i], now)) {
-                diff_last[i] = now;
+            if (sample(dev.diff_candidates[i], now)) {
+                dev.diff_last[i] = now;
             }
         }
         LOG_WARNING(Core, "DSMod diff: nothing survived that phase -- re-baselining, not dropping");
     } else {
-        diff_candidates = std::move(kept);
-        diff_last = std::move(kept_last);
+        dev.diff_candidates = std::move(kept);
+        dev.diff_last = std::move(kept_last);
     }
 
-    if (diff_candidates.size() <= 40) {
+    if (dev.diff_candidates.size() <= 40) {
         std::string report;
-        for (size_t i = 0; i < diff_candidates.size(); ++i) {
-            report += fmt::format(" {:012X}={}", diff_candidates[i], diff_last[i]);
+        for (size_t i = 0; i < dev.diff_candidates.size(); ++i) {
+            report += fmt::format(" {:012X}={}", dev.diff_candidates[i], dev.diff_last[i]);
         }
         LOG_INFO(Core, "DSMod diff: survivors:{}", report);
     }
 
-    if (diff_phase == 1) {
+    if (dev.diff_phase == 1) {
         // Let go of the trigger before the rest phase, or the counter keeps draining.
         auto* pad =
             system.GetInputSubsystem() ? system.GetInputSubsystem()->GetVirtualGamepad() : nullptr;
@@ -1609,8 +1609,8 @@ void ModRuntime::DiffScanImpl() {
             }
         }
     }
-    diff_phase = diff_phase == 1 ? 2 : 1;
-    diff_started = tick_count;
+    dev.diff_phase = dev.diff_phase == 1 ? 2 : 1;
+    dev.diff_started = tick_count;
 }
 
 namespace {
@@ -1640,52 +1640,52 @@ bool WordHolds(u32 raw, s64 want, bool float_only) {
 /// Finding it is a process of elimination: thousands of addresses happen to hold "12" at any
 /// moment, but almost none of them stop holding it exactly when the player fires a missile.
 void ModRuntime::FindValueClusterImpl() {
-    if (find_spec.empty() || (tick_count % 60) != 0) {
+    if (dev.find_spec.empty() || (tick_count % 60) != 0) {
         return;
     }
     auto& memory = system.ApplicationMemory();
-    if (find_round == 0) {
+    if (dev.find_round == 0) {
         // Which published reading to track. Take the value to collect from the game itself
         // rather than from the command line: by the time the search starts the player has been
         // playing for a while, and a number typed in beforehand is already stale -- collecting
         // "12" once the count is down to 8 gathers nothing but coincidences.
         // "<anchor>+<neighbour>+<neighbour>": the reading to locate, and the ones that must sit
         // beside it in the same structure.
-        find_others.clear();
+        dev.find_others.clear();
         // A trailing "@<bytes>" widens how far apart the fields may sit.
         // A leading "<anchor>/" restricts the search to memory near a published object address.
-        if (const auto slash = find_spec.find('/'); slash != std::string::npos) {
-            find_anchor = find_spec.substr(0, slash);
-            find_spec = find_spec.substr(slash + 1);
+        if (const auto slash = dev.find_spec.find('/'); slash != std::string::npos) {
+            dev.find_anchor = dev.find_spec.substr(0, slash);
+            dev.find_spec = dev.find_spec.substr(slash + 1);
         }
-        if (const auto at_sign = find_spec.rfind('@'); at_sign != std::string::npos) {
-            find_reach = std::strtoll(find_spec.substr(at_sign + 1).c_str(), nullptr, 0);
-            find_spec = find_spec.substr(0, at_sign);
+        if (const auto at_sign = dev.find_spec.rfind('@'); at_sign != std::string::npos) {
+            dev.find_reach = std::strtoll(dev.find_spec.substr(at_sign + 1).c_str(), nullptr, 0);
+            dev.find_spec = dev.find_spec.substr(0, at_sign);
         }
-        for (size_t at = 0; at <= find_spec.size();) {
-            const auto plus = find_spec.find('+', at);
-            const auto part = find_spec.substr(at, plus - at);
+        for (size_t at = 0; at <= dev.find_spec.size();) {
+            const auto plus = dev.find_spec.find('+', at);
+            const auto part = dev.find_spec.substr(at, plus - at);
             if (at == 0) {
-                find_track = part;
+                dev.find_track = part;
             } else {
-                find_others.push_back(part);
+                dev.find_others.push_back(part);
             }
             if (plus == std::string::npos) {
                 break;
             }
             at = plus + 1;
         }
-        const auto truth = sequence_values.find(find_track);
+        const auto truth = sequence_values.find(dev.find_track);
         if (truth == sequence_values.end()) {
             return; // wait until the game has told us what the value is
         }
-        find_value = static_cast<s32>(truth->second);
+        dev.find_value = static_cast<s32>(truth->second);
         // Wait for actual play -- but judge that by what the game reports, not by a stopwatch.
         // A fixed delay is wrong on both ends: it wastes a minute on a device that reaches
         // gameplay quickly, and on a slow desktop it can fire while the game is still a load
         // screen, where a hundred structures being filled in look exactly like a counter being
         // spent. A tracked value that reads non-zero means the player exists.
-        if (find_value == 0) {
+        if (dev.find_value == 0) {
             return; // the game has not reported a player yet
         }
         // Search near an object the game handed us, when one is named. Sweeping the whole heap
@@ -1693,15 +1693,15 @@ void ModRuntime::FindValueClusterImpl() {
         // is as effective as not collecting them: the inventory lives near the player, and the
         // scripting bridge already knows where the player is.
         VAddr from = HeapLow(), to = HeapHigh();
-        if (!find_anchor.empty()) {
+        if (!dev.find_anchor.empty()) {
             u64 anchor = 0;
-            if (find_anchor.starts_with("main+")) {
+            if (dev.find_anchor.starts_with("main+")) {
                 // A static in the module: the one kind of address that means the same thing in
                 // every run, and therefore the only kind worth building a package around. Read
                 // the cell and follow it to the object it holds.
                 const VAddr cell =
                     main_region_begin +
-                    static_cast<VAddr>(std::strtoull(find_anchor.substr(5).c_str(), nullptr, 0));
+                    static_cast<VAddr>(std::strtoull(dev.find_anchor.substr(5).c_str(), nullptr, 0));
                 if (!AddressIsSane(cell, sizeof(u64))) {
                     return;
                 }
@@ -1709,17 +1709,17 @@ void ModRuntime::FindValueClusterImpl() {
                 if (anchor != 0 && AddressIsSane(static_cast<VAddr>(anchor), sizeof(u64))) {
                     anchor = memory.Read64(static_cast<VAddr>(anchor));
                 }
-            } else if (const auto at = sequence_addresses.find(find_anchor);
+            } else if (const auto at = sequence_addresses.find(dev.find_anchor);
                        at != sequence_addresses.end()) {
                 anchor = at->second;
             }
             if (anchor == 0 || !AddressIsSane(static_cast<VAddr>(anchor), 4)) {
                 return; // wait until the game has built whatever this points at
             }
-            from = anchor > find_window ? anchor - find_window : 0;
-            to = anchor + find_window;
+            from = anchor > dev.find_window ? anchor - dev.find_window : 0;
+            to = anchor + dev.find_window;
             LOG_INFO(Core, "DSMod find: searching {:016X}..{:016X} around {} ({:016X})", from, to,
-                     find_anchor, anchor);
+                     dev.find_anchor, anchor);
         }
         for (VAddr page = from & ~0xFFFULL; page < to; page += 0x1000) {
             const u8* const host = memory.GetPointerSilent(page);
@@ -1729,23 +1729,23 @@ void ModRuntime::FindValueClusterImpl() {
             for (u32 at = 0; at + 4 <= 0x1000; at += 4) {
                 u32 raw{};
                 std::memcpy(&raw, host + at, sizeof(raw));
-                if (WordHolds(raw, find_value, find_float_only)) {
-                    find_candidates.push_back(page + at);
-                    find_host.push_back(host + at);
+                if (WordHolds(raw, dev.find_value, dev.find_float_only)) {
+                    dev.find_candidates.push_back(page + at);
+                    dev.find_host.push_back(host + at);
                 }
             }
         }
-        find_round = 1;
-        find_started = tick_count;
+        dev.find_round = 1;
+        dev.find_started = tick_count;
         LOG_INFO(Core, "DSMod find: {} addresses hold {} = {} -- now change it in game",
-                 find_candidates.size(), find_track, find_value);
+                 dev.find_candidates.size(), dev.find_track, dev.find_value);
         return;
     }
-    if (find_round >= 2) {
+    if (dev.find_round >= 2) {
         NarrowByAgreement();
         return;
     }
-    if (find_candidates.empty() || tick_count - find_started < 180) {
+    if (dev.find_candidates.empty() || tick_count - dev.find_started < 180) {
         return;
     }
     // Identify the structure by its neighbours, not by waiting for the value to move.
@@ -1757,16 +1757,16 @@ void ModRuntime::FindValueClusterImpl() {
     // three, at distinct offsets within one structure's reach, is a test almost no coincidence
     // passes, and it needs the player to do nothing at all.
     std::vector<std::pair<std::string, s32>> wanted;
-    for (const auto& name : find_others) {
+    for (const auto& name : dev.find_others) {
         const auto it = sequence_values.find(name);
         if (it == sequence_values.end()) {
             return; // wait until the game has reported every field
         }
         wanted.emplace_back(name, static_cast<s32>(it->second));
     }
-    const s64 Reach = find_reach;
+    const s64 Reach = dev.find_reach;
     std::vector<VAddr> still;
-    for (const VAddr candidate : find_candidates) {
+    for (const VAddr candidate : dev.find_candidates) {
         std::set<s64> used;
         size_t matched = 0;
         for (const auto& [name, value] : wanted) {
@@ -1775,7 +1775,7 @@ void ModRuntime::FindValueClusterImpl() {
                     continue;
                 }
                 const u32 raw = memory.Read32(candidate + off);
-                if (WordHolds(raw, value, find_float_only)) {
+                if (WordHolds(raw, value, dev.find_float_only)) {
                     used.insert(off);
                     ++matched;
                     break;
@@ -1787,7 +1787,7 @@ void ModRuntime::FindValueClusterImpl() {
         }
     }
     LOG_INFO(Core, "DSMod find: {} of {} hold {} with all of {} nearby", still.size(),
-             find_candidates.size(), find_track, find_others.size());
+             dev.find_candidates.size(), dev.find_track, dev.find_others.size());
     // Group what is left by class. Each survivor sits inside some object, and an object's first
     // word is a pointer to its vtable, which lives in the module and so names the class the same
     // way in every run. Coincidences are scattered across whatever happened to be in memory; the
@@ -1823,13 +1823,13 @@ void ModRuntime::FindValueClusterImpl() {
     // cannot tell a real counter from something that merely sits next to similar numbers. What
     // settles it is time: keep only the addresses that still agree with the game once the player
     // spends the value. An earlier version stopped here and never used that at all.
-    find_candidates = still;
-    find_host.clear();
-    for (const VAddr address : find_candidates) {
-        find_host.push_back(memory.GetPointerSilent(address & ~0xFFFULL) + (address & 0xFFF));
+    dev.find_candidates = still;
+    dev.find_host.clear();
+    for (const VAddr address : dev.find_candidates) {
+        dev.find_host.push_back(memory.GetPointerSilent(address & ~0xFFFULL) + (address & 0xFFF));
     }
-    find_round = 2;
-    find_started = tick_count;
+    dev.find_round = 2;
+    dev.find_started = tick_count;
 }
 
 /// Report what each surviving candidate currently holds.
@@ -1848,26 +1848,26 @@ void ModRuntime::NarrowByAgreementImpl() {
     // it refreshes when the game happens to run script -- so comparing at an arbitrary moment
     // would drop the true address for being ahead of the report. At a transition the report has
     // just caught up, and by then the real counter is already holding the new value.
-    if (const auto truth = sequence_values.find(find_track); truth != sequence_values.end()) {
+    if (const auto truth = sequence_values.find(dev.find_track); truth != sequence_values.end()) {
         const auto now = static_cast<s32>(truth->second);
-        if (!find_truth_seen) {
-            find_last_truth = now;
-            find_truth_seen = true;
-        } else if (now != find_last_truth) {
+        if (!dev.find_truth_seen) {
+            dev.find_last_truth = now;
+            dev.find_truth_seen = true;
+        } else if (now != dev.find_last_truth) {
             std::vector<VAddr> kept;
             std::vector<const u8*> kept_host;
-            for (size_t i = 0; i < find_candidates.size(); ++i) {
+            for (size_t i = 0; i < dev.find_candidates.size(); ++i) {
                 u32 raw{};
-                std::memcpy(&raw, find_host[i], sizeof(raw));
-                if (WordHolds(raw, now, find_float_only)) {
-                    kept.push_back(find_candidates[i]);
-                    kept_host.push_back(find_host[i]);
+                std::memcpy(&raw, dev.find_host[i], sizeof(raw));
+                if (WordHolds(raw, now, dev.find_float_only)) {
+                    kept.push_back(dev.find_candidates[i]);
+                    kept_host.push_back(dev.find_host[i]);
                 }
             }
-            ++find_transitions;
+            ++dev.find_transitions;
             LOG_INFO(Core, "DSMod find: {} -> {} (transition {}): {} of {} followed it",
-                     find_last_truth, now, find_transitions, kept.size(), find_candidates.size());
-            find_last_truth = now;
+                     dev.find_last_truth, now, dev.find_transitions, kept.size(), dev.find_candidates.size());
+            dev.find_last_truth = now;
             if (kept.empty()) {
                 // Everything was dropped, which means the sample missed the change rather than
                 // that nothing tracks it. Say so instead of continuing with an empty set: a
@@ -1877,23 +1877,23 @@ void ModRuntime::NarrowByAgreementImpl() {
                             "the previous set; widen the poll or slow the change",
                             now);
             } else {
-                find_candidates = std::move(kept);
-                find_host = std::move(kept_host);
+                dev.find_candidates = std::move(kept);
+                dev.find_host = std::move(kept_host);
             }
         }
     }
-    if (tick_count - find_started < 180) {
+    if (tick_count - dev.find_started < 180) {
         return;
     }
-    find_started = tick_count;
+    dev.find_started = tick_count;
     std::string report;
-    for (size_t i = 0; i < find_candidates.size() && i < 24; ++i) {
+    for (size_t i = 0; i < dev.find_candidates.size() && i < 24; ++i) {
         s32 value{};
-        std::memcpy(&value, find_host[i], sizeof(value));
-        report += fmt::format(" {:012X}={}", find_candidates[i], value);
+        std::memcpy(&value, dev.find_host[i], sizeof(value));
+        report += fmt::format(" {:012X}={}", dev.find_candidates[i], value);
     }
-    LOG_INFO(Core, "DSMod find: {} candidate(s) after {} transition(s):{}", find_candidates.size(),
-             find_transitions, report);
+    LOG_INFO(Core, "DSMod find: {} candidate(s) after {} transition(s):{}", dev.find_candidates.size(),
+             dev.find_transitions, report);
 }
 
 /// Log the C functions the game registers into Lua.
@@ -1905,10 +1905,10 @@ void ModRuntime::NarrowByAgreementImpl() {
 /// package needs in order to read the value directly rather than ask for it through a bridge,
 /// which is the difference between working only on the JIT and working everywhere.
 void ModRuntime::DumpLuaRegistryImpl() {
-    if (registry_done || !manifest.dump_registry || tick_count < 600) {
+    if (dev.registry_done || !manifest.dump_registry || tick_count < 600) {
         return;
     }
-    registry_done = true;
+    dev.registry_done = true;
     auto& memory = system.ApplicationMemory();
     constexpr u64 ModuleImageMax = 0x4000000;
     const VAddr module_end = main_region_begin + std::min<u64>(main_region_size, ModuleImageMax);
@@ -2008,16 +2008,16 @@ void ModRuntime::DescribeStringUsesImpl([[maybe_unused]] const std::string& text
 /// every other function in this file is. Pure move, no logic change.
 void ModRuntime::ApplyEnforceRulesDevToolsImpl(const StateSnapshot& snapshot) {
     DumpLuaRegistry();
-    if (!manifest.describe_string.empty() && !describe_done && tick_count > 600) {
-        describe_done = true;
+    if (!manifest.describe_string.empty() && !dev.describe_done && tick_count > 600) {
+        dev.describe_done = true;
         DescribeStringUses(manifest.describe_string);
     }
-    if (!trace_done && !trace_target.empty() && InGameplay()) {
+    if (!dev.trace_done && !dev.trace_target.empty() && InGameplay()) {
         // "name" or "name:a>b>c" -- the published address, optionally walked first. What a
         // scripting VM hands out is often a wrapper that nothing else points at, so the object
         // worth finding a route to is usually one dereference further in.
-        const auto colon = trace_target.find(':');
-        const auto name = trace_target.substr(0, colon);
+        const auto colon = dev.trace_target.find(':');
+        const auto name = dev.trace_target.substr(0, colon);
         // A published address if a sequence produced one, otherwise a data point. Tracing a point
         // is what lets us ask "who refers to this string literal", which is how an item table
         // gives itself away: it holds the name, and the amount sits beside it.
@@ -2032,11 +2032,11 @@ void ModRuntime::ApplyEnforceRulesDevToolsImpl(const StateSnapshot& snapshot) {
             }
         }
         if (seed != 0) {
-            trace_done = true;
+            dev.trace_done = true;
             VAddr address = static_cast<VAddr>(seed);
             if (colon != std::string::npos) {
                 auto& memory = system.ApplicationMemory();
-                const auto path = trace_target.substr(colon + 1);
+                const auto path = dev.trace_target.substr(colon + 1);
                 for (size_t start = 0; start <= path.size();) {
                     const auto arrow = path.find('>', start);
                     address += static_cast<VAddr>(
@@ -2057,7 +2057,7 @@ void ModRuntime::ApplyEnforceRulesDevToolsImpl(const StateSnapshot& snapshot) {
                     return;
                 }
             }
-            LOG_INFO(Core, "DSMod: tracing {} -> {:016X}", trace_target, address);
+            LOG_INFO(Core, "DSMod: tracing {} -> {:016X}", dev.trace_target, address);
             TraceChainTo(address);
         }
     }
@@ -2079,11 +2079,11 @@ void ModRuntime::TickAutoMgrFindImpl() {
     }();
     // Delay first fire past the load window (~20s) so the BSS scan never perturbs the delicate
     // save-load timing (that perturbation triggers the NoExecuteFault race, esp. at low fps).
-    if (auto_mgr_target != 0 && tick_count > 1200 && !cmd_mgr_active && (tick_count % 300) == 20) {
-        cmd_mgr_target = auto_mgr_target;
-        cmd_mgr_active = true;
-        cmd_mgr_cursor = 0;
-        cmd_mgr_hits.clear();
+    if (auto_mgr_target != 0 && tick_count > 1200 && !dev.cmd_mgr_active && (tick_count % 300) == 20) {
+        dev.cmd_mgr_target = auto_mgr_target;
+        dev.cmd_mgr_active = true;
+        dev.cmd_mgr_cursor = 0;
+        dev.cmd_mgr_hits.clear();
     }
 }
 

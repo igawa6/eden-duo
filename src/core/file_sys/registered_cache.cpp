@@ -1180,12 +1180,14 @@ const ExternalContentProvider* ContentProviderUnion::GetExternalProvider() const
 ManualContentProvider::~ManualContentProvider() = default;
 
 void ManualContentProvider::AddEntry(TitleType title_type, ContentRecordType content_type, u64 title_id, VirtualFile file) {
+    std::scoped_lock lock{mutex};
     entries.insert_or_assign({title_type, content_type, title_id}, file);
 }
 
 void ManualContentProvider::AddEntryWithVersion(TitleType title_type, ContentRecordType content_type,
                                                 u64 title_id, u32 version,
                                                 const std::string& version_string, VirtualFile file) {
+    std::scoped_lock lock{mutex};
     if (title_type == TitleType::Update) {
         auto it = std::find_if(multi_version_entries.begin(), multi_version_entries.end(), [title_id, version](const ExternalUpdateEntry& entry) {
             return entry.title_id == title_id && entry.version == version;
@@ -1245,6 +1247,7 @@ bool ManualContentProvider::AddEntriesFromContainer(VirtualFile file, bool only_
 }
 
 void ManualContentProvider::ClearAllEntries() {
+    std::scoped_lock lock{mutex};
     entries.clear();
     multi_version_entries.clear();
 }
@@ -1264,6 +1267,7 @@ VirtualFile ManualContentProvider::GetEntryUnparsed(u64 title_id, ContentRecordT
 }
 
 VirtualFile ManualContentProvider::GetEntryRaw(u64 title_id, ContentRecordType type) const {
+    std::scoped_lock lock{mutex};
     const auto iter =
         std::find_if(entries.begin(), entries.end(), [title_id, type](const auto& entry) {
             const auto content_type = std::get<1>(entry.first);
@@ -1287,6 +1291,7 @@ std::vector<ContentProviderEntry> ManualContentProvider::ListEntriesFilter(
     std::optional<u64> title_id) const {
     std::vector<ContentProviderEntry> out;
 
+    std::scoped_lock lock{mutex};
     for (const auto& entry : entries) {
         const auto [e_title_type, e_content_type, e_title_id] = entry.first;
         if ((title_type == std::nullopt || e_title_type == *title_type) &&
@@ -1304,6 +1309,7 @@ std::vector<ContentProviderEntry> ManualContentProvider::ListEntriesFilter(
 std::vector<ExternalUpdateEntry> ManualContentProvider::ListUpdateVersions(u64 title_id) const {
     std::vector<ExternalUpdateEntry> out;
 
+    std::scoped_lock lock{mutex};
     for (const auto& entry : multi_version_entries) {
         if (entry.title_id == title_id) {
             out.push_back(entry);
@@ -1318,6 +1324,7 @@ std::vector<ExternalUpdateEntry> ManualContentProvider::ListUpdateVersions(u64 t
 }
 
 VirtualFile ManualContentProvider::GetEntryForVersion(u64 title_id, ContentRecordType type, u32 version) const {
+    std::scoped_lock lock{mutex};
     for (const auto& entry : multi_version_entries) {
         if (entry.title_id == title_id && entry.version == version) {
             if (auto const p = entry.files[size_t(type)])

@@ -135,6 +135,9 @@ object NativeLibrary {
 
     external fun setDualScreenCodeDirectory(directory: String)
 
+    /** The dual-screen runtime version this build implements (a package's "min_runtime"). */
+    external fun dualScreenRuntimeVersion(): Int
+
     /**
      * Installs a nsp or xci file to nand
      * @param filename String representation of file uri
@@ -169,7 +172,7 @@ object NativeLibrary {
     external fun surfaceDestroyed()
 
     // DSMod second-screen surface
-    external fun auxSurfaceChanged(surf: Surface?)
+    external fun auxSurfaceChanged(surf: Surface)
 
     external fun auxSurfaceDestroyed()
 

@@ -42,6 +42,9 @@ class AuxPresentation(context: Context, display: Display) :
 
     private lateinit var surfaceView: SurfaceView
 
+    /** The display this presentation is on. */
+    val displayId: Int get() = display.displayId
+
     @SuppressLint("ClickableViewAccessibility")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -49,31 +52,38 @@ class AuxPresentation(context: Context, display: Display) :
             WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON or
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
         )
-        // The two panels are lit independently on this hardware -- the same reason the flag above
-        // has to be set here at all -- so the second screen keeps its own brightness unless it is
-        // told to follow. Left alone it sits at full while the main screen dims, which on a
-        // handheld reads as a fault and costs battery all evening.
-        applyBrightness(systemBrightness())
-        brightnessObserver = object : ContentObserver(Handler(Looper.getMainLooper())) {
-            override fun onChange(selfChange: Boolean) = applyBrightness(systemBrightness())
-        }.also { observer ->
-            try {
-                context.contentResolver.registerContentObserver(
-                    Settings.System.getUriFor(Settings.System.SCREEN_BRIGHTNESS), false, observer
-                )
-                context.contentResolver.registerContentObserver(
-                    Settings.System.getUriFor(Settings.System.SCREEN_BRIGHTNESS_MODE), false,
-                    observer
-                )
-            } catch (e: Exception) {
-                Log.warning("[AuxPresentation] cannot watch brightness: ${e.message}")
-            }
-        }
         surfaceView = SurfaceView(context)
         surfaceView.holder.addCallback(this)
         surfaceView.setOnTouchListener { _, event -> onAuxTouch(event) }
         surfaceView.isHapticFeedbackEnabled = true
         setContentView(surfaceView)
+    }
+
+    override fun onStart() {
+        super.onStart()
+        // The two panels are lit independently on this hardware -- the same reason the window
+        // flags above have to be set here at all -- so the second screen keeps its own
+        // brightness unless it is told to follow. Left alone it sits at full while the main
+        // screen dims, which on a handheld reads as a fault and costs battery all evening.
+        applyBrightness(systemBrightness())
+        if (brightnessObserver == null) {
+            brightnessObserver = object : ContentObserver(Handler(Looper.getMainLooper())) {
+                override fun onChange(selfChange: Boolean) = applyBrightness(systemBrightness())
+            }.also { observer ->
+                try {
+                    context.contentResolver.registerContentObserver(
+                        Settings.System.getUriFor(Settings.System.SCREEN_BRIGHTNESS), false,
+                        observer
+                    )
+                    context.contentResolver.registerContentObserver(
+                        Settings.System.getUriFor(Settings.System.SCREEN_BRIGHTNESS_MODE), false,
+                        observer
+                    )
+                } catch (e: Exception) {
+                    Log.warning("[AuxPresentation] cannot watch brightness: ${e.message}")
+                }
+            }
+        }
         current = WeakReference(this)
     }
 
@@ -129,8 +139,8 @@ class AuxPresentation(context: Context, display: Display) :
         }
     }
 
-    /** Sets this screen's brightness. Public so the emulation view can push its own value. */
-    fun applyBrightness(value: Float) {
+    /** Sets this screen's brightness (a window value in 0..1, or BRIGHTNESS_OVERRIDE_NONE). */
+    private fun applyBrightness(value: Float) {
         window?.let { w ->
             val params = w.attributes
             if (params.screenBrightness != value) {
@@ -153,6 +163,20 @@ class AuxPresentation(context: Context, display: Display) :
         }
         brightnessObserver = null
         super.onStop()
+    }
+
+    /**
+     * Undoes what show() set up before the window manager refused the display: Dialog.show()
+     * runs onCreate and onStart before adding the window, and onStop never runs for a window
+     * that was never shown, which left the brightness observer, the Presentation's display
+     * listener and this object (with its Activity) registered.
+     */
+    private fun cleanupAfterFailedShow() {
+        try {
+            onStop()
+        } catch (e: Exception) {
+            Log.warning("[AuxPresentation] cleanup after a refused display: ${e.message}")
+        }
     }
 
     // --- DSMod haptics -----------------------------------------------------------------------
@@ -191,7 +215,8 @@ class AuxPresentation(context: Context, display: Display) :
      * to play regardless of the setting, the default vibrator plays the matching predefined effect.
      */
     private fun performHaptic(strength: Int, kind: Int, flags: Int) {
-        if (!this::surfaceView.isInitialized) return
+        // Posted from a native thread: the screen may have been dismissed since.
+        if (!isShowing || !this::surfaceView.isInitialized) return
         val respectSystem = (flags and 1) != 0
         val constant = when (strength) {
             1 -> HapticFeedbackConstants.CONTEXT_CLICK
@@ -261,6 +286,10 @@ class AuxPresentation(context: Context, display: Display) :
         }
     }
 
+    private val touchIds = IntArray(MAX_TOUCH)
+    private val touchXs = FloatArray(MAX_TOUCH)
+    private val touchYs = FloatArray(MAX_TOUCH)
+
     private fun onAuxTouch(event: MotionEvent): Boolean {
         val action = event.actionMasked
         when (action) {
@@ -270,19 +299,21 @@ class AuxPresentation(context: Context, display: Display) :
             else -> return false
         }
         if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
-            NativeInput.onAuxTouchEvent(IntArray(0), FloatArray(0), FloatArray(0), 0, 0)
+            NativeInput.onAuxTouchEvent(touchIds, touchXs, touchYs, 0, 0)
             return true
         }
-        // Report every pointer still down; on POINTER_UP the lifted pointer is dropped.
+        // Report every pointer still down; on POINTER_UP the lifted pointer is dropped. The
+        // buffers are reused: the native side copies them before returning.
         val lifting = if (action == MotionEvent.ACTION_POINTER_UP) event.actionIndex else -1
         val n = event.pointerCount
-        val ids = IntArray(n)
-        val xs = FloatArray(n)
-        val ys = FloatArray(n)
+        val ids = touchIds
+        val xs = touchXs
+        val ys = touchYs
         var count = 0
         var startMask = 0
         for (i in 0 until n) {
             if (i == lifting) continue
+            if (count == MAX_TOUCH) break
             ids[count] = event.getPointerId(i)
             xs[count] = event.getX(i)
             ys[count] = event.getY(i)
@@ -298,6 +329,9 @@ class AuxPresentation(context: Context, display: Display) :
     }
 
     companion object {
+        /** Touch points the native side takes (AuxRouting::MaxTouch). */
+        private const val MAX_TOUCH = 16
+
         /** The presentation currently on screen, for native haptic requests. */
         @Volatile
         private var current: WeakReference<AuxPresentation>? = null
@@ -353,9 +387,6 @@ class AuxPresentation(context: Context, display: Display) :
                 simulated)
         }
 
-        fun pickAuxDisplay(context: Context, ownDisplayId: Int): Display? =
-            auxDisplayCandidates(context, ownDisplayId).firstOrNull()
-
         /**
          * Shows the aux presentation on the first candidate display that accepts a window.
          * WindowManager throws InvalidDisplayException ("the specified display can not be found")
@@ -375,14 +406,16 @@ class AuxPresentation(context: Context, display: Display) :
                 return null
             }
             for (display in candidates) {
+                var presentation: AuxPresentation? = null
                 try {
-                    val presentation = AuxPresentation(context, display)
+                    presentation = AuxPresentation(context, display)
                     presentation.show()
                     Log.info(
                         "[AuxPresentation] shown on display ${display.displayId} (${display.name})"
                     )
                     return presentation
                 } catch (e: Exception) {
+                    presentation?.cleanupAfterFailedShow()
                     Log.warning(
                         "[AuxPresentation] display ${display.displayId} (${display.name}) " +
                             "refused the window: ${e.message}"

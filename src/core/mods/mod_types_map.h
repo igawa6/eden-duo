@@ -129,6 +129,26 @@ struct DynamicMarkerDef {
     float opacity{1.0f};
     float anchor_x{0.5f}, anchor_y{0.5f};
     PointGate show, hide;
+    // Runtime 14, per slot ("{i}" replaced like x / y / kind):
+    /// Text point naming an image key: when non-empty, the slot draws that picture instead of
+    /// its atlas icon (a unit portrait). An image still loading draws nothing yet.
+    std::string icon_src_bind;
+    /// Marker size in world units (scales with the map's zoom); 0 = the pixel `size`.
+    float size_world{0.0f};
+    /// A bar under the icon: value / max (bar_max_bind, else bar_max), filled with bar_color
+    /// over bar_bg; bar_h px tall (0 = an eighth of the icon, at least 3).
+    std::string bar_bind, bar_max_bind;
+    s64 bar_max{100};
+    u32 bar_color{0xFF40D060u};
+    u32 bar_bg{0xC0000000u};
+    s32 bar_h{0};
+    /// Gate: the slot draws dimmed (an acted unit).
+    std::string dim_bind;
+    /// Int point, ARGB: a frame around the icon (an army's colour); 0 or missing = none.
+    std::string frame_color_bind;
+    s32 frame_px{0}; ///< frame thickness in px; 0 = a sixteenth of the icon, at least 2
+    /// Int point, ARGB: multiplies the icon's colour (alpha included); 0 or missing = none.
+    std::string tint_bind;
 };
 
 /// A text label at a world position ("labels"): a region name shown once visited.
@@ -340,6 +360,41 @@ struct MapStyle {
     /// every existing package's JSON working unchanged.
     std::string custom_marker_icon{"CustomMarker"};
     std::string custom_marker_back_icon{"CustomMarkerBack"};
+    // --- Atlas naming of the area markers, and the marker layer's blink / pin geometry. The
+    // defaults are the conventions of Metroid Dread's minimap atlas the renderer was written
+    // against, so a package that sets none of them draws as before; a marker's own open_icon /
+    // collected_icon / collectible / structural still win over these. ---
+    /// A marker whose icon starts with this is a door: its opened cell is named by the rules
+    /// below, and a boxless "...L" / "...R" pair is nudged apart to abut.
+    std::string door_prefix{"Door"};
+    /// Icons starting with any of these are structural (drawn at door_icon size).
+    std::vector<std::string> structural_prefixes{"Door", "Blockage"};
+    /// An opened door "<base><door_closed_suffix>" shows "<base><door_open_suffix>"; one ending
+    /// in 'L' / 'R' shows door_opened_left / door_opened_right.
+    std::string door_closed_suffix{"Closed"};
+    std::string door_open_suffix{"Open"};
+    std::string door_opened_left{"DoorOpenedL"};
+    std::string door_opened_right{"DoorOpenedR"};
+    /// A collected item shows "<icon><collected_suffix>", else collected_fallback.
+    std::string collected_suffix{"Adquired"};
+    std::string collected_fallback{"ItemAdquired"};
+    /// Markers of this kind are collectibles (they blink until collected, wait to be unveiled).
+    std::string collectible_kind{"Items"};
+    /// The uncollected-item blink and the atlas player marker's pulse (BlinkAlpha: ping-pong
+    /// period in ticks, lowest alpha).
+    u32 item_blink_period{72};
+    float item_blink_low{0.45f};
+    u32 player_blink_period{48};
+    float player_blink_low{0.55f};
+    /// The fallback player pin (no atlas cell): two diamonds of these radii and a square core
+    /// of this side, px.
+    s32 pin_outer{22};
+    s32 pin_inner{18};
+    s32 pin_core{8};
+    /// Radius of every pixel the fallback pin paints.
+    [[nodiscard]] s32 PinReach() const {
+        return std::max({pin_outer, pin_inner, (pin_core + 1) / 2, 0});
+    }
 };
 
 /// Fog of war: which cells of an area the player has visited. Stored in image orientation

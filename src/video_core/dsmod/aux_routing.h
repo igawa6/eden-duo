@@ -91,14 +91,21 @@ struct TileMask {
     }
 };
 
+/// The one reading of an EDEN_DSMOD_* on/off switch: unset = `fallback`; set = on unless it is
+/// "0", "false" or "FALSE". Callers keep the answer in a function-local static (read once).
+inline bool DsmodEnvFlag(const char* name, bool fallback) {
+    const char* const value = std::getenv(name);
+    if (value == nullptr) {
+        return fallback;
+    }
+    return std::strcmp(value, "0") != 0 && std::strcmp(value, "false") != 0 &&
+           std::strcmp(value, "FALSE") != 0;
+}
+
 /// EDEN_DSMOD_UI_DIFF=0 turns tile diffing off (copy the whole publish/dirty rect and upload its
 /// bounding box). Read once.
 inline bool UiDiffEnabled() {
-    static const bool enabled = [] {
-        const char* value = std::getenv("EDEN_DSMOD_UI_DIFF");
-        return !value || (std::strcmp(value, "0") != 0 && std::strcmp(value, "false") != 0 &&
-                          std::strcmp(value, "FALSE") != 0);
-    }();
+    static const bool enabled = DsmodEnvFlag("EDEN_DSMOD_UI_DIFF", true);
     return enabled;
 }
 
@@ -542,6 +549,43 @@ public:
         t.serial++;
     }
 
+    /// PublishAuxTexture for a producer that knows `pixels` equals what the slot already holds
+    /// everywhere outside `rects` (the HUD canvas of a partial redraw): only the rects are diffed
+    /// and copied. A slot of another size, or with tile diffing off, takes the whole picture.
+    void PublishAuxTextureRects(u32 slot, u32 tw, u32 th, std::span<const u32> pixels,
+                                std::span<const std::array<s32, 4>> rects) {
+        if (slot >= NumAuxTex || pixels.size() != static_cast<size_t>(tw) * th) {
+            return;
+        }
+        {
+            std::scoped_lock lk{comp_mutex};
+            auto& t = comp_tex[slot];
+            if (UiDiffEnabled() && t.w == tw && t.h == th &&
+                t.pixels.size() == static_cast<size_t>(tw) * th && t.tiles.cols != 0) {
+                if (slot == MapCurrentSlot || slot == MapPreviousSlot) {
+                    ++map_bundle_epoch;
+                }
+                bool changed = false;
+                for (const auto& r : rects) {
+                    const s32 x0 = std::max(r[0], 0), y0 = std::max(r[1], 0);
+                    const s32 x1 = std::min(r[0] + r[2], static_cast<s32>(tw));
+                    const s32 y1 = std::min(r[1] + r[3], static_cast<s32>(th));
+                    if (x1 <= x0 || y1 <= y0) {
+                        continue;
+                    }
+                    const auto c = DiffCopyRect(pixels, t.pixels, tw, {x0, y0, x1 - x0, y1 - y0},
+                                                t.tiles);
+                    changed = changed || (c[2] > 0 && c[3] > 0);
+                }
+                if (changed) {
+                    t.serial++;
+                }
+                return;
+            }
+        }
+        PublishAuxTexture(slot, tw, th, pixels);
+    }
+
     /// Publish a coherent map-fade bundle. Holding one lock across all three slots prevents the
     /// renderer from observing a new endpoint beside an old weight grid.
     /// Returns the bundle epoch this publish produced (0: rejected), the base a later
@@ -698,22 +742,8 @@ public:
         return true;
     }
 
-    /// Same for the flat CPU canvas.
-    template <typename F>
-    bool WithUi(u64& serial_in_out, F&& fn) {
-        if (ui_serial.load(std::memory_order_acquire) == serial_in_out) {
-            return false; // lock-free fast path: nothing published since the last take
-        }
-        std::scoped_lock lk{ui_mutex};
-        if (ui_serial == serial_in_out || ui_pixels.empty() || ui_w == 0 || ui_h == 0) {
-            return false;
-        }
-        fn(std::span<const u32>{ui_pixels}, ui_w, ui_h);
-        serial_in_out = ui_serial;
-        return true;
-    }
-
-    /// Same as WithUi, but also hands back `out_dirty`: the union of every dirty rect published
+    /// Visits the flat CPU canvas (under the lock) when it was published since
+    /// `serial_in_out`, and also hands back `out_dirty`: the union of every dirty rect published
     /// since the last successful call here (not just the latest publish's own rect) -- a consumer
     /// may poll less often than the producer publishes, so what changed "since I last looked" can
     /// span several publishes. Only meaningful when this returns true. The consumer (renderer) is

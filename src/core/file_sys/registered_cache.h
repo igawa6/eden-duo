@@ -9,6 +9,7 @@
 #include <array>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <vector>
@@ -282,6 +283,9 @@ public:
     VirtualFile GetEntryForVersion(u64 title_id, ContentRecordType type, u32 version) const;
 
 private:
+    // The Android frontend fills this from its game-list scan (coroutine thread) while a game
+    // launch reads and adds entries (UI and emulation threads), so every access takes the lock.
+    mutable std::mutex mutex;
     std::map<std::tuple<TitleType, ContentRecordType, u64>, VirtualFile> entries;
     std::vector<ExternalUpdateEntry> multi_version_entries;
 };

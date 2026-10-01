@@ -41,6 +41,24 @@ enum {
     EDEN_DSMOD_CAP_GUEST_CALL = UINT64_C(1) << 1,
     EDEN_DSMOD_CAP_ROMFS_READ = UINT64_C(1) << 2,
     EDEN_DSMOD_CAP_MAP_OUTPUT = UINT64_C(1) << 3,
+    // (1 << 4) is EDEN_DSMOD_CAP_EXTENSIONS, dsmod_module_extensions.h.
+    // Module behaviour flags (runtime 15+ hosts advertise both; an older host refuses a module
+    // that sets either). While the second screen is hidden the host normally ticks a module only
+    // when it exports the base extensions' on_action (it may have a guest mailbox to retire).
+    // TICK_WHEN_HIDDEN asks for that hidden tick regardless; NO_TICK_WHEN_HIDDEN declines it
+    // (a module whose tick is a full scan). A manifest "module_tick_hidden" overrides both.
+    EDEN_DSMOD_CAP_TICK_WHEN_HIDDEN = UINT64_C(1) << 5,
+    EDEN_DSMOD_CAP_NO_TICK_WHEN_HIDDEN = UINT64_C(1) << 6,
+    // Asset sources (host capabilities). SOURCE_PREFIXES: read_romfs resolves "<prefix>:<path>"
+    // through the host's source registry -- a path without a prefix is still a romfs path, an
+    // unknown prefix returns 0 (never a romfs read of "<prefix>:..."), and
+    // get_i64("__source:<prefix>") answers 1 (available), 0 (known but unavailable, e.g. no DLC
+    // installed) or the fallback (not a source this host knows). SOURCE_BASE / SOURCE_AOC are
+    // set while the "base:" (the unpatched program romfs) / "aoc:" (the title's add-on content
+    // romfs) sources are registered.
+    EDEN_DSMOD_CAP_SOURCE_PREFIXES = UINT64_C(1) << 7,
+    EDEN_DSMOD_CAP_SOURCE_BASE = UINT64_C(1) << 8,
+    EDEN_DSMOD_CAP_SOURCE_AOC = UINT64_C(1) << 9,
 };
 
 enum {

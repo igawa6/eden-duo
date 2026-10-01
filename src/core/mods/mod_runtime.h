@@ -59,7 +59,10 @@
 #include "core/mods/dsmod_module_abi.h"
 #include "core/mods/dsmod_module_extensions.h"
 #include "core/mods/mod_input_hold.h"
+#include "core/mods/mod_input_swipe.h"
 #include "core/mods/mod_module.h"
+#include "core/mods/mod_persist.h"
+#include "core/mods/mod_sources.h"
 #include "core/mods/mod_types.h"
 #include "core/mods/mod_ui.h"
 #include "video_core/dsmod/aux_routing.h"
@@ -105,7 +108,23 @@ namespace Core::Mods {
 ///          (HapticKind::Hold, manifest haptics "hold"); redraw worker: a job superseded by a
 ///          newer dispatch still publishes (redraw_authority_generation) + UnpublishedRegions,
 ///          an anim group's settle frame cleared on the dispatch path; EDEN_DSMOD_IMAGE_TIMING
-inline constexpr u32 DualScreenRuntimeVersion = 13;
+///   14     horizontal swipe (widget "on_swipe_left" / "on_swipe_right" / "swipe_px", DrainTaps
+///          "swipe"), swipe haptic (HapticKind::Swipe, manifest haptics "swipe"); map widget
+///          image_bind / overlays / per-slot dynamic-marker images, bars, dim, frame and tint;
+///          map view_rect binds; @map_tap_x/_y/_seq readable by modules; label "color_markup"
+///          ({c:#AARRGGBB}...{/c}); module image and font retry
+///   15     named asset sources (AssetSources): "base:" (the program romfs without update or
+///          LayeredFS) and "aoc:" (the add-on content data romfs), module read_romfs through
+///          them, EDEN_DSMOD_CAP_SOURCE_* bits + get_i64("__source:<prefix>"), unknown prefixes
+///          fail instead of reading romfs; "module_tick_hidden" + EDEN_DSMOD_CAP_(NO_)TICK_WHEN_HIDDEN;
+///          label/value "outline_copy"; button "border" / "text_inset", pips "gap", bar "frame",
+///          map "label_offset" and the map.style door / collectible / blink / pin keys; "{i}" in
+///          src_names, empty_src, suffix, max_sep, table and text_map; vertical swipe (widget
+///          "on_swipe_up" / "on_swipe_down", mod_input_swipe.h) and the bound default view of a
+///          non-map pan_zoom widget ("view_zoom_bind" / "view_cx_bind" / "view_cy_bind" /
+///          "view_reset_bind", mod_view_default.h); manifest "persist_flags" (runtime flags saved
+///          on change and restored at load, mod_persist.h)
+inline constexpr u32 DualScreenRuntimeVersion = 15;
 
 /// Regions a redraw-worker job painted into its canvas but did not publish because it went stale
 /// (runtime 13). Before runtime 13 a job already running when the next was dispatched finished
@@ -153,12 +172,52 @@ class ModRuntime;
 /// `rt` serves "module:" composite layers (LoadModuleImageSync); may be null (tools).
 [[nodiscard]] NxAssetState* MakeNxAssetState(ModRuntime* rt = nullptr);
 
+/// Snapshot keys built from a name, made once and reused every tick instead of concatenated per
+/// publish ("@flag:" + name, element keys "<point><i>"). A key is a pure function of its inputs, so
+/// a cache never goes stale (a manifest reload only adds entries). Tick thread only.
+class PrefixedKeys {
+public:
+    explicit PrefixedKeys(std::string_view prefix_) : prefix{prefix_} {}
+    const std::string& operator()(const std::string& name) {
+        auto it = keys.find(name);
+        if (it == keys.end()) {
+            std::string key;
+            key.reserve(prefix.size() + name.size());
+            key.append(prefix).append(name);
+            it = keys.emplace(name, std::move(key)).first;
+        }
+        return it->second;
+    }
+
+private:
+    std::string_view prefix;
+    std::unordered_map<std::string, std::string> keys;
+};
+
+/// "<base><index>" keys (a count point's elements), per base, grown on demand. Tick thread only.
+class IndexedKeys {
+public:
+    const std::string& operator()(const std::string& base, size_t index) {
+        auto& list = keys[base];
+        while (list.size() <= index) {
+            list.push_back(base + std::to_string(list.size()));
+        }
+        return list[index];
+    }
+
+private:
+    std::unordered_map<std::string, std::vector<std::string>> keys;
+};
+
 /// A tap that arrived from the second screen, in canvas pixels.
 struct PendingTap {
     s32 x{};
     s32 y{};
     /// Runtime 13: not a tap but a fired press-and-hold; runs this action (the on_hold widget's).
     std::string hold_action;
+    /// Runtime 14: not a tap but a fired swipe; runs this action (the swipe widget's
+    /// on_swipe_left / on_swipe_right, or on_swipe_up / on_swipe_down).
+    std::string swipe_action;
 };
 
 class ModRuntime {
@@ -193,6 +252,9 @@ private:
     /// EDEN_DSMOD_AUTO_MGRFIND tail of Tick(), split into mod_re_tools.cpp.
     void TickAutoMgrFindImpl();                            // mod_re_tools.cpp
     void ApplyEnforceRules(const StateSnapshot& snapshot); // mod_state.cpp
+    /// The guest-bridge upkeep that does not depend on the page: the stuck-call watchdog and the
+    /// package's code patches. Runs every tick, second screen shown or not (mod_state.cpp).
+    void MaintainGuestBridge();
     /// Dev-tools-only tail of ApplyEnforceRules(), split into mod_re_tools.cpp.
     void ApplyEnforceRulesDevToolsImpl(const StateSnapshot& snapshot); // mod_re_tools.cpp
     void ArmSpies();                                                   // mod_guest_bridge.cpp
@@ -205,72 +267,12 @@ private:
     void ScanForMovingFloatsImpl();                 // mod_re_tools.cpp
     void TraceChainTo(VAddr target);                // mod_runtime.cpp shell -> mod_re_tools.cpp
     void TraceChainToImpl(VAddr target);            // mod_re_tools.cpp
-    /// EDEN_DSMOD_SCAN="<address-name>:<megabytes>" -- hunt a world position by behaviour rather
-    /// than by structure. Anything that holds a coordinate swings while the character walks and
-    /// settles when they stop, so collect every plausible float near a known object and watch
-    /// which ones move.
-    std::string scan_spec;
-    std::vector<VAddr> scan_addresses;
-    std::vector<const u8*> scan_host;
-    std::vector<float> scan_low, scan_high;
-    u64 scan_started{};
-    float scan_min_magnitude{1.0f};
-    VAddr scan_cursor{};
-    VAddr scan_end{};
-    std::string heapdump_path;
-    bool heapdump_done{false};
-    std::string scan_best;
     std::set<u64> seen_states;
-    /// EDEN_DSMOD_FIND="a,b,c" -- look for a place in memory where those 32-bit values sit close
-    /// together. Reading a game's numbers through its scripting bridge costs a guest call, which
-    /// needs breakpoints, which need the JIT; finding the same numbers in memory costs nothing to
-    /// read, updates the instant the game changes them, and works on a backend that runs guest
-    /// code natively.
-    /// EDEN_DSMOD_FIND="<value>" -- collect every address holding that 32-bit value, then keep
-    /// only those that stop holding it once the game changes it. One pass leaves thousands of
-    /// coincidences; the second leaves the one the player is looking at.
-    std::string find_spec;
-    std::vector<VAddr> find_candidates;
-    std::vector<const u8*> find_host;
-    s32 find_value{};
-    bool find_float_only{false};
-    std::string find_track;
-    std::vector<std::string> find_others;
-    s64 find_reach{0x40};
-    std::string find_anchor;
-    /// A published object address to work out a durable route to, named by the manifest. This is
-    /// the step that turns "the player is at this address today" into something a package can
-    /// ship: a static in the module plus a hop or two.
-    std::string trace_target;
-    bool trace_done{false};
-    /// Recover the game's Lua registration table from the *running* module. The pointers that
-    /// pair a name with its C function are relocated at load time, so they exist in memory and
-    /// not in the file on disk -- which is why reading the NSO finds nothing.
-    bool registry_done{false};
     void DumpLuaRegistry();     // mod_runtime.cpp shell -> mod_re_tools.cpp
     void DumpLuaRegistryImpl(); // mod_re_tools.cpp
-    bool describe_done{false};
     void DescribeStringUses(const std::string& text); // mod_runtime.cpp shell -> mod_re_tools.cpp
     void DescribeStringUsesImpl(const std::string& text); // mod_re_tools.cpp
-    u64 find_window{0x400000};
-    std::vector<s32> find_last;
-    std::vector<int> find_changes;
-    u64 find_started{};
-    int find_round{};
     // --- fire/rest differential search ------------------------------------------------------
-    /// Locate a counter by spending it, without asking the game what it holds. The scripting
-    /// bridge is stale between updates -- it can sit on six missiles while the screen shows none
-    /// -- so it cannot say what the value is at the moment we look. What it can never be wrong
-    /// about is what *we* just did: a counter we are spending goes down while we fire and holds
-    /// while we rest, and nothing else in memory does both on cue.
-    std::string diff_spec;
-    std::string diff_anchor;
-    u64 diff_window{0x10000};
-    std::vector<VAddr> diff_candidates;
-    std::vector<s32> diff_last;
-    int diff_phase{0}; ///< 0 = not started, 1 = firing, 2 = resting
-    u64 diff_started{};
-    int diff_cycles{};
     void DiffScan();     // mod_runtime.cpp shell -> mod_re_tools.cpp
     void DiffScanImpl(); // mod_re_tools.cpp
     /// True once the game reports a live player. Every search tool needs this: the module, the
@@ -280,74 +282,16 @@ private:
     /// Last positive value read from the manifest's declared `gameplay_point` (default "energy"),
     /// cached for InGameplayHonest() -- see SampleState.
     mutable f32 last_read_gameplay_signal{0.0f};
-    /// Search the heap for literal bytes and report what sits around each hit. The module is a
-    /// known quantity; the heap is where the game keeps what it is actually doing, and a table
-    /// keyed by a hash gives itself away by holding that hash next to the number it maps to.
-    std::string heapfind_spec;
-    bool heapfind_done{false};
     void HeapFind();     // mod_runtime.cpp shell -> mod_re_tools.cpp
     void HeapFindImpl(); // mod_re_tools.cpp
-    /// "<value>@<offset>": find a float in the heap, step back by `offset` to the object that
-    /// would contain it, and keep only the ones something actually points at. Aimed at a chain
-    /// whose shape is known but whose root is not -- being pointed at is what separates a field
-    /// of a live object from a number that happens to be lying there.
-    std::string field_spec;
-    bool field_done{false};
     void FieldProbe();     // mod_runtime.cpp shell -> mod_re_tools.cpp
     void FieldProbeImpl(); // mod_re_tools.cpp
-    /// Watch every heap float that could be a small whole-numbered counter, and report the ones
-    /// whose value actually travels. Unlike the fire/rest test this never drops a candidate for
-    /// failing a single phase -- a counter you can spend to zero stops moving once it is empty,
-    /// and that is exactly when the strict test throws the answer away.
-    std::string range_spec;
-    int range_phase{0};
-    u64 range_started{};
-    std::vector<VAddr> range_at;
-    std::vector<f32> range_min;
-    std::vector<f32> range_max;
-    /// Which whole values each candidate has been seen holding, as a bit per value 0..31. A
-    /// counter descends through every step; memory the game cleared goes straight to nought.
-    /// Counting the steps separates the two without assuming anything about the layout.
-    std::vector<u32> range_seen;
-    /// When set, only watch a value whose neighbour one word along holds this exact number.
-    /// A counter and its capacity sit together, so "something, then fifteen" is a far stronger
-    /// precondition than "something in a range" -- and it is a fact the HUD hands us.
-    f32 range_pair_max{0.0f};
-    /// Addresses already traced. Tracing once and latching meant the first shortlist -- three
-    /// discarded allocations -- consumed the only chance, and the counter that appeared in a
-    /// later report was never followed up.
-    std::set<VAddr> range_traced;
     void RangeWatch();     // mod_runtime.cpp shell -> mod_re_tools.cpp
     void RangeWatchImpl(); // mod_re_tools.cpp
-    /// Dump every heap object whose vtable is a given module offset. Dread keeps each item's
-    /// amount in an instance of one class -- the missile count and a stack of 99s were all found
-    /// at +0x10 of main+0x1D4C700 -- so seeing what else those objects hold is what turns one
-    /// address into a way of asking for any item by name.
-    std::string classdump_spec;
-    bool classdump_done{false};
     void ClassDump();     // mod_runtime.cpp shell -> mod_re_tools.cpp
     void ClassDumpImpl(); // mod_re_tools.cpp
-    /// Find the inventory: a run of {vtable, tag, float} entries packed at a 0x18 stride. Each
-    /// item's amount is one entry, which is why no two of them were ever neighbours -- energy
-    /// sits exactly one entry before missiles, and aeion two before that.
-    std::string arraydump_spec;
-    bool arraydump_done{false};
     void ArrayDump();     // mod_runtime.cpp shell -> mod_re_tools.cpp
     void ArrayDumpImpl(); // mod_re_tools.cpp
-    /// Find the player's position by walking. A coordinate rises while you hold right and falls
-    /// while you hold left; nothing else in the heap agrees with the stick that consistently.
-    /// Candidates are scored rather than dropped -- the fire/rest search failed because one bad
-    /// phase discarded the answer permanently.
-    std::string motion_spec;
-    int motion_phase{0};
-    u64 motion_started{};
-    std::vector<VAddr> motion_at;
-    std::vector<f32> motion_last;
-    std::vector<s32> motion_score;
-    std::vector<s8> motion_dir;    // sign of the last change, for counting reversals
-    std::vector<s32> motion_turns; // how many times it changed direction
-    VAddr motion_sweep_at{0};      ///< how far the collection pass has got
-    bool motion_traced{false};
     // mod_runtime.cpp shell -> mod_re_tools.cpp
     /// Who refers to this object, allowing for it being embedded in something larger? A trace
     /// that only asks about the exact address finds nothing whenever the holder points at the
@@ -376,8 +320,6 @@ private:
         s64 delta;             ///< from the final pointer to the value
         int good{0};
     };
-    mutable std::vector<PathRoute> path_routes;
-    int path_checks{0};
     void RecheckRoutes();     // mod_runtime.cpp shell -> mod_re_tools.cpp
     void RecheckRoutesImpl(); // mod_re_tools.cpp
     void MotionScan();        // mod_runtime.cpp shell -> mod_re_tools.cpp
@@ -400,7 +342,9 @@ private:
     void DriveCmdImpl();                         // mod_console.cpp
     void DriveAutoChain();                       // mod_runtime.cpp shell -> mod_re_tools.cpp
     void DriveAutoChainImpl();                   // mod_re_tools.cpp
-    void ReloadManifest();                       // mod_manifest.cpp
+#if EDEN_DSMOD_BUILD_DEV_TOOLS
+    void ReloadManifest(); // mod_manifest.cpp; the console "reload"
+#endif
     mutable std::map<std::pair<s64, s64>, s64> entry_array_cache;
     // Player-node identification: candidates of the right class holding world-scale coordinates,
     // scored by whether they move when the stick does.
@@ -417,8 +361,10 @@ private:
     mutable bool player_collected{false};
     mutable u64 player_samples{0};
     mutable u64 player_sampled_tick{0};
-    mutable VAddr heap_low{0}; ///< discovered heap region, cached on first successful ask
-    mutable VAddr heap_high{0};
+    /// Discovered heap region, cached on the first successful ask (any thread: HeapLow).
+    mutable std::atomic<VAddr> heap_low{0};
+    mutable std::atomic<VAddr> heap_high{0};
+    mutable std::mutex heap_bounds_mutex;
     mutable u64 entry_array_diag_tick{0}; ///< throttle for the "array not found yet" NCE log
     mutable s64 nce_vtable_delta{0};      ///< data-segment shift of vtables under NCE, learned once
     mutable std::map<VAddr, u64> entry_inv_hash; ///< per-copy value-column hash, last scan
@@ -438,67 +384,202 @@ private:
     // Where the incremental sweep for that array has got to, per (vtable, stride).
     mutable std::map<std::pair<s64, s64>, u64> entry_array_cursor;
     mutable std::map<std::pair<s64, s64>, u64> entry_array_swept_tick;
-    std::size_t motion_cursor{0};
-    bool auto_start{false};
-    std::vector<std::string> input_script;
-    bool input_script_loaded{false};
-    std::size_t input_step{0};
-    u64 input_step_tick{0};
-    u64 live_hold_left{0};
-    int live_held_button{-1};
-    bool live_held_stick{false};
-    bool live_stick_right{false};
-    float live_held_x{0.0f};
-    float live_held_y{0.0f};
-    VAddr cmd_watch{0};
-    std::string
-        cmd_action; ///< console "action <name>": a manifest action to run once on the next tick
-    bool cmd_action_ingame{
-        false}; ///< ... but not before the game is in play ("action <name> ingame")
     u32 literal_slot{
         0}; ///< rolling slot for $"literal" call arguments staged below the borrowed thread's SP
-    VAddr cmd_isnap_base{0};
-    std::vector<u32> cmd_isnap_vals;
     mutable std::unordered_map<const DataPoint*, VAddr> text_scan_cache;
     mutable std::unordered_map<const DataPoint*, u64> text_scan_attempt;
     [[nodiscard]] VAddr ScanForU32Text(const TextScan& spec) const; // mod_state.cpp
-    VAddr cmd_scan_base{0};
-    std::vector<u32> cmd_scan_snap;
-    std::vector<u32> cmd_scan_cand;
-    std::vector<VAddr> cmd_snap_addr;
-    std::vector<float> cmd_snap_val;
     // mgrfind: scan module BSS global slots for the save-data manager (or player) by stamina
     // signature.
-    bool cmd_mgr_active{false};
-    VAddr cmd_mgr_cursor{0};
-    s32 cmd_mgr_target{0};
-    std::vector<std::string> cmd_mgr_hits;
-    bool cmd_find_active{false};
-    u32 cmd_find_want{0};
-    VAddr cmd_find_cursor{0};
-    std::vector<VAddr> cmd_find_hits;
-    std::string cmd_find_label;
-    bool cmd_vfind_active{false};
-    u32 cmd_vfind_want{0};
-    VAddr cmd_vfind_cursor{0};
-    std::vector<std::string> cmd_vfind_hits;
-    bool cmd_ptr_active{false};
-    u64 cmd_ptr_want{0};
-    VAddr cmd_ptr_cursor{0};
-    std::vector<std::string> cmd_ptr_hits;
 
-    /// The ground truth as of the last sample, and how many times we have watched a candidate
-    /// follow it from one value to another. A transition is the only evidence that separates a
-    /// real counter from an address that merely happens to hold the same number.
-    s32 find_last_truth{};
-    bool find_truth_seen{false};
-    int find_transitions{};
     void FindValueCluster();      // mod_runtime.cpp shell -> mod_re_tools.cpp
     void FindValueClusterImpl();  // mod_re_tools.cpp
     void NarrowByAgreement();     // mod_runtime.cpp shell -> mod_re_tools.cpp
     void NarrowByAgreementImpl(); // mod_re_tools.cpp
     void DumpHeapSnapshot();      // mod_runtime.cpp shell -> mod_re_tools.cpp
     void DumpHeapSnapshotImpl();  // mod_re_tools.cpp
+#if EDEN_DSMOD_BUILD_DEV_TOOLS
+    /// Reverse-engineering and search state (mod_re_tools.cpp, mod_console.cpp) and the headless
+    /// input drivers' state (EDEN_DSMOD_AUTOSTART / _INPUT / _INPUT_LIVE, mod_actions.cpp). Only
+    /// a dev-tools build has it: a release build carries none of this, and the code that reads
+    /// it is compiled out with it.
+    struct DevTools {
+        /// EDEN_DSMOD_SCAN="<address-name>:<megabytes>" -- hunt a world position by behaviour rather
+        /// than by structure. Anything that holds a coordinate swings while the character walks and
+        /// settles when they stop, so collect every plausible float near a known object and watch
+        /// which ones move.
+        std::string scan_spec;
+        std::vector<VAddr> scan_addresses;
+        std::vector<const u8*> scan_host;
+        std::vector<float> scan_low, scan_high;
+        u64 scan_started{};
+        float scan_min_magnitude{1.0f};
+        VAddr scan_cursor{};
+        VAddr scan_end{};
+        std::string heapdump_path;
+        bool heapdump_done{false};
+        std::string scan_best;
+        /// EDEN_DSMOD_FIND="a,b,c" -- look for a place in memory where those 32-bit values sit close
+        /// together. Reading a game's numbers through its scripting bridge costs a guest call, which
+        /// needs breakpoints, which need the JIT; finding the same numbers in memory costs nothing to
+        /// read, updates the instant the game changes them, and works on a backend that runs guest
+        /// code natively.
+        /// EDEN_DSMOD_FIND="<value>" -- collect every address holding that 32-bit value, then keep
+        /// only those that stop holding it once the game changes it. One pass leaves thousands of
+        /// coincidences; the second leaves the one the player is looking at.
+        std::string find_spec;
+        std::vector<VAddr> find_candidates;
+        std::vector<const u8*> find_host;
+        s32 find_value{};
+        bool find_float_only{false};
+        std::string find_track;
+        std::vector<std::string> find_others;
+        s64 find_reach{0x40};
+        std::string find_anchor;
+        /// A published object address to work out a durable route to, named by the manifest. This is
+        /// the step that turns "the player is at this address today" into something a package can
+        /// ship: a static in the module plus a hop or two.
+        std::string trace_target;
+        bool trace_done{false};
+        /// Recover the game's Lua registration table from the *running* module. The pointers that
+        /// pair a name with its C function are relocated at load time, so they exist in memory and
+        /// not in the file on disk -- which is why reading the NSO finds nothing.
+        bool registry_done{false};
+        bool describe_done{false};
+        u64 find_window{0x400000};
+        std::vector<s32> find_last;
+        std::vector<int> find_changes;
+        u64 find_started{};
+        int find_round{};
+        /// Locate a counter by spending it, without asking the game what it holds. The scripting
+        /// bridge is stale between updates -- it can sit on six missiles while the screen shows none
+        /// -- so it cannot say what the value is at the moment we look. What it can never be wrong
+        /// about is what *we* just did: a counter we are spending goes down while we fire and holds
+        /// while we rest, and nothing else in memory does both on cue.
+        std::string diff_spec;
+        std::string diff_anchor;
+        u64 diff_window{0x10000};
+        std::vector<VAddr> diff_candidates;
+        std::vector<s32> diff_last;
+        int diff_phase{0}; ///< 0 = not started, 1 = firing, 2 = resting
+        u64 diff_started{};
+        int diff_cycles{};
+        /// Search the heap for literal bytes and report what sits around each hit. The module is a
+        /// known quantity; the heap is where the game keeps what it is actually doing, and a table
+        /// keyed by a hash gives itself away by holding that hash next to the number it maps to.
+        std::string heapfind_spec;
+        bool heapfind_done{false};
+        /// "<value>@<offset>": find a float in the heap, step back by `offset` to the object that
+        /// would contain it, and keep only the ones something actually points at. Aimed at a chain
+        /// whose shape is known but whose root is not -- being pointed at is what separates a field
+        /// of a live object from a number that happens to be lying there.
+        std::string field_spec;
+        bool field_done{false};
+        /// Watch every heap float that could be a small whole-numbered counter, and report the ones
+        /// whose value actually travels. Unlike the fire/rest test this never drops a candidate for
+        /// failing a single phase -- a counter you can spend to zero stops moving once it is empty,
+        /// and that is exactly when the strict test throws the answer away.
+        std::string range_spec;
+        int range_phase{0};
+        u64 range_started{};
+        std::vector<VAddr> range_at;
+        std::vector<f32> range_min;
+        std::vector<f32> range_max;
+        /// Which whole values each candidate has been seen holding, as a bit per value 0..31. A
+        /// counter descends through every step; memory the game cleared goes straight to nought.
+        /// Counting the steps separates the two without assuming anything about the layout.
+        std::vector<u32> range_seen;
+        /// When set, only watch a value whose neighbour one word along holds this exact number.
+        /// A counter and its capacity sit together, so "something, then fifteen" is a far stronger
+        /// precondition than "something in a range" -- and it is a fact the HUD hands us.
+        f32 range_pair_max{0.0f};
+        /// Addresses already traced. Tracing once and latching meant the first shortlist -- three
+        /// discarded allocations -- consumed the only chance, and the counter that appeared in a
+        /// later report was never followed up.
+        std::set<VAddr> range_traced;
+        /// Dump every heap object whose vtable is a given module offset. Dread keeps each item's
+        /// amount in an instance of one class -- the missile count and a stack of 99s were all found
+        /// at +0x10 of main+0x1D4C700 -- so seeing what else those objects hold is what turns one
+        /// address into a way of asking for any item by name.
+        std::string classdump_spec;
+        bool classdump_done{false};
+        /// Find the inventory: a run of {vtable, tag, float} entries packed at a 0x18 stride. Each
+        /// item's amount is one entry, which is why no two of them were ever neighbours -- energy
+        /// sits exactly one entry before missiles, and aeion two before that.
+        std::string arraydump_spec;
+        bool arraydump_done{false};
+        /// Find the player's position by walking. A coordinate rises while you hold right and falls
+        /// while you hold left; nothing else in the heap agrees with the stick that consistently.
+        /// Candidates are scored rather than dropped -- the fire/rest search failed because one bad
+        /// phase discarded the answer permanently.
+        std::string motion_spec;
+        int motion_phase{0};
+        u64 motion_started{};
+        std::vector<VAddr> motion_at;
+        std::vector<f32> motion_last;
+        std::vector<s32> motion_score;
+        std::vector<s8> motion_dir;    // sign of the last change, for counting reversals
+        std::vector<s32> motion_turns; // how many times it changed direction
+        VAddr motion_sweep_at{0};      ///< how far the collection pass has got
+        bool motion_traced{false};
+        mutable std::vector<PathRoute> path_routes;
+        int path_checks{0};
+        std::size_t motion_cursor{0};
+        bool auto_start{false};
+        std::vector<std::string> input_script;
+        bool input_script_loaded{false};
+        std::size_t input_step{0};
+        u64 input_step_tick{0};
+        u64 live_hold_left{0};
+        int live_held_button{-1};
+        bool live_held_stick{false};
+        bool live_stick_right{false};
+        float live_held_x{0.0f};
+        float live_held_y{0.0f};
+        VAddr cmd_watch{0};
+        std::string
+            cmd_action; ///< console "action <name>": a manifest action to run once on the next tick
+        bool cmd_action_ingame{
+            false}; ///< ... but not before the game is in play ("action <name> ingame")
+        VAddr cmd_isnap_base{0};
+        std::vector<u32> cmd_isnap_vals;
+        VAddr cmd_scan_base{0};
+        std::vector<u32> cmd_scan_snap;
+        std::vector<u32> cmd_scan_cand;
+        std::vector<VAddr> cmd_snap_addr;
+        std::vector<float> cmd_snap_val;
+        bool cmd_mgr_active{false};
+        VAddr cmd_mgr_cursor{0};
+        s32 cmd_mgr_target{0};
+        std::vector<std::string> cmd_mgr_hits;
+        bool cmd_find_active{false};
+        u32 cmd_find_want{0};
+        VAddr cmd_find_cursor{0};
+        std::vector<VAddr> cmd_find_hits;
+        std::string cmd_find_label;
+        bool cmd_vfind_active{false};
+        u32 cmd_vfind_want{0};
+        VAddr cmd_vfind_cursor{0};
+        std::vector<std::string> cmd_vfind_hits;
+        bool cmd_ptr_active{false};
+        u64 cmd_ptr_want{0};
+        VAddr cmd_ptr_cursor{0};
+        std::vector<std::string> cmd_ptr_hits;
+        /// The ground truth as of the last sample, and how many times we have watched a candidate
+        /// follow it from one value to another. A transition is the only evidence that separates a
+        /// real counter from an address that merely happens to hold the same number.
+        s32 find_last_truth{};
+        bool find_truth_seen{false};
+        int find_transitions{};
+        /// Log every guest thread PC every 3s; set from EDEN_DSMOD_THREADS=1.
+        bool log_guest_threads{false};
+        /// EDEN_DSMOD_DUMP="<address-name>:<offset>:<bytes>" -- periodically log a block of guest
+        /// memory hanging off an address a call sequence published. This is how a field nobody
+        /// documented gets found: sample, move, sample again, and see which words changed.
+        std::string dump_spec;
+    };
+    DevTools dev;
+#endif
     // --- guest-call sequences (mod_guest_bridge.cpp) -----------------------------------------
     void StartSequence(const std::string& name, const CallSequence& sequence,
                        const StateSnapshot& snapshot);
@@ -652,6 +733,11 @@ private:
     std::unique_ptr<GameModule> game_module;
     void* game_module_instance{};
     EdenDsmodHostApi module_host{};
+    /// module_host for callbacks off the tick thread (load_image, load_data): no publishing, no
+    /// snapshot reads (InitializeGameModule, mod_module_host.cpp).
+    EdenDsmodHostApi module_worker_host{};
+    /// nce_vtable_delta as of the last module call, for module_worker_host's "__relocation_delta".
+    std::atomic<s64> worker_relocation_delta{0};
     EdenDsmodHostExtensions module_extensions{};
     EdenDsmodHostSaveApi module_save_api{};
     EdenDsmodHostWriteApi module_write_api{};
@@ -662,7 +748,14 @@ private:
     std::condition_variable_any module_asset_cv;
     std::deque<std::string> module_asset_queue;
     std::unordered_set<std::string> module_asset_pending;
-    std::unordered_set<std::string> module_asset_failed;
+    /// Module image keys whose decode failed: when and how often. A module may read the running
+    /// game to build an image (sprite tables resolved from main), which can fail before
+    /// the game is up, so a failed key is retried with a growing delay, a bounded number of times.
+    struct ModuleAssetFailure {
+        std::chrono::steady_clock::time_point at;
+        u32 attempts{};
+    };
+    std::unordered_map<std::string, ModuleAssetFailure> module_asset_failed;
     std::unordered_map<std::string, Image> module_asset_completed;
     /// EDEN_DSMOD_IMAGE_TIMING=1: when each module image was queued / decoded (steady clock), for
     /// the per-image "landed" log line in DrainModuleImages. Guarded by module_asset_mutex.
@@ -696,6 +789,12 @@ private:
     void InitializeGameModule();                                         // mod_module_host.cpp
     void ShutdownGameModule();                                           // mod_module_host.cpp
     void RunGameModule(StateSnapshot& snapshot, bool tick);              // mod_module_host.cpp
+    /// Whether the module is ticked while the second screen is hidden: manifest
+    /// "module_tick_hidden", else the module's TICK_WHEN_HIDDEN / NO_TICK_WHEN_HIDDEN flag, else
+    /// "exports on_action" (the behaviour before the explicit switches existed).
+    [[nodiscard]] bool ModuleTicksWhileHidden() const; // mod_module_host.cpp
+    /// A module's get_i64("__source:<prefix>") (either host copy); nullopt: not answered.
+    static std::optional<s64> SourceQuery(ModRuntime& rt, const char* name); // mod_module_host.cpp
     void InitializeModuleExtensions();                                   // mod_module_services.cpp
     void InitializeModuleSaveExtensions();                               // mod_module_services.cpp
     void InitializeModuleWriteExtensions();                              // mod_module_services.cpp
@@ -719,12 +818,12 @@ private:
     void AcceptModuleMap(const EdenDsmodMapFrame& frame);        // mod_module_host.cpp
     void AcceptModuleMapState(const char* json);                 // mod_module_host.cpp
 
-    /// Log every guest thread PC every 3s; set from EDEN_DSMOD_THREADS=1.
-    bool log_guest_threads{false};
 
     /// Named runtime flags (ints: 0/1, or a small multi-state value) a mod sets from a button;
     /// enforce rules read them as non-zero, pages as "@flag:<name>".
     std::unordered_map<std::string, s64> flags;
+    /// The manifest's "persist_flags": restored in Initialize, saved by flag actions.
+    FlagPersistence flag_persistence;
     std::unordered_map<std::string, VAddr> method_info_cache;
     /// Values are
     /// `shared_ptr<const Image>`, not `Image` by value, so a caller that has already read a pointer
@@ -775,13 +874,19 @@ private:
     };
     std::unordered_map<std::string, std::vector<WaterPixel>> map_water_pixels;
     std::unordered_set<std::string> image_failed;
-    FileSys::VirtualDir romfs_root;
-    bool romfs_tried{false};
+    /// Every "<prefix>:" asset source (mod_sources.h): registered once in the constructor
+    /// (RegisterAssetSources, mod_assets.cpp), then read-only and safe from any thread. Shared
+    /// with the Nx asset worker's jobs, which may outlive a reload of the Nx state.
+    std::shared_ptr<AssetSources> asset_sources{std::make_shared<AssetSources>()};
+    /// The runtime's own sources: "file:" (the package folder), "romfs:" (the running game's
+    /// patched romfs, opened on first use through a private storage chain) and "module:" (the
+    /// module data extension). Further sources register here too.
+    void RegisterAssetSources(); // mod_assets.cpp
     // --- Nintendo assets, composites and msbt (mod_nx_runtime.cpp) ---------------------------
     // Nintendo asset references ("romfs:/x.arc#member#texture", .bntx, .bffnt) and
     // "composite:<name>" images, decoded off the render path (mod_nx_runtime.cpp).
     std::unique_ptr<NxAssetState, NxAssetStateDeleter> nx_assets{MakeNxAssetState(this)};
-    [[nodiscard]] static bool IsNxAssetSource(const std::string& src);
+    [[nodiscard]] bool IsNxAssetSource(const std::string& src) const;
     std::shared_ptr<const Image> GetNxImage(const std::string& src);
     std::shared_ptr<const Image> GetCompositeImage(const std::string& name);
     /// Sync: the bytes of a SARC member ("<file>#<member>[#...]"); false when `src` does not
@@ -848,10 +953,7 @@ private:
     /// "original", then writes that brk back into the game's code for good.
     std::unordered_map<VAddr, u32> patched_original;
     bool patches_applied{false};
-    /// EDEN_DSMOD_DUMP="<address-name>:<offset>:<bytes>" -- periodically log a block of guest
-    /// memory hanging off an address a call sequence published. This is how a field nobody
-    /// documented gets found: sample, move, sample again, and see which words changed.
-    std::string dump_spec;
+    std::vector<bool> patch_done; ///< per manifest.patches entry: written (or skipped) already
     mutable std::unordered_map<std::string, s64> pattern_cache;
     mutable std::unordered_map<std::string, s64> class_slot_cache;
     /// Where a class' name string was found (the IL2CPP metadata does not move), and
@@ -1027,6 +1129,35 @@ private:
     /// = element of a `count` point; `as_float` = write IEEE bits into an f32 point.
     bool WritePointValue(const DataPoint& point, s64 value, s64 array_index = 0,
                          std::optional<f64> as_float = std::nullopt); // mod_state.cpp
+    /// One guest store: `bits` (already shifted into place) into the `field` bits of the `width`
+    /// byte word at `address` (field all-ones = a whole-word store, else read-modify-write).
+    struct GuestStore {
+        VAddr address{};
+        u32 width{};
+        u64 bits{};
+        u64 field{~u64{0}};
+    };
+    /// A check a batch makes before storing: the word's `field` bits still equal `bits`.
+    struct GuestExpect {
+        VAddr address{};
+        u32 width{};
+        u64 bits{};
+        u64 field{~u64{0}};
+    };
+    // --- guest write batches (mod_state.cpp) --------------------------------------------------
+    /// The store WritePointValue would make, resolved now; nullopt when the point cannot be
+    /// written (unresolved, unmapped, read-only type).
+    std::optional<GuestStore> PlanPointWrite(const DataPoint& point, s64 value,
+                                             s64 array_index = 0,
+                                             std::optional<f64> as_float = std::nullopt) const;
+    /// "This point's word must still hold what it holds now."
+    std::optional<GuestExpect> ExpectUnchanged(const DataPoint& point, s64 array_index = 0) const;
+    /// Runs `fn` with no guest thread running (single core: directly). False when the application
+    /// could not be stalled right now (pause/resume in progress); `fn` did not run then.
+    bool RunWithGuestStopped(const std::function<void()>& fn);
+    /// Checks every expect, then applies every store, as one unit with the guest stopped (a lone
+    /// whole-word store is written directly). False when an expect failed: nothing was written.
+    bool ApplyGuestStores(std::span<const GuestExpect> expects, std::span<const GuestStore> stores);
     /// A value an action names: an int, and the float it came from when the source is a float.
     struct ActionScalar {
         s64 i{};
@@ -1081,8 +1212,12 @@ private:
     std::set<std::string> map_groups; ///< every dynamic marker group of the package
     bool map_groups_ready{false};
     std::optional<std::pair<f64, f64>> last_map_tap; ///< world position of the latest map tap
-    /// Publishes @map_sel*, @map_tap_*, @flag:*, @slot_used/@slot_full; drops stale selections.
-    void PublishMapState(StateSnapshot& snapshot); // mod_input.cpp
+    s64 map_tap_seq{0}; ///< bumped on every map tap, so readers can tell a new tap from the last
+    /// Writes @map_tap_x/_y (float and int) and @map_tap_seq for the latest map tap.
+    void PublishMapTap(StateSnapshot& snapshot) const;
+    /// Publishes @map_sel*, @map_tap_*, @slot_used/@slot_full (and @flag:* when `with_flags`);
+    /// drops stale selections.
+    void PublishMapState(StateSnapshot& snapshot, bool with_flags = true); // mod_input.cpp
     /// Derived points: evaluated after sampling, published into ints and floats.
     /// `volatile_only`: the second, post-interaction evaluation of a tick. Only derived values that
     /// (transitively) read a key written between the two passes ("@..." interaction/flag state,
@@ -1105,7 +1240,7 @@ private:
     std::vector<u32> derived_order;
     const DerivedPoint* derived_order_list{nullptr};
     size_t derived_order_size{0};
-    /// Whether any derived entry reads "@" interaction state (re-evaluated after the taps).
+    /// Whether any derived entry is volatile (derived_volatile): the post-tap pass is due.
     bool derived_reads_interaction{false};
     /// Per derived value: whether it reads this tick's interaction state ("@..", "view_custom:..")
     /// directly or through another derived value; the post-tap pass recomputes only those.
@@ -1122,7 +1257,11 @@ private:
     /// `hud_canvas`'s pixels/dimensions; every other touched member
     /// (`last_map_key`/`last_hud_hash`/etc.) is guarded by `gpu_composite_mutex` -- see that
     /// field's own comment for why a single-caller-per-run invariant is not enough by itself.
-    void PublishGpuComposite(AuxDrawList& dl, Canvas& hud_canvas); // mod_redraw.cpp
+    /// `hud_dirty` (optional): `hud_canvas` changed only inside this rect since the last publish
+    /// of it, so only the rect of the HUD slot is diffed (used only when that last HUD publish was
+    /// of this same canvas; the full-canvas hash + diff otherwise).
+    void PublishGpuComposite(AuxDrawList& dl, Canvas& hud_canvas,
+                             const std::array<s32, 4>* hud_dirty = nullptr); // mod_redraw.cpp
     /// Everything a rasterised area image depends on; one definition shared by the image cache
     /// key, the GPU re-upload gate and the UI signature.
     struct MapStamp {
@@ -1231,7 +1370,7 @@ private:
     /// process run (`will_dispatch` depends only on `sync_redraw`/`page.id`, both fixed per run --
     /// see `PublishGpuComposite`'s own comment), so these are NOT concurrently written by both --
     /// but the console "reload" reset (`ModRuntime::Reload`-ish path, the block right after this
-    /// struct's own definition that clears `atlas_published`/`last_map_key`/etc.) is a TICK-THREAD
+    /// struct's own definition that clears `last_atlas_key`/`last_map_key`/etc.) is a TICK-THREAD
     /// writer outside that single-caller discipline, and can race a worker mid-composite. Same
     /// class of hazard as `image_cache`/`map_visited` (a console-triggered reset outside the normal
     /// call chain), guarded the same way: one mutex, taken by `PublishGpuComposite` and by the
@@ -1243,8 +1382,13 @@ private:
     bool last_pulse_present{false};
     std::vector<u32> map_fade_weights; ///< 650x300 RGBA weights, reused across fade publishes
     u64 last_map_fade_epoch{std::numeric_limits<u64>::max()};
-    bool atlas_published{false}; ///< icon atlas uploaded once (slot 1)
-    u64 last_hud_hash{0};        ///< HUD overlay content hash (slot 2), re-upload on change
+    /// The icon atlas slot 1 holds: its GetImage key and the Image uploaded (a different key, or
+    /// the same key decoded again, uploads again).
+    std::string last_atlas_key;
+    std::shared_ptr<const Image> last_atlas_image;
+    u64 last_hud_hash{0}; ///< HUD overlay content hash (slot 2), re-upload on change
+    bool last_hud_hash_valid{false}; ///< last_hud_hash describes what slot 2 holds
+    const Canvas* hud_slot_canvas{nullptr}; ///< the canvas slot 2 was last published from
     /// The map endpoints (slots 0/4) the routing buffer holds, and the bundle epoch that publish
     /// returned: the base a reveal's tile-diff publish is computed against.
     std::shared_ptr<const Image> map_pub_current, map_pub_previous;
@@ -1270,6 +1414,8 @@ private:
     // engine_ichigo.cpp
     static std::vector<u8> ExtractArchiveMember(std::span<const u8> raw, const std::string& want);
     std::vector<u8> ReadAssetBytesRaw(const std::string& src);
+    /// The "romfs:" source's opener (RegisterAssetSources): the running game's patched romfs.
+    FileSys::VirtualDir OpenGameRomFS(); // mod_assets.cpp
 
     System& system;
     Core::Timing::CoreTiming& core_timing;
@@ -1280,6 +1426,10 @@ private:
     u64 main_region_size{};
 
     Canvas canvas;
+    /// The atlases `canvas` borrows raw pointers to (SetFont / SetIconFont): held here so a
+    /// re-landed module image cannot free them while the canvas still points at them.
+    std::shared_ptr<const Image> canvas_font_ref;
+    std::shared_ptr<const Image> canvas_icon_ref;
     size_t current_page{0};
     u64 tick_count{0};
 
@@ -1355,10 +1505,28 @@ private:
     const CallSequence* call_seq{nullptr};
     std::string call_seq_name;
     size_t call_seq_step{0};
+    /// The armed sequence's step functions and "$@symbol" arguments, resolved by StartSequence on
+    /// the tick thread (guest_bridge_mutex); the breakpoint handler only indexes them.
+    std::vector<std::optional<s64>> call_seq_fn;
+    std::unordered_map<std::string, std::optional<s64>> call_seq_symbols;
     std::unordered_map<std::string, u64> call_slots;
     StateSnapshot call_snapshot;
     StateSnapshot
         tick_snapshot; ///< reused each tick; clear() keeps capacity, avoids per-frame alloc
+    // Per-tick snapshot keys, built once (see PrefixedKeys). Tick thread only.
+    PrefixedKeys flag_keys{"@flag:"};
+    PrefixedKeys view_custom_keys{"view_custom:"};
+    PrefixedKeys counter_keys{"@"};
+    PrefixedKeys map_sel_keys{"@map_sel:"};
+    PrefixedKeys map_sel_sx_keys{"@map_sel_sx:"};
+    PrefixedKeys map_sel_sy_keys{"@map_sel_sy:"};
+    PrefixedKeys slot_used_keys{"@slot_used:"};
+    PrefixedKeys slot_full_keys{"@slot_full:"};
+    PrefixedKeys sel_keys{"@sel:"};
+    PrefixedKeys last_keys{"@last:"};
+    IndexedKeys element_keys;
+    /// Publishes every runtime flag as "@flag:<name>".
+    void PublishFlags(StateSnapshot& snapshot); // mod_input.cpp
     std::unordered_map<std::string, f64> sequence_values;
     std::unordered_map<std::string, u64> sequence_addresses;
     std::unordered_map<std::string, std::string> sequence_texts;
@@ -1394,6 +1562,14 @@ private:
     /// on_hold widget under the first finger names.
     HoldTracker hold_tracker;
     std::string hold_action;
+    /// Swipe of this gesture (runtime 14, "on_swipe_left" / "on_swipe_right"; unreleased 15
+    /// addition "on_swipe_up" / "on_swipe_down"): the tracker, and the actions of the swipe
+    /// widget under the first finger.
+    SwipeTracker swipe_tracker;
+    std::string swipe_left_action;
+    std::string swipe_right_action;
+    std::string swipe_up_action;
+    std::string swipe_down_action;
     float gesture_span{0.0f};  ///< finger separation last frame, for pinch
     mutable std::mutex view_mutex;
     ViewState view_state;
@@ -1408,6 +1584,10 @@ private:
     void ReturnIdleViews();
     /// Takes the "<key>#pan" corrections a clamped map left in map_follow_state into view_state.
     void ApplyViewCorrections();
+    /// Bound default views (unreleased runtime 15 addition, mod_view_default.h): each pan_zoom
+    /// widget of the current page with "view_zoom_bind" / "view_cx_bind" / "view_cy_bind" gets
+    /// its home from this tick's values; a view at its old home follows. Takes view_mutex.
+    void ApplyViewDefaults(const StateSnapshot& snapshot);
 
     // --- tap-select and drag-and-drop (mod_input.cpp) ----------------------------------------
     /// A finger that landed on a draggable widget. It becomes a drag once it travels beyond the
@@ -1514,6 +1694,10 @@ private:
     bool ModuleDecodeFont(std::span<const u8> bytes, FontMetrics& out); // mod_assets.cpp
     FontMetrics font_metrics;
     bool font_ready{false};
+    /// A module font decoder may read the running game (metric tables read from main),
+    /// which can fail before the game is up: LoadFont then retries on a slow schedule, bounded.
+    u32 font_module_attempts{0};
+    u64 font_retry_tick{0};
     void LoadFont(); // mod_assets.cpp
 
     // --- Off-thread redraw worker: renders ordinary page redraws and publishes its output -------
@@ -1619,6 +1803,9 @@ private:
     Canvas worker_canvas;
     /// Worker-thread only: see UnpublishedRegions (RunRedrawJob).
     UnpublishedRegions worker_unpublished;
+    /// Worker-thread only: the job before this one ended in a GPU-composite publish of
+    /// worker_canvas (so composite slot 2 equals worker_canvas outside the next job's dirty rect).
+    bool worker_hud_synced{false};
     /// The worker's own persistent `MapDrawRecords` scratch buffer, mirroring
     /// `worker_canvas`'s own reasoning immediately above -- a partial redraw only repaints (and
     /// only re-records) whatever is inside this tick's dirty rect, so whatever `RenderPage` is

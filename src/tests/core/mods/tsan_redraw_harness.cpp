@@ -363,13 +363,10 @@ Page BuildPage() {
     label.text_scale = 3;
     page.widgets.push_back(label);
 
-    // Static chrome cache: a static Image widget -- no bind, fixed rect, fixed src/color -- so this
-    // harness's two real concurrent RenderPage callers (DrawThread's worker-shaped call and
-    // TickThread's own synchronous carve-out call, TEST_CASE 1's whole point) actually exercise
-    // the new static chrome cache's shared `chrome_cache`/`chrome_cache_mutex` state, not just the
-    // Map/Label widgets that predate it. Placed at a rect disjoint from the Map widget above so it
-    // has nothing to do with Map-widget occlusion -- this is purely about the cache's own
-    // read/write concurrency.
+    // A static Image widget -- no bind, fixed rect, fixed src/color -- drawn by both of this
+    // harness's concurrent RenderPage callers (DrawThread's worker-shaped call and TickThread's
+    // own synchronous carve-out call). Placed at a rect disjoint from the Map widget above so it
+    // has nothing to do with Map-widget occlusion.
     Widget chrome;
     chrome.type = WidgetType::Image;
     chrome.id = "chrome";

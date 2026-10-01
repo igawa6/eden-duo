@@ -523,6 +523,9 @@ static InputCommon::VirtualGamepad::VirtualButton ButtonFromName(const std::stri
     if (name == "DRight") return VB::ButtonRight;
     if (name == "L") return VB::TriggerL;
     if (name == "R") return VB::TriggerR;
+    if (name == "ZL") return VB::TriggerZL;
+    if (name == "ZR") return VB::TriggerZR;
+    if (name == "Home") return VB::ButtonHome;
     return VB::ButtonA;
 }
 

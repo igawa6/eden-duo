@@ -327,6 +327,38 @@ TEST_CASE("Aux texture publish diffs same-size republishes", "[dsmod]") {
                                     }));
 }
 
+TEST_CASE("Aux texture rect publish diffs only the dirty rect", "[dsmod]") {
+    AuxRouting aux;
+    constexpr u32 W = 130, H = 70;
+    std::vector<u32> hud(W * H, 0u);
+    u64 serial = 0;
+    // No texture there yet: the whole picture, whatever the rect.
+    const std::array<std::array<s32, 4>, 1> rect{{{0, 0, 10, 10}}};
+    aux.PublishAuxTextureRects(2, W, H, hud, rect);
+    REQUIRE(aux.WithAuxTexture(2, serial, [](auto&&...) {}));
+    // A change inside the rect is taken, the rect clipped to the texture.
+    hud[5 * W + 5] = 0xFF00FF00u;
+    hud[69 * W + 129] = 0xFF0000FFu; // outside the rect: the producer says it did not change
+    const std::array<std::array<s32, 4>, 1> dirty{{{-4, -4, 12, 12}}};
+    aux.PublishAuxTextureRects(2, W, H, hud, dirty);
+    REQUIRE(aux.WithAuxTextureTiles(2, serial,
+                                    [&](std::span<const u32> px, u32, u32, const TileMask& m) {
+                                        REQUIRE(MarkedTiles(m) == 1);
+                                        REQUIRE(px[5 * W + 5] == 0xFF00FF00u);
+                                        REQUIRE(px[69 * W + 129] == 0u);
+                                    }));
+    // Nothing changed inside the rect: no new serial.
+    aux.PublishAuxTextureRects(2, W, H, hud, dirty);
+    REQUIRE_FALSE(aux.WithAuxTexture(2, serial, [](auto&&...) {}));
+    // A size change takes the whole picture again.
+    std::vector<u32> bigger((W + 1) * H, 0x11111111u);
+    aux.PublishAuxTextureRects(2, W + 1, H, bigger, dirty);
+    REQUIRE(aux.WithAuxTexture(2, serial, [&](std::span<const u32> px, u32 w, u32) {
+        REQUIRE(w == W + 1);
+        REQUIRE(std::ranges::equal(px, bigger));
+    }));
+}
+
 TEST_CASE("Aux map bundle tile publish keeps the consumer copy exact and patches only changes",
           "[dsmod]") {
     AuxRouting aux;

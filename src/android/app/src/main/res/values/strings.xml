@@ -900,18 +900,26 @@
     <string name="dual_screen_mod_installed">Dual screen mod installed successfully</string>
     <string name="dual_screen_mod_install_cancelled">Dual screen mod installation cancelled</string>
     <string name="dual_screen_mod_install_failed">Dual screen mod installation failed</string>
-    <string name="dual_screen_mod_invalid_filename">Choose a file named &lt;TITLEID&gt;.dsmod.zip, where TITLEID is 16 uppercase hexadecimal characters.</string>
     <string name="dual_screen_mod_title_mismatch">This package is for a different game.</string>
     <string name="dual_screen_mod_archive_too_large">The dual screen package is too large.</string>
     <string name="dual_screen_mod_malformed_archive">The selected file is not a valid ZIP archive.</string>
     <string name="dual_screen_mod_invalid_package">The package metadata or directory layout is invalid.</string>
     <string name="dual_screen_mod_install_failed_description">The dual screen package could not be installed.</string>
+    <string name="dual_screen_mod_old_not_removed">The older version in %1$s could not be deleted (files copied there with adb or by another app?). It was turned off so the new version is used; delete that folder with a file manager.</string>
+    <string name="dual_screen_mod_others_disabled">Other dual screen packages for this game were turned off so the new one is used: %1$s. You can turn them back on in Add-ons.</string>
+    <string name="dual_screen_mod_others_enabled">These add-ons also contain a dual screen package and are used instead of the new one while they are on: %1$s. Turn them off in Add-ons to use the new companion.</string>
+    <string name="dual_screen_mod_error_detail">%1$s\n\nDetails: %2$s</string>
+    <string name="dual_screen_mod_runtime_too_old">This companion needs a newer Eden Duo (dual-screen runtime %1$s; this app has %2$d). Update Eden Duo, then install the companion again. The companion you already had installed was kept.</string>
+    <string name="dual_screen_mod_missing_platform_library">This companion has no build of its native module for this device (%1$s).</string>
+    <string name="dual_screen_mod_checksum_mismatch">The companion\'s native module is damaged (checksum mismatch). Download the package again.</string>
+    <string name="dual_screen_mod_version_mismatch">The version in the file name does not match the package (%1$s). Download the package again.</string>
+    <string name="dual_screen_mod_cannot_write">Eden Duo cannot write to %1$s. Files copied there with adb or by another app can cause this; remove them and try again.</string>
     <string name="addon_notice">Important addon notice</string>
     <!-- \"cheats/" "romfs/" and \"exefs/ should not be translated -->
-    <string name="addon_notice_description">In order to install mods and cheats, you must select a folder that contains a cheats/, romfs/, exefs/, or dualscreen/ directory. We can\'t verify if these will be compatible with your game so be careful!</string>
+    <string name="addon_notice_description">In order to install mods and cheats, you must select a folder that contains a cheats/, romfs/, or exefs/ directory. We can\'t verify if these will be compatible with your game so be careful! Dual screen companions (.dsmod.zip files) are installed with Install → Dual screen mods instead.</string>
     <string name="invalid_directory">Invalid directory</string>
     <!-- \"cheats/" "romfs/" and \"exefs/ should not be translated -->
-    <string name="invalid_directory_description">Please make sure that the directory you selected contains a cheats/, romfs/, exefs/, or dualscreen/ folder and try again.</string>
+    <string name="invalid_directory_description">Please make sure that the directory you selected contains a cheats/, romfs/, or exefs/ folder and try again. For a dual screen companion (.dsmod.zip), use Install → Dual screen mods.</string>
     <string name="addon_installed_successfully">Addon installed successfully</string>
     <string name="verifying_content">Verifying content…</string>
     <string name="content_install_notice">Content install notice</string>

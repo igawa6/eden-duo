@@ -17,8 +17,10 @@
 
 namespace dread_mapgen {
 
-/// Raw deflate stream -> bytes. False on a malformed stream.
-bool Inflate(std::span<const std::uint8_t> deflate, std::vector<std::uint8_t>& out);
+/// Raw deflate stream -> bytes. False on a malformed stream, or once `out` would grow past
+/// max_out bytes (checked before each append, so a corrupt stream cannot allocate more).
+bool Inflate(std::span<const std::uint8_t> deflate, std::vector<std::uint8_t>& out,
+             std::size_t max_out = SIZE_MAX);
 /// One gzip member (RFC 1952 header, deflate body). False on a malformed member.
 bool Gunzip(std::span<const std::uint8_t> gz, std::vector<std::uint8_t>& out);
 

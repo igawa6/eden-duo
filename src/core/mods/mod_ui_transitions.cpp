@@ -7,6 +7,7 @@
 // they share. Driven by DrivePageTransition (mod_pages.cpp).
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstring>
 #include <vector>
@@ -122,26 +123,37 @@ void ComposePageGrow(std::span<u32> out, std::span<const u32> background,
         const s32 sx0 = std::max(0, rx0 - ShadowPx), sy0 = std::max(0, ry0 - ShadowPx);
         const s32 sx1 = std::min(iw, rx1 + ShadowPx), sy1 = std::min(ih, ry1 + ShadowPx);
         const float shadow_c = std::clamp(shadow, 0.0f, 1.0f);
-        for (s32 y = sy0; y < sy1; ++y) {
-            const bool row_in_rect = y >= ry0 && y < ry1;
-            u32* const row = out.data() + static_cast<size_t>(y) * row_px;
-            for (s32 x = sx0; x < sx1; ++x) {
-                if (row_in_rect && x >= rx0 && x < rx1) {
-                    continue; // inside the rect itself: the moving blit below overwrites this
-                }
+        // The darkening per distance from the edge, computed once (same formula per pixel).
+        std::array<u32, ShadowPx + 1> keep_at{};
+        for (s32 d = 0; d <= ShadowPx; ++d) {
+            const float t = 1.0f - static_cast<float>(d) / static_cast<float>(ShadowPx);
+            keep_at[static_cast<size_t>(d)] =
+                static_cast<u32>(std::lround(255.0f * (1.0f - shadow_c * t * t)));
+        }
+        const auto shade = [&](u32* row, s32 x0, s32 x1, s32 dy) {
+            for (s32 x = x0; x < x1; ++x) {
                 const s32 dx = x < rx0 ? rx0 - x : (x >= rx1 ? x - rx1 + 1 : 0);
-                const s32 dy = y < ry0 ? ry0 - y : (y >= ry1 ? y - ry1 + 1 : 0);
                 const s32 d = std::max(dx, dy);
                 if (d > ShadowPx) {
                     continue;
                 }
-                const float t = 1.0f - static_cast<float>(d) / static_cast<float>(ShadowPx);
-                const u32 keep = static_cast<u32>(std::lround(255.0f * (1.0f - shadow_c * t * t)));
+                const u32 keep = keep_at[static_cast<size_t>(d)];
                 const u32 px = row[x];
                 const u32 r = (((px >> 16) & 0xFF) * keep) / 255;
                 const u32 g = (((px >> 8) & 0xFF) * keep) / 255;
                 const u32 b = ((px & 0xFF) * keep) / 255;
                 row[x] = (px & 0xFF000000u) | (r << 16) | (g << 8) | b;
+            }
+        };
+        for (s32 y = sy0; y < sy1; ++y) {
+            u32* const row = out.data() + static_cast<size_t>(y) * row_px;
+            const s32 dy = y < ry0 ? ry0 - y : (y >= ry1 ? y - ry1 + 1 : 0);
+            if (y >= ry0 && y < ry1) {
+                // Beside the rect only: inside it the moving blit below overwrites everything.
+                shade(row, sx0, rx0, dy);
+                shade(row, rx1, sx1, dy);
+            } else {
+                shade(row, sx0, sx1, dy);
             }
         }
     }

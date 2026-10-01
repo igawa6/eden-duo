@@ -306,6 +306,10 @@ struct System::Impl {
 
     SystemResultStatus Load(System& system, Frontend::EmuWindow& emu_window, const std::string& filepath, Service::AM::FrontendAppletParameters& params) {
         dsmod_mailbox_address = dsmod_mailbox_size = 0;
+        // DSMod: the loader registers "main" during CreateApplicationProcess below, and the first
+        // registration wins. A previous load that failed after registering (or a previous game in
+        // the same process) must not leave its build id and main base behind for this one.
+        ResetPendingDualScreenMod();
         InitializeKernel(system);
 
         const auto file = GetGameFileFromPath(virtual_filesystem, filepath);
@@ -438,6 +442,7 @@ struct System::Impl {
         kernel.ShutdownCores();
         mod_runtime.reset();
         dsmod_mailbox_address = dsmod_mailbox_size = 0;
+        ResetPendingDualScreenMod();
         services.reset();
         service_manager.reset();
         fs_controller.Reset();
@@ -513,6 +518,12 @@ struct System::Impl {
     std::optional<AudioCore::AudioCore> audio_core;
     std::optional<Memory::CheatEngine> cheat_engine;
     std::optional<Mods::ModRuntime> mod_runtime;
+    void ResetPendingDualScreenMod() {
+        pending_mod_build_id = {};
+        pending_mod_base = 0;
+        pending_mod_title_id = 0;
+        pending_mod_size = 0;
+    }
     std::array<u8, 0x20> pending_mod_build_id{};
     VAddr pending_mod_base{};
     u64 pending_mod_title_id{};
