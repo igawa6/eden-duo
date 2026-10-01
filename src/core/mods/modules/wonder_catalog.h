@@ -62,7 +62,6 @@ struct BymlNode {
     std::optional<std::string_view> String() const;
     std::optional<std::int64_t> Integer() const; // Int/UInt/Int64/UInt64 (u64 > INT64_MAX fails)
     std::optional<double> Number() const;        // any integer or float type
-    std::optional<bool> Boolean() const;
 };
 
 struct BymlEntry {
@@ -98,6 +97,8 @@ struct Catalog {
     std::map<std::pair<int, int>, int> world_course;
     /// (course id, area index) -> area resource ("Course001_Main", "Course001_Sub1", ...).
     std::map<std::pair<int, int>, std::string> area_resource;
+    // The maps below are for the host tool (BuildCatalog's `details`); the module does not read
+    // them, and area_label costs one extra BYML load per area.
     /// World id -> plain world name (Name_World WorldNameOrigin<NNN> for the world's
     /// WorldNameLabel "WorldName<NNN>"). Note: the data gives world 8 (Bowser's castle map,
     /// WorldNo_ "Castle") the label WorldName002, i.e. "Petal Isles".
@@ -117,17 +118,11 @@ struct Catalog {
     std::optional<int> CourseAt(int world, int key) const;
 };
 
-/// Builds (once per language) and caches the catalog. Thread-safe; concurrent callers wait for
-/// the first build. Deterministic: only fixed romfs paths are read, in a fixed order. Returns
-/// nullptr when the data is missing or malformed (fail closed); that result is cached too, so
-/// call ResetCatalogCache() when the running game (or its update) changes.
-std::shared_ptr<const Catalog> BuildCatalog(const WonderAssets::RomfsReader& read,
-                                            std::string_view lang = "USen");
-void ResetCatalogCache();
-
-/// Uncached build (used by the cache and the host tool).
-std::optional<Catalog> BuildCatalogUncached(const WonderAssets::RomfsReader& read,
-                                            std::string_view lang = "USen");
+/// Builds the catalog. Deterministic: only fixed romfs paths are read, in a fixed order.
+/// nullopt when the data is missing or malformed (fail closed). `details` also fills the
+/// tool-only maps (world names/titles/internal names, area labels).
+std::optional<Catalog> BuildCatalog(const WonderAssets::RomfsReader& read,
+                                    std::string_view lang = "USen", bool details = false);
 
 // ---------------------------------------------------------------- routes
 
@@ -147,25 +142,32 @@ struct RouteMarker {
     std::int8_t id{-1}; // Dynamic.SaveId when 0..127, else -1
     float x{};
     float y{};
+    float progress{}; // Route::Progress(x, y), precomputed
 };
 
 /// One area's progress rail (SPEC 5.3), from /BancMapUnit/<resource>.bcett.byml.zs Actors[].
 struct Route {
-    RoutePoint start;                       // first PlayerLocator
-    RoutePoint end;                         // the goal farther from start
+    RoutePoint start; // first PlayerLocator
     // Goal poles (ObjectGoalPole / ObjectGoalPoleOnlyPole; the Fort decoration and the
-    // knock-over ObjectGoalPoleDeadByBodyAttack are ignored), split by Dynamic.GoalID as the
-    // reference did: 0 -> normal, else secret. GoalID is only the save slot, so a course with a
-    // single goal can report it as "secret" (e.g. Course005_Main has GoalID 1).
-    std::optional<RoutePoint> normal_goal;
+    // knock-over ObjectGoalPoleDeadByBodyAttack are ignored). The lowest Dynamic.GoalID is the
+    // main goal (a course's only pole may carry any id, e.g. Course005_Main's is 1), the next one
+    // the secret exit. GoalID is the bit index into the save's goal/goal-seed bits.
+    RoutePoint normal_goal;
     std::optional<RoutePoint> secret_goal;
-    std::vector<RouteMarker> markers;       // sorted by (x, kind, id, y), capped at 64
+    int normal_goal_id{0};
+    int secret_goal_id{-1}; // -1 when the area has no secret pole
+    float normal_progress{1.0f}; // Progress() of each pole, precomputed
+    float secret_progress{};
+    std::vector<RoutePoint> path; // start -> main-route markers (nearest-first chain) -> main goal
+    float length{};               // path length in world units (> 0)
+    std::vector<RouteMarker> markers; // sorted by (x, kind, id, y), capped at 64
 
-    /// Projection of p on start->end, clamped to 0..1.
+    /// Distance along `path` at the path point nearest to (x, y), as a fraction of `length`
+    /// (0..1).
     float Progress(float x, float y) const;
 };
 
-/// nullopt when the area has no start or goal, or start and end coincide.
+/// nullopt when the area has no start or goal, or the start and the main goal coincide.
 std::optional<Route> BuildRoute(const WonderAssets::RomfsReader& read, std::string_view resource);
 
 } // namespace WonderCatalog

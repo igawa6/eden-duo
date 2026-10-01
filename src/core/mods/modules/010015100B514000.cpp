@@ -40,10 +40,14 @@ constexpr std::string_view BuildId =
 // Other game versions, accepted only to draw the "wrong pipe" page with the game's own art and
 // font: nothing is read from guest memory on these builds (none of the 1.2.1 addresses apply).
 // Add a build here (and to the package's module.build_ids) to give it the game-art page.
-constexpr std::array<std::string_view, 2> WrongPipeBuildIds{
-    "CD6E42AEE7934F4D8393CD43893AE25EDC83D338000000000000000000000000", // 1.0.0 (base)
-    "F91868B88F60D3D59009DB3389FDE314A6A32FCD000000000000000000000000", // 1.0.1 (v65536)
+struct WrongPipeBuild {
+    std::string_view build_id;
+    std::string_view version;
 };
+constexpr std::array<WrongPipeBuild, 2> WrongPipeBuilds{{
+    {"CD6E42AEE7934F4D8393CD43893AE25EDC83D338000000000000000000000000", "1.0.0"}, // base
+    {"F91868B88F60D3D59009DB3389FDE314A6A32FCD000000000000000000000000", "1.0.1"}, // v65536
+}};
 
 // One accessor per global: "adrp xN, page; ldr xN, [xN, #lo]" at a 1.2.1 code offset. The
 // module checks both opcodes (only the immediates may vary), decodes the global and compares it
@@ -79,58 +83,21 @@ constexpr u32 KeyMapLives = 0x7940dc77;
 constexpr u32 KeyPaused = 0x35db180e;
 constexpr u32 KeyPowerUp = 0xe811e5ef;
 
-// Saved per-course state (1.2.1). The current course slot is a GameData string-hash entry
-// (table at G+0x250, key below) holding murmur3_x86_32("CourseN"); slot = N-1. Per world W the
-// game's key table (rodata main+0x2B57BB8 + W*0x70, u32 keys) names int arrays in GameData's
-// int-array table (G+0x7F0) indexed by slot: [0] goals cleared (bit = GoalID), [4] goal seeds
-// earned (same bits), [5] Wonder-effect seed (bit0), [9] 10-flower coins (bits 0-2).
-constexpr u32 KeyCourseSlot = 0xdf82e9ab;
-constexpr u32 CourseSlotInvalid = 0x7e3d1e46; // murmur3("Invalid"): on the world map
+// GameData hash tables share one layout at G+<table>: {u32 count; entries*@8; keys*@0x10 ({u32
+// key, u32 index} pairs, linear probing); u32 cap@0x1c}.
+constexpr VAddr GameDataInts = 0xd0;      // 0x28-byte entries, value at +0x1c
+constexpr VAddr GameDataRefs = 0x130;     // 0x40-byte entries, u32 array (count +0x20, data [+0x28])
+constexpr VAddr GameDataIntArrays = 0x7f0; // 0x40-byte entries, same array layout
+
+// Saved per-course state (1.2.1). Per world W the game's key table (rodata main+0x2B57BB8 +
+// W*0x70, u32 keys) names int arrays in GameData's int-array table indexed by the course's
+// world-map key: [4] goal seeds earned (bit = GoalID), [5] Wonder-effect seed (bit0).
 constexpr VAddr WorldKeyTable = 0x2B57BB8;
 constexpr VAddr WorldKeyStride = 0x70;
-
-constexpr u32 Murmur3(std::string_view text, u32 seed = 0) {
-    u32 h = seed;
-    const size_t n = text.size();
-    size_t i = 0;
-    const auto rotl = [](u32 x, int r) { return (x << r) | (x >> (32 - r)); };
-    for (; i + 4 <= n; i += 4) {
-        u32 k = u32(u8(text[i])) | u32(u8(text[i + 1])) << 8 | u32(u8(text[i + 2])) << 16 |
-                u32(u8(text[i + 3])) << 24;
-        k *= 0xcc9e2d51u;
-        k = rotl(k, 15);
-        k *= 0x1b873593u;
-        h ^= k;
-        h = rotl(h, 13);
-        h = h * 5 + 0xe6546b64u;
-    }
-    u32 k = 0;
-    switch (n & 3) {
-    case 3:
-        k ^= u32(u8(text[i + 2])) << 16;
-        [[fallthrough]];
-    case 2:
-        k ^= u32(u8(text[i + 1])) << 8;
-        [[fallthrough]];
-    case 1:
-        k ^= u32(u8(text[i]));
-        k *= 0xcc9e2d51u;
-        k = rotl(k, 15);
-        k *= 0x1b873593u;
-        h ^= k;
-    }
-    h ^= static_cast<u32>(n);
-    h ^= h >> 16;
-    h *= 0x85ebca6bu;
-    h ^= h >> 13;
-    h *= 0xc2b2ae35u;
-    h ^= h >> 16;
-    return h;
-}
-static_assert(Murmur3("Invalid") == CourseSlotInvalid, "murmur3 check");
+constexpr int SavedGoalSeeds = 4, SavedWonderSeed = 5;
 
 struct SavedCourse {
-    u32 goals{}, goal_seeds{}, wonder_seed{};
+    u32 goal_seeds{}, wonder_seed{};
 };
 
 constexpr std::array<int, 12> CharacterMap{0, 1, 2, 3, 4, 5, 6, 11, 7, 8, 9, 10};
@@ -191,6 +158,8 @@ WonderAssets::Image PadSquare(const WonderAssets::Image& in) {
 
 // Separable box blur, `passes` times (three passes approximate a Gaussian), edges clamped.
 WonderAssets::Image Blur(const WonderAssets::Image& in, int radius, int passes) {
+    if (in.width == 0 || in.height == 0 || in.rgba.size() < size_t{in.width} * in.height * 4)
+        return in;
     WonderAssets::Image a = in, b = in;
     const int w = static_cast<int>(in.width), h = static_cast<int>(in.height);
     const auto px = [&](WonderAssets::Image& im, int x, int y) {
@@ -328,22 +297,6 @@ std::optional<WonderAssets::Image> GenerateArt(std::string_view key) {
             }
         return im;
     }
-    if (key == "gen/check") { // white tick (the game font has no U+2713), anti-aliased strokes
-        im = {96, 96, std::vector<u8>(96u * 96u * 4)};
-        const auto seg = [](float px, float py, float ax, float ay, float bx, float by) {
-            const float vx = bx - ax, vy = by - ay;
-            const float t = std::clamp(((px - ax) * vx + (py - ay) * vy) / (vx * vx + vy * vy),
-                                       0.0f, 1.0f);
-            return std::hypot(px - (ax + t * vx), py - (ay + t * vy));
-        };
-        for (u32 y = 0; y < im.height; ++y)
-            for (u32 x = 0; x < im.width; ++x) {
-                const float px = x + 0.5f, py = y + 0.5f;
-                const float d = std::min(seg(px, py, 22, 50, 40, 68), seg(px, py, 40, 68, 74, 28));
-                put(im, x, y, C{255, 255, 255}, std::clamp(5.5f - d, 0.0f, 1.0f));
-            }
-        return im;
-    }
     if (key == "gen/fade_cream") { // transparent at the top -> cream at the bottom
         im = {4, 256, std::vector<u8>(4u * 256u * 4)};
         for (u32 y = 0; y < im.height; ++y)
@@ -365,47 +318,56 @@ std::optional<WonderAssets::Image> GenerateArt(std::string_view key) {
 
 class Reader {
 public:
-    explicit Reader(const EdenDsmodHostApi& api)
-        : host{api}, romfs{MakeRomfsReader(api)}, supported{BuildHex(api) == BuildId} {
-        // Desktop test switch: show the wrong-pipe page on 1.2.1 (the 1.0.0 path, forced).
-        if (const char* test = std::getenv("EDEN_WONDER_TEST_WRONG_BUILD"); test && *test == '1')
-            supported = false;
+    explicit Reader(const EdenDsmodHostApi& api) : host{api}, romfs{MakeRomfsReader(api)} {
+        const std::string build = BuildHex(api);
+        supported = build == BuildId;
+        for (const auto& w : WrongPipeBuilds)
+            if (build == w.build_id)
+                game_version = w.version;
     }
     // Course/world names and map tables come from the player's romfs. The host's romfs chain is
-    // not open yet when create() runs, so the build starts from the first sample, runs once off
-    // the tick thread, and is retried (cache reset) a few seconds after a failed attempt.
+    // not open yet when create() runs, so the build starts from the first sample and runs off the
+    // tick thread. A failed build is retried a few seconds later, at most CatalogAttempts times
+    // (and not at all without a host clock).
     void StartCatalog() {
+        constexpr int CatalogAttempts = 5;
         {
             std::scoped_lock lock{catalog_mutex};
             if (catalog_state == 1 || catalog_running)
                 return;
-            if (catalog_state == 2 && host.get_tick && host.get_tick(host.userdata) < catalog_retry_tick)
+            if (catalog_state == 2 &&
+                (!host.get_tick || catalog_attempts >= CatalogAttempts ||
+                 host.get_tick(host.userdata) < catalog_retry_tick))
                 return;
             catalog_running = true;
+            ++catalog_attempts;
+            if (host.get_tick)
+                catalog_retry_tick = host.get_tick(host.userdata) + 5 * 60;
         }
         if (catalog_thread.joinable())
             catalog_thread.join();
-        WonderCatalog::ResetCatalogCache();
         catalog_thread = std::thread([this] {
-            auto built = WonderCatalog::BuildCatalog(romfs);
+            std::shared_ptr<const WonderCatalog::Catalog> built;
+            if (auto c = WonderCatalog::BuildCatalog(romfs))
+                built = std::make_shared<const WonderCatalog::Catalog>(std::move(*c));
             auto built_routes = std::make_shared<std::map<std::string, WonderCatalog::Route>>();
             if (built)
-                for (const auto& [key, resource] : built->area_resource)
+                for (const auto& [key, resource] : built->area_resource) {
+                    if (stopping)
+                        break;
                     if (!built_routes->contains(resource))
                         if (auto route = WonderCatalog::BuildRoute(romfs, resource))
                             built_routes->emplace(resource, std::move(*route));
+                }
             std::scoped_lock lock{catalog_mutex};
             catalog_state = built ? 1 : 2;
             catalog = std::move(built);
             routes = std::move(built_routes);
             catalog_running = false;
         });
-        if (host.get_tick) {
-            std::scoped_lock lock{catalog_mutex};
-            catalog_retry_tick = host.get_tick(host.userdata) + 5 * 60;
-        }
     }
     ~Reader() {
+        stopping = true;
         if (catalog_thread.joinable())
             catalog_thread.join();
     }
@@ -500,8 +462,9 @@ private:
         std::scoped_lock lock{catalog_mutex};
         return routes;
     }
-    void PublishRail(const WonderCatalog::Route& route, float x, float y, int flowers, int world);
-    bool MarkerObtained(const WonderCatalog::RouteMarker& m, float x, int flowers);
+    void PublishRail(const WonderCatalog::Route& route, float x, float y, int flowers, int world,
+                     int course);
+    bool MarkerObtained(const WonderCatalog::RouteMarker& m, int flowers) const;
     std::shared_ptr<const WonderCatalog::Catalog> Catalog() const {
         std::scoped_lock lock{catalog_mutex};
         return catalog;
@@ -514,15 +477,20 @@ private:
 
     WonderAssets::Decoder assets;
     WonderAssets::RomfsReader romfs;
-    bool supported{}; ///< false on the base game: wrong-pipe page only, no memory reads
+    bool supported{}; ///< false on older builds: wrong-pipe page only, no memory reads
+    std::string_view game_version{"?"}; ///< version shown on the wrong-pipe page
     WonderAssets::AstcDecoder astc{};
     mutable std::mutex catalog_mutex;
     std::shared_ptr<const WonderCatalog::Catalog> catalog;
     std::shared_ptr<const std::map<std::string, WonderCatalog::Route>> routes;
     std::optional<SavedCourse> saved; ///< this tick's saved state for the current course
+    std::string reached_key;            ///< course + area of the current visit
+    float reached_x{-1e9f};             ///< furthest player x in that area this visit
     int catalog_state{}; // 0 building, 1 ready, 2 failed (guarded by catalog_mutex)
     bool catalog_running{};
+    int catalog_attempts{};
     u64 catalog_retry_tick{};
+    std::atomic<bool> stopping{}; ///< destructor: the catalog thread skips the remaining routes
     std::thread catalog_thread;
     template <typename T>
     std::optional<T> Read(VAddr address) const {
@@ -549,8 +517,10 @@ private:
         return Ptr(host.main_base + global);
     }
 
+    std::optional<VAddr> GameDataEntry(VAddr table, u32 stride, u32 key) const;
+    std::optional<u32> GameDataArray(VAddr table, u32 key, u32 index) const;
     std::optional<u32> GameDataInt(u32 key) const;
-    std::optional<SavedCourse> SavedCourseState(int world) const;
+    std::optional<SavedCourse> SavedCourseState(int world, int course) const;
     std::optional<u32> GameDataRef(u32 key) const;
     std::optional<bool> PausedFlag() const;
     std::optional<std::pair<u32, u32>> SceneState() const;
@@ -656,17 +626,18 @@ bool Reader::Resolve() {
     return true;
 }
 
-// Game-data table A: linear-probed {u32 key, u32 index} array over 0x28-byte entries, value at
-// +0x1c. Mirrors the game's own getInt.
-std::optional<u32> Reader::GameDataInt(u32 key) const {
+// Entry address for `key` in the GameData hash table at G+table, mirroring the game's own getters
+// (linear probing, an empty key ends the chain).
+std::optional<VAddr> Reader::GameDataEntry(VAddr table, u32 stride, u32 key) const {
     const auto g = Root(game_data);
     if (!g)
         return std::nullopt;
-    const auto keys = Ptr(*g + 0xe0);
-    const auto cap = Read<u32>(*g + 0xec);
-    const auto count = Read<u32>(*g + 0xd0);
-    const auto entries = Ptr(*g + 0xd8);
-    if (!keys || !cap || !count || !entries || *cap == 0 || *cap > 0x10000 || *count == 0 ||
+    const VAddr t = *g + table;
+    const auto count = Read<u32>(t);
+    const auto entries = Ptr(t + 0x8);
+    const auto keys = Ptr(t + 0x10);
+    const auto cap = Read<u32>(t + 0x1c);
+    if (!count || !entries || !keys || !cap || *cap == 0 || *cap > 0x10000 || *count == 0 ||
         *count > 0x10000)
         return std::nullopt;
     const u32 probes = std::min<u32>(*cap, 256);
@@ -679,55 +650,52 @@ std::optional<u32> Reader::GameDataInt(u32 key) const {
             const auto idx = Read<u32>(*keys + u64{slot} * 8 + 4);
             if (!idx || *idx >= *count)
                 return std::nullopt;
-            return Read<u32>(*entries + u64{*idx} * 0x28 + 0x1c);
+            return *entries + u64{*idx} * stride;
         }
     }
     return std::nullopt;
 }
 
-std::optional<SavedCourse> Reader::SavedCourseState(int world) const {
+// Element `index` of a u32-array entry (0x40-byte entries: count +0x20, data [+0x28]).
+std::optional<u32> Reader::GameDataArray(VAddr table, u32 key, u32 index) const {
+    const auto e = GameDataEntry(table, 0x40, key);
+    if (!e)
+        return std::nullopt;
+    const auto len = Read<u32>(*e + 0x20);
+    const auto vals = Ptr(*e + 0x28);
+    if (!len || !vals || *len > 0x1000 || index >= *len)
+        return std::nullopt;
+    return Read<u32>(*vals + u64{index} * 4);
+}
+
+std::optional<u32> Reader::GameDataInt(u32 key) const {
+    const auto e = GameDataEntry(GameDataInts, 0x28, key);
+    return e ? Read<u32>(*e + 0x1c) : std::nullopt;
+}
+
+// The array holds 4 values in 1.0.0 and 12 in 1.2.1 (lives, verified live); element 0 is the value
+// the HUD shows.
+std::optional<u32> Reader::GameDataRef(u32 key) const {
+    return GameDataArray(GameDataRefs, key, 0);
+}
+
+std::optional<SavedCourse> Reader::SavedCourseState(int world, int course) const {
     if (world < 1 || world > 9)
         return std::nullopt;
-    const auto g = Root(game_data);
-    if (!g)
+    // The save slot is the course's key on its world map (array index = Key, verified: W1's
+    // non-zero slots are exactly its keys 1..13, 20..22, 30, 40, 50..52, 60, 79), taken from the
+    // catalog's world tables. (The GameData "current course" string is not reliable: it can still
+    // name the previously selected course after travelling through the Courses menu.)
+    const auto cat = Catalog();
+    if (!cat)
         return std::nullopt;
-    // Generic GameData table at G+off: {u32 count; entries*@8; keys*@0x10; u32 cap@0x1c}.
-    const auto lookup = [&](VAddr table, u32 stride, u32 key) -> std::optional<VAddr> {
-        const auto count = Read<u32>(table);
-        const auto entries = Ptr(table + 0x8);
-        const auto keys = Ptr(table + 0x10);
-        const auto cap = Read<u32>(table + 0x1c);
-        if (!count || !entries || !keys || !cap || *cap == 0 || *cap > 0x10000 ||
-            *count > 0x10000)
-            return std::nullopt;
-        for (u32 i = 0; i < std::min<u32>(*cap, 256); ++i) {
-            const u32 slot = static_cast<u32>((u64{key % *cap} + i) % *cap);
-            const auto k = Read<u32>(*keys + u64{slot} * 8);
-            if (!k || *k == 0)
-                return std::nullopt;
-            if (*k == key) {
-                const auto idx = Read<u32>(*keys + u64{slot} * 8 + 4);
-                if (!idx || *idx >= *count)
-                    return std::nullopt;
-                return *entries + u64{*idx} * stride;
-            }
-        }
-        return std::nullopt;
-    };
-    const auto cur = lookup(*g + 0x250, 0x38, KeyCourseSlot);
-    const auto hash = cur ? Read<u32>(*cur + 0x1c) : std::nullopt;
-    if (!hash || *hash == CourseSlotInvalid)
-        return std::nullopt;
-    static const auto slot_hashes = [] {
-        std::array<u32, 80> h{};
-        for (int n = 1; n <= 80; ++n)
-            h[n - 1] = Murmur3("Course" + std::to_string(n));
-        return h;
-    }();
     int slot = -1;
-    for (int i = 0; i < 80; ++i)
-        if (slot_hashes[i] == *hash)
-            slot = i;
+    for (auto it = cat->world_course.lower_bound({world, 0});
+         it != cat->world_course.end() && it->first.first == world; ++it)
+        if (it->second == course && it->first.second >= 0 && it->first.second <= 80) {
+            slot = it->first.second;
+            break;
+        }
     if (slot < 0)
         return std::nullopt;
     const VAddr keys = host.main_base + WorldKeyTable + u64(world) * WorldKeyStride;
@@ -735,53 +703,12 @@ std::optional<SavedCourse> Reader::SavedCourseState(int world) const {
         const auto key = Read<u32>(keys + u64(field) * 4);
         if (!key || *key == 0)
             return std::nullopt;
-        const auto e = lookup(*g + 0x7f0, 0x40, *key);
-        if (!e)
-            return std::nullopt;
-        const auto len = Read<u32>(*e + 0x20);
-        const auto vals = Ptr(*e + 0x28);
-        if (!len || !vals || static_cast<u32>(slot) >= *len)
-            return std::nullopt;
-        return Read<u32>(*vals + u64(slot) * 4);
+        return GameDataArray(GameDataIntArrays, *key, static_cast<u32>(slot));
     };
-    const auto goals = value(0), seeds = value(4), wonder = value(5);
-    if (!goals || !seeds || !wonder)
+    const auto seeds = value(SavedGoalSeeds), wonder = value(SavedWonderSeed);
+    if (!seeds || !wonder)
         return std::nullopt;
-    return SavedCourse{*goals, *seeds, *wonder};
-}
-
-// Game-data table B: entries of 0x40 bytes; +0x20 is the element count of the u32 array at
-// [+0x28] (4 in 1.0.0, 12 in 1.2.1 for lives, verified live). Element 0 is the value the HUD shows.
-std::optional<u32> Reader::GameDataRef(u32 key) const {
-    const auto g = Root(game_data);
-    if (!g)
-        return std::nullopt;
-    const auto keys = Ptr(*g + 0x140);
-    const auto cap = Read<u32>(*g + 0x14c);
-    const auto count = Read<u32>(*g + 0x130);
-    const auto entries = Ptr(*g + 0x138);
-    if (!keys || !cap || !count || !entries || *cap == 0 || *cap > 0x10000 || *count == 0 ||
-        *count > 0x10000)
-        return std::nullopt;
-    const u32 probes = std::min<u32>(*cap, 256);
-    for (u32 i = 0; i < probes; ++i) {
-        const u32 slot = static_cast<u32>((u64{key % *cap} + i) % *cap);
-        const auto k = Read<u32>(*keys + u64{slot} * 8);
-        if (!k || *k == 0)
-            return std::nullopt;
-        if (*k == key) {
-            const auto idx = Read<u32>(*keys + u64{slot} * 8 + 4);
-            if (!idx || *idx >= *count)
-                return std::nullopt;
-            const VAddr e = *entries + u64{*idx} * 0x40;
-            const auto elements = Read<u32>(e + 0x20);
-            const auto value = Deref(e, 0x28);
-            if (!elements || *elements == 0 || *elements > 64 || !value)
-                return std::nullopt;
-            return Read<u32>(*value);
-        }
-    }
-    return std::nullopt;
+    return SavedCourse{*seeds, *wonder};
 }
 
 std::optional<bool> Reader::PausedFlag() const {
@@ -988,16 +915,14 @@ std::optional<std::pair<float, float>> Reader::Position() const {
     const auto q = Deref(Root(camera_root), 0x0);
     if (!q)
         return std::nullopt;
-    std::array<float, 6> f{};
-    for (size_t i = 0; i < f.size(); ++i) {
-        const auto v = Read<float>(*q + 0x10 + i * 4);
-        if (!v || !std::isfinite(*v) || std::fabs(*v) >= 100000.0f)
-            return std::nullopt;
-        f[i] = *v;
-    }
-    if (std::fabs(f[0] - f[3]) > 64.0f || std::fabs(f[1] - f[4]) > 64.0f)
+    const auto f = Read<std::array<float, 6>>(*q + 0x10);
+    if (!f || !std::all_of(f->begin(), f->end(),
+                           [](float v) { return std::isfinite(v) && std::fabs(v) < 100000.0f; }))
         return std::nullopt;
-    return std::pair{f[0], f[1]};
+    const auto& v = *f;
+    if (std::fabs(v[0] - v[3]) > 64.0f || std::fabs(v[1] - v[4]) > 64.0f)
+        return std::nullopt;
+    return std::pair{v[0], v[1]};
 }
 
 // PLAYER_ROOT->+0x50 is the loaded stage list: entry 0 is the whole-course stage
@@ -1043,14 +968,10 @@ std::optional<int> Reader::FlowerCoinMask() const {
     const auto o = Deref(CourseProgress(), 0x38);
     if (!o)
         return std::nullopt;
-    int mask = 0;
-    for (int i = 0; i < 3; ++i) {
-        const auto c = Read<u8>(*o + 0x3ca + i);
-        if (!c || *c > 1)
-            return std::nullopt;
-        mask |= *c << i;
-    }
-    return mask;
+    const auto c = Read<std::array<u8, 3>>(*o + 0x3ca);
+    if (!c || (*c)[0] > 1 || (*c)[1] > 1 || (*c)[2] > 1)
+        return std::nullopt;
+    return (*c)[0] | (*c)[1] << 1 | (*c)[2] << 2;
 }
 
 std::optional<int> Reader::RunSeeds() const {
@@ -1109,11 +1030,8 @@ bool Reader::WorldMap(int& selected_course_key) {
         else
             hi = mid;
     }
-    I64("wonder.dbg.map_key", static_cast<s64>(*key));
-    if (!hit) {
-        I64("wonder.dbg.map_stage", 1);
+    if (!hit)
         return true;
-    }
     const auto k = Read<s32>(*hit + 0x48);
     const auto ready = Read<u8>(host.main_base + course_table - CourseTableReadyDelta);
     // In 1.2.1 the table pointer targets the main image's own .bss (0x83B7xxxx under Dynarmic),
@@ -1122,14 +1040,9 @@ bool Reader::WorldMap(int& selected_course_key) {
     if (const auto t = Read<u64>(host.main_base + course_table);
         t && (Sane(*t) || dsmod_sdk::InMain(host.main_base, host.main_size, *t, 0x51 * 4)))
         table = *t;
-    I64("wonder.dbg.map_k", k ? *k : -999);
-    if (!k || *k < 0 || *k > 0x50 || !ready || !(*ready & 1) || !table) {
-        I64("wonder.dbg.map_stage", 2);
+    if (!k || *k < 0 || *k > 0x50 || !ready || !(*ready & 1) || !table)
         return true;
-    }
     const auto v = Read<s32>(*table + u64(*k) * 4);
-    I64("wonder.dbg.map_v", v ? *v : -999);
-    I64("wonder.dbg.map_stage", 3);
     if (v && *v >= 1 && *v <= 0x50 && Read<u64>(*p5 + 0x760) == key)
         selected_course_key = *v;
     return true;
@@ -1143,7 +1056,7 @@ void Reader::Sample() {
         I64("wonder.status", StatusUnsupported);
         I64("wonder.page", PageSetup);
         I64("wonder.wrong_build", 1);
-        Text("wonder.game_version", "1.0.0");
+        Text("wonder.game_version_line", "Your game is Ver. " + std::string{game_version} + ".");
         return;
     }
     frame_i64.clear();
@@ -1152,9 +1065,10 @@ void Reader::Sample() {
     SampleValues();
     if (last_status == StatusCourse || last_status == StatusWorldMap ||
         last_status == StatusTransition) {
-        held_i64 = frame_i64;
-        held_f64 = frame_f64;
-        held_text = frame_text;
+        // This frame becomes the held one (the old held maps are cleared next tick).
+        held_i64.swap(frame_i64);
+        held_f64.swap(frame_f64);
+        held_text.swap(frame_text);
     } else if ((last_status == StatusLoading || last_status == StatusResolving ||
                 last_status == StatusMiss) &&
                (last_page == PageCourse || last_page == PageMap)) {
@@ -1194,12 +1108,6 @@ void Reader::Sample() {
 
 void Reader::SampleValues() {
     StartCatalog();
-    {
-        std::scoped_lock lock{catalog_mutex};
-        I64("wonder.dbg.catalog", catalog_state);
-        I64("wonder.dbg.catalog_courses", catalog ? static_cast<s64>(catalog->course_name.size()) : 0);
-        I64("wonder.dbg.catalog_worlds", catalog ? static_cast<s64>(catalog->world_course.size()) : 0);
-    }
     if (!Resolve()) {
         Status(StatusUnsupported);
         return;
@@ -1221,8 +1129,6 @@ void Reader::SampleValues() {
     } else {
         status = -1; // decided below
     }
-    I64("wonder.scene.s1", scene ? scene->first : -1);
-    I64("wonder.scene.s2", scene ? scene->second : -1);
     if (status != -1) {
         Status(status);
         return;
@@ -1250,7 +1156,7 @@ void Reader::SampleValues() {
         I64("wonder.lives", l && *l <= 99 ? s64{*l} : -1);
         I64("wonder.gold", g && *g <= 99 ? s64{*g} : -1);
         I64("wonder.purple", p && *p <= 999 ? s64{*p} : -1);
-        I64("wonder.map.selected_course", selected);
+        reached_key.clear();
         const auto cat = Catalog();
         const auto course =
             cat && w > 0 && selected > 0 ? cat->CourseAt(w, selected) : std::nullopt;
@@ -1303,18 +1209,13 @@ void Reader::SampleValues() {
     }
     I64("wonder.shelf", named ? 1 : 0);
     I64("wonder.no_shelf", named ? 0 : 1);
-    F64("wonder.pos.x", pos->first);
-    F64("wonder.pos.y", pos->second);
     const auto flowers = FlowerCoinMask();
-    I64("wonder.flower_coins", flowers ? *flowers : -1);
-    I64("wonder.flowers_known", flowers ? 1 : 0);
     for (int i = 0; i < 3; ++i) {
         static constexpr std::array<const char*, 3> names{"wonder.flower.0", "wonder.flower.1",
                                                            "wonder.flower.2"};
         I64(names[i], flowers && (*flowers >> i & 1) ? 1 : 0);
     }
     const auto area = AreaName();
-    I64("wonder.area_known", area ? 1 : 0);
     // One line, laid out by the text renderer: "COURSE 005 \u2022 MAIN AREA" / "... SUB-AREA 2".
     char course_line[64];
     std::snprintf(course_line, sizeof(course_line), "COURSE %03d", *course);
@@ -1330,8 +1231,14 @@ void Reader::SampleValues() {
     Text("wonder.course_line", line);
     if (area) {
         if (const auto all = Routes()) {
+            const std::string key = std::to_string(*course) + "/" + *area;
+            if (key != reached_key) {
+                reached_key = key;
+                reached_x = pos->first;
+            }
+            reached_x = std::max(reached_x, pos->first);
             if (const auto r = all->find(*area); r != all->end())
-                PublishRail(r->second, pos->first, pos->second, flowers ? *flowers : 0, w);
+                PublishRail(r->second, pos->first, pos->second, flowers ? *flowers : 0, w, *course);
         }
     }
     const auto seeds = RunSeeds();
@@ -1340,81 +1247,107 @@ void Reader::SampleValues() {
 }
 
 // Whether a rail marker counts as obtained. 10-flower coins: the game's own per-course bytes
-// (including coins from earlier runs, as the game shows them). Seeds and checkpoints: pending
-// the course-state flags (until then they show as not obtained).
-bool Reader::MarkerObtained(const WonderCatalog::RouteMarker& m, float, int flowers) {
+// (including coins from earlier runs, as the game shows them). Wonder seed: the save's bit.
+// Checkpoints trigger when Mario reaches them and stay for the rest of the visit, retries
+// included: the furthest x reached in this area of this visit (reset on the world map / new area).
+bool Reader::MarkerObtained(const WonderCatalog::RouteMarker& m, int flowers) const {
     using K = WonderCatalog::RouteMarker;
-    if (m.kind == K::BigFlowerCoin)
+    switch (m.kind) {
+    case K::BigFlowerCoin:
         return m.id >= 0 && m.id < 3 && (flowers >> m.id & 1);
-    if (m.kind == K::WonderSeed)
+    case K::WonderSeed:
         return saved && (saved->wonder_seed & 1);
-    return false; // checkpoints: no per-attempt flag found yet
+    case K::Checkpoint:
+        return reached_x >= m.x;
+    default:
+        return false;
+    }
 }
 
 // Progress rail: positions are published in rail pixels (0..RailWidth) so the manifest can place
 // widgets with x_bind directly. Markers are the area's own actors (10-flower coins, Wonder
-// Flower, Wonder Seed, checkpoints) projected onto the start -> goal line like the player.
+// Flower, Wonder Seed, checkpoints), measured along the route path like the player.
 constexpr int RailWidth = 1000;
 constexpr int RailMarkers = 12;
 
 void Reader::PublishRail(const WonderCatalog::Route& route, float x, float y, int flowers,
-                         int world) {
-    // Per marker: x, on, k<kind> (kind gate), k<kind>got / k<kind>miss (obtained or not).
+                         int world, int course) {
+    // Per marker: x, on, k1..k4 (kind gates), then got/miss gates for flower coins (k1), the
+    // Wonder seed (k3) and checkpoints (k4).
     static const auto names = [] {
-        std::array<std::array<std::string, 11>, RailMarkers> n{};
+        std::array<std::array<std::string, 12>, RailMarkers> n{};
         for (int i = 0; i < RailMarkers; ++i) {
             const std::string b = "wonder.rail.m." + std::to_string(i) + ".";
-            n[i] = {b + "x",      b + "on",     b + "k1",     b + "k2",     b + "k3", b + "k4",
-                    b + "k1got", b + "k1miss", b + "k3got", b + "k3miss", b + "k4got"};
+            n[i] = {b + "x",     b + "on",     b + "k1",    b + "k2",     b + "k3",    b + "k4",
+                    b + "k1got", b + "k1miss", b + "k3got", b + "k3miss", b + "k4got", b + "k4miss"};
         }
         return n;
     }();
-    static const auto miss4 = [] {
-        std::array<std::string, RailMarkers> n{};
-        for (int i = 0; i < RailMarkers; ++i)
-            n[i] = "wonder.rail.m." + std::to_string(i) + ".k4miss";
-        return n;
-    }();
+    const auto rail_px = [](float progress) {
+        return static_cast<int>(std::lround(progress * RailWidth));
+    };
     const float progress = route.Progress(x, y);
+    const int player_px = rail_px(progress);
     I64("wonder.rail.valid", 1);
-    I64("wonder.rail.px", static_cast<s64>(std::lround(progress * RailWidth)));
+    I64("wonder.rail.px", player_px);
     I64("wonder.rail.pct", static_cast<s64>(std::floor(progress * 100.0f)));
-    // Goal seeds and the Wonder-effect seed, from the save (persist across reruns).
-    saved = SavedCourseState(world);
-    I64("wonder.rail.goal_got", saved && (saved->goal_seeds & 1) ? 1 : 0);
-    I64("wonder.rail.secret_got", saved && (saved->goal_seeds & 2) ? 1 : 0);
+    // Goal seeds and the Wonder-effect seed, from the save (persist across reruns). Each pole's
+    // seed is the save bit of its own GoalID.
+    saved = SavedCourseState(world, course);
+    const auto seed_bit = [&](int id) {
+        return saved && id >= 0 && id < 32 && (saved->goal_seeds >> id & 1) ? 1 : 0;
+    };
+    const int goal_px = rail_px(route.normal_progress);
+    I64("wonder.rail.goal_got", seed_bit(route.normal_goal_id));
+    I64("wonder.rail.goal_px", goal_px);
+    I64("wonder.rail.secret_got", seed_bit(route.secret_goal_id));
+    int player_dy = 0;
     if (route.secret_goal) {
-        const float g = route.Progress(route.secret_goal->x, route.secret_goal->y);
+        // Secret branch lane: leaves the rail BranchLead px before the nearer goal and runs up to
+        // the secret pole (BranchSeg-px segments right of the 36-px riser, so the manifest needs
+        // only a count).
+        constexpr int BranchLead = 120, BranchSeg = 20, RiserHalf = 18, BranchDy = -100;
+        const int secret_px = rail_px(route.secret_progress);
+        const int branch_px = std::max(0, std::min(goal_px, secret_px) - BranchLead);
         I64("wonder.rail.secret", 1);
-        I64("wonder.rail.secret_px", static_cast<s64>(std::lround(g * RailWidth)));
+        I64("wonder.rail.secret_px", secret_px);
+        I64("wonder.rail.branch_px", branch_px);
+        I64("wonder.rail.branch_n", std::max(1, (secret_px - branch_px - RiserHalf) / BranchSeg));
+        // Player on the secret branch: past the branch point and nearer the secret pole than the
+        // main goal -> the manifest lifts the player icon onto the lane.
+        const auto d2 = [&](const WonderCatalog::RoutePoint& q) {
+            return (q.x - x) * (q.x - x) + (q.y - y) * (q.y - y);
+        };
+        if (player_px > branch_px && d2(*route.secret_goal) < d2(route.normal_goal))
+            player_dy = BranchDy;
     }
-    int shown = 0;
-    for (const auto& m : route.markers) {
-        if (shown == RailMarkers)
-            break;
-        const int i = shown++;
+    I64("wonder.rail.player_dy", player_dy);
+    using K = WonderCatalog::RouteMarker;
+    const int count = std::min<int>(RailMarkers, static_cast<int>(route.markers.size()));
+    for (int i = 0; i < count; ++i) {
+        const auto& m = route.markers[i];
         const auto& n = names[i];
-        I64(n[0].c_str(), static_cast<s64>(std::lround(route.Progress(m.x, m.y) * RailWidth)));
+        const bool got = MarkerObtained(m, flowers);
+        I64(n[0].c_str(), rail_px(m.progress));
         I64(n[1].c_str(), 1);
         for (int k = 1; k <= 4; ++k)
             I64(n[1 + k].c_str(), m.kind == k ? 1 : 0);
-        const bool got = MarkerObtained(m, x, flowers);
-        using K = WonderCatalog::RouteMarker;
         I64(n[6].c_str(), m.kind == K::BigFlowerCoin && got ? 1 : 0);
         I64(n[7].c_str(), m.kind == K::BigFlowerCoin && !got ? 1 : 0);
         I64(n[8].c_str(), m.kind == K::WonderSeed && got ? 1 : 0);
         I64(n[9].c_str(), m.kind == K::WonderSeed && !got ? 1 : 0);
         I64(n[10].c_str(), m.kind == K::Checkpoint && got ? 1 : 0);
-        I64(miss4[i].c_str(), m.kind == K::Checkpoint && !got ? 1 : 0);
+        I64(n[11].c_str(), m.kind == K::Checkpoint && !got ? 1 : 0);
     }
 }
 
 EdenDsmodBool SupportsBuild(const char* build_id) {
-    // 1.2.1 is read; 1.0.0 only gets the wrong-pipe page (art and font, no memory reads).
+    // 1.2.1 is read; older builds only get the wrong-pipe page (art and font, no memory reads).
     if (!build_id)
         return EDEN_DSMOD_FALSE;
     const std::string_view b{build_id};
-    return b == BuildId || std::ranges::find(WrongPipeBuildIds, b) != WrongPipeBuildIds.end()
+    return b == BuildId || std::ranges::any_of(WrongPipeBuilds,
+                                               [&](const auto& w) { return w.build_id == b; })
                ? EDEN_DSMOD_TRUE
                : EDEN_DSMOD_FALSE;
 }

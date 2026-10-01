@@ -176,7 +176,7 @@ std::shared_ptr<const FontAtlas> Build(const WonderAssets::RomfsReader& read, co
     if (offset < 0 || !stbtt_InitFont(&info, otf->data(), offset))
         return nullptr;
 
-    // Cap height in font units: the top of 'H' (fallbacks: 'E', then 70% of the ascent).
+    // Cap height in font units: the top of 'H' (fallbacks: 'E', 'I', then 70% of the ascent).
     float cap_units = 0.0f;
     for (const int probe : {'H', 'E', 'I'}) {
         int x0, y0, x1, y1;
@@ -350,7 +350,9 @@ std::shared_ptr<const FontAtlas> BuildFontAtlas(const WonderAssets::RomfsReader&
     } catch (...) {
         built = nullptr;
     }
-    cache.emplace(key, built);
+    // Only successes are cached: a failure can be the romfs not being readable yet.
+    if (built)
+        cache.emplace(key, built);
     return built;
 }
 

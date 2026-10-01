@@ -423,11 +423,6 @@ std::optional<double> BymlNode::Number() const {
         return std::nullopt;
     }
 }
-std::optional<bool> BymlNode::Boolean() const {
-    if (type != Type::Bool)
-        return std::nullopt;
-    return num.b;
-}
 
 // ------------------------------------------------------------------ parsers
 
@@ -513,7 +508,8 @@ std::optional<std::map<std::string, std::string>> ParseMsbt(std::span<const u8> 
             for (u32 k = 0; k < buckets; ++k) {
                 const u32 n = c.U32(b + 4 + k * 8);
                 std::size_t p = b + c.U32(b + 8 + k * 8);
-                if (n > size)
+                // Each label takes >= 5 bytes, so a well-formed block holds at most size / 5.
+                if (n > size || labels.size() + n > size / 5)
                     return std::nullopt;
                 for (u32 j = 0; j < n; ++j) {
                     if (p >= end)
@@ -566,8 +562,8 @@ std::optional<int> Catalog::CourseAt(int world, int key) const {
     return it->second;
 }
 
-std::optional<Catalog> BuildCatalogUncached(const WonderAssets::RomfsReader& read,
-                                            std::string_view lang) {
+std::optional<Catalog> BuildCatalog(const WonderAssets::RomfsReader& read, std::string_view lang,
+                                    bool details) {
     if (!read || lang.empty() || lang.size() > 8 ||
         lang.find_first_of("/.\\") != std::string_view::npos)
         return std::nullopt;
@@ -684,6 +680,8 @@ std::optional<Catalog> BuildCatalogUncached(const WonderAssets::RomfsReader& rea
                 continue;
             const int area = static_cast<int>(i);
             cat.area_resource[{id, area}] = res;
+            if (!details)
+                continue;
             if (const auto path = GymlToRomfs(*ref->String()))
                 if (const auto param = LoadByml(read, *path)) {
                     const auto* cat_node = param->Get("Category");
@@ -699,37 +697,30 @@ std::optional<Catalog> BuildCatalogUncached(const WonderAssets::RomfsReader& rea
     return cat;
 }
 
-namespace {
-std::mutex g_cache_mutex;
-std::map<std::string, std::shared_ptr<const Catalog>, std::less<>> g_cache;
-} // namespace
-
-std::shared_ptr<const Catalog> BuildCatalog(const WonderAssets::RomfsReader& read,
-                                            std::string_view lang) {
-    std::scoped_lock lock{g_cache_mutex};
-    if (const auto it = g_cache.find(lang); it != g_cache.end())
-        return it->second;
-    std::shared_ptr<const Catalog> built;
-    if (auto c = BuildCatalogUncached(read, lang))
-        built = std::make_shared<const Catalog>(std::move(*c));
-    g_cache.emplace(std::string(lang), built);
-    return built;
-}
-
-void ResetCatalogCache() {
-    std::scoped_lock lock{g_cache_mutex};
-    g_cache.clear();
-}
-
 // ------------------------------------------------------------------ routes
 
 float Route::Progress(float x, float y) const {
-    const float dx = end.x - start.x, dy = end.y - start.y;
-    const float len2 = dx * dx + dy * dy;
-    if (!(len2 > 1e-4f))
+    if (path.size() < 2 || !(length > 0.0f))
         return 0.0f;
-    const float t = ((x - start.x) * dx + (y - start.y) * dy) / len2;
-    return std::isfinite(t) ? std::clamp(t, 0.0f, 1.0f) : 0.0f;
+    float best_d2 = std::numeric_limits<float>::max(), best_s = 0.0f, walked = 0.0f;
+    for (std::size_t i = 0; i + 1 < path.size(); ++i) {
+        const RoutePoint& a = path[i];
+        const RoutePoint& b = path[i + 1];
+        const float vx = b.x - a.x, vy = b.y - a.y;
+        const float l2 = vx * vx + vy * vy;
+        const float seg = std::sqrt(l2);
+        const float t =
+            l2 > 1e-6f ? std::clamp(((x - a.x) * vx + (y - a.y) * vy) / l2, 0.0f, 1.0f) : 0.0f;
+        const float px = a.x + t * vx - x, py = a.y + t * vy - y;
+        const float d2 = px * px + py * py;
+        if (d2 < best_d2) {
+            best_d2 = d2;
+            best_s = walked + t * seg;
+        }
+        walked += seg;
+    }
+    const float p = best_s / length;
+    return std::isfinite(p) ? std::clamp(p, 0.0f, 1.0f) : 0.0f;
 }
 
 std::optional<Route> BuildRoute(const WonderAssets::RomfsReader& read,
@@ -744,6 +735,7 @@ std::optional<Route> BuildRoute(const WonderAssets::RomfsReader& read,
 
     Route r;
     std::optional<RoutePoint> start;
+    std::vector<std::pair<int, RoutePoint>> goals; // (GoalID, pole) in file order, one per id
     for (std::size_t i = 0; i < actors->Size(); ++i) {
         const auto* a = actors->At(i);
         const auto* g = a ? a->Get("Gyaml") : nullptr;
@@ -766,9 +758,10 @@ std::optional<Route> BuildRoute(const WonderAssets::RomfsReader& read,
             continue;
         }
         if (gyaml == "ObjectGoalPole" || gyaml == "ObjectGoalPoleOnlyPole") {
-            auto& slot = dyn_int("GoalID").value_or(0) != 0 ? r.secret_goal : r.normal_goal;
-            if (!slot)
-                slot = p;
+            const std::int64_t id = dyn_int("GoalID").value_or(0);
+            if (id >= 0 && id < 8 &&
+                std::none_of(goals.begin(), goals.end(), [&](const auto& g) { return g.first == id; }))
+                goals.emplace_back(static_cast<int>(id), p);
             continue;
         }
         RouteMarker::Kind kind{};
@@ -787,18 +780,22 @@ std::optional<Route> BuildRoute(const WonderAssets::RomfsReader& read,
             save && *save >= 0 && *save <= 127 ? static_cast<std::int8_t>(*save) : -1;
         r.markers.push_back({kind, id, p.x, p.y});
     }
-    if (!start || (!r.normal_goal && !r.secret_goal))
+    if (!start || goals.empty())
         return std::nullopt;
     r.start = *start;
-    auto dist2 = [&](const RoutePoint& q) {
-        const float dx = q.x - r.start.x, dy = q.y - r.start.y;
+    const auto dist2 = [](const RoutePoint& a, const RoutePoint& b) {
+        const float dx = a.x - b.x, dy = a.y - b.y;
         return dx * dx + dy * dy;
     };
-    if (r.normal_goal && r.secret_goal)
-        r.end = dist2(*r.secret_goal) > dist2(*r.normal_goal) ? *r.secret_goal : *r.normal_goal;
-    else
-        r.end = r.normal_goal ? *r.normal_goal : *r.secret_goal;
-    if (!(dist2(r.end) > 1e-4f))
+    // The main goal is the pole with the lowest GoalID; a second pole is the secret exit.
+    std::sort(goals.begin(), goals.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+    r.normal_goal = goals[0].second;
+    r.normal_goal_id = goals[0].first;
+    if (goals.size() > 1) {
+        r.secret_goal = goals[1].second;
+        r.secret_goal_id = goals[1].first;
+    }
+    if (!(dist2(r.normal_goal, r.start) > 1e-4f))
         return std::nullopt;
     std::sort(r.markers.begin(), r.markers.end(), [](const RouteMarker& a, const RouteMarker& b) {
         if (a.x != b.x)
@@ -811,6 +808,47 @@ std::optional<Route> BuildRoute(const WonderAssets::RomfsReader& read,
     });
     if (r.markers.size() > 64)
         r.markers.resize(64);
+    // The rail ends at the main goal. Its path chains the start through the main route's markers
+    // (nearest first) to the main goal, so climbing and zig-zag courses measure progress along the
+    // way they are played rather than along one straight line. Markers nearer the secret pole
+    // than the main goal belong to the secret route and stay off the path (they are still shown,
+    // projected onto it).
+    {
+        std::vector<RoutePoint> todo;
+        for (const auto& m : r.markers) {
+            const RoutePoint q{m.x, m.y};
+            if (!r.secret_goal || dist2(q, r.normal_goal) <= dist2(q, *r.secret_goal))
+                todo.push_back(q);
+        }
+        std::vector<RoutePoint> path{r.start};
+        while (!todo.empty()) {
+            const RoutePoint cur = path.back();
+            std::size_t best = 0;
+            float best_d2 = std::numeric_limits<float>::max();
+            for (std::size_t i = 0; i < todo.size(); ++i) {
+                const float dx = todo[i].x - cur.x, dy = todo[i].y - cur.y;
+                if (dx * dx + dy * dy < best_d2) {
+                    best_d2 = dx * dx + dy * dy;
+                    best = i;
+                }
+            }
+            path.push_back(todo[best]);
+            todo.erase(todo.begin() + static_cast<std::ptrdiff_t>(best));
+        }
+        path.push_back(r.normal_goal);
+        float total = 0.0f;
+        for (std::size_t i = 0; i + 1 < path.size(); ++i)
+            total += std::hypot(path[i + 1].x - path[i].x, path[i + 1].y - path[i].y);
+        r.path = std::move(path);
+        r.length = total;
+    }
+    if (!(r.length > 0.0f) || !std::isfinite(r.length))
+        return std::nullopt;
+    for (auto& m : r.markers)
+        m.progress = r.Progress(m.x, m.y);
+    r.normal_progress = r.Progress(r.normal_goal.x, r.normal_goal.y);
+    if (r.secret_goal)
+        r.secret_progress = r.Progress(r.secret_goal->x, r.secret_goal->y);
     return r;
 }
 

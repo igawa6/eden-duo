@@ -120,12 +120,12 @@ std::optional<Sheet> Parse(std::span<const u8> d, AstcDecoder astc) {
         if (end >= begin && end - begin < 0x110000) {
             if (method == 0) {
                 const u16 base = R16(d, q);
-                for (u32 c = begin; c <= end; ++c)
-                    s.cmap[c] = static_cast<u16>(base + (c - begin));
+                for (u64 c = begin; c <= end; ++c) // u64: end may be 0xFFFFFFFF
+                    s.cmap[static_cast<u32>(c)] = static_cast<u16>(base + (c - begin));
             } else if (method == 1) {
-                for (u32 c = begin; c <= end && q + 2 <= d.size(); ++c, q += 2)
+                for (u64 c = begin; c <= end && q + 2 <= d.size(); ++c, q += 2)
                     if (const u16 i = R16(d, q); i != 0xFFFF)
-                        s.cmap[c] = i;
+                        s.cmap[static_cast<u32>(c)] = i;
             } else if (method == 2) {
                 const u16 n = R16(d, q);
                 q += 4;

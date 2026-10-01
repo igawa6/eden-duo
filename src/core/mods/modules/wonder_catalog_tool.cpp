@@ -101,12 +101,12 @@ static void PrintRoute(const std::string& res, const Route& r) {
             std::snprintf(b, sizeof(b), "-");
         return std::string(b);
     };
-    std::printf("ROUTE\t%s\tstart=%s\tend=%s\tnormal=%s\tsecret=%s\tmarkers=%zu\n", res.c_str(),
-                pt(r.start).c_str(), pt(r.end).c_str(), pt(r.normal_goal).c_str(),
-                pt(r.secret_goal).c_str(), r.markers.size());
+    std::printf("ROUTE\t%s\tstart=%s\tnormal=%s\tsecret=%s\tlength=%.2f\tmarkers=%zu\n",
+                res.c_str(), pt(r.start).c_str(), pt(r.normal_goal).c_str(),
+                pt(r.secret_goal).c_str(), r.length, r.markers.size());
     for (const auto& m : r.markers)
         std::printf("M\t%s\t%d\t%d\t%.2f\t%.2f\t%.3f\n", res.c_str(), m.kind, m.id, m.x, m.y,
-                    r.Progress(m.x, m.y));
+                    m.progress);
 }
 
 static std::string Clean(std::string s) {
@@ -128,7 +128,7 @@ int main(int argc, char** argv) {
     const WonderAssets::RomfsReader read = [&](const std::string& p) { return ReadFile(root + p); };
     if (op == "dump" || op == "routes") {
         const std::string lang = argc >= 4 ? argv[3] : "USen";
-        const auto cat = BuildCatalog(read, lang);
+        const auto cat = BuildCatalog(read, lang, /*details=*/true);
         if (!cat) {
             std::fprintf(stderr, "catalog build failed\n");
             return 1;

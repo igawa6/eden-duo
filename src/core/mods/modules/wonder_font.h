@@ -63,8 +63,8 @@ inline constexpr std::string_view FontArchive = "/Font/Font.Nin_NX_NVN.bfarc.zs"
 std::optional<std::vector<std::uint8_t>> DecodeBfotf(std::span<const std::uint8_t> file);
 
 /// Build (or return the cached) atlas for `spec`. Thread-safe; the same spec always yields the
-/// same object/bytes. nullptr on a bad spec, a missing member or an unreadable font (also
-/// cached, so a bad spec is not retried).
+/// same object/bytes once built. nullptr on a bad spec, a missing member or an unreadable font
+/// (not cached: the romfs may not be readable yet, so a later call retries).
 std::shared_ptr<const FontAtlas> BuildFontAtlas(const WonderAssets::RomfsReader& read,
                                                 std::string_view spec);
 

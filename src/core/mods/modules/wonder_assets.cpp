@@ -29,25 +29,29 @@ constexpr std::size_t MaxSource = 32 * 1024 * 1024;
 constexpr u32 MaxDimension = 2048;
 constexpr u64 MaxPixels = 4 * 1024 * 1024;
 
-u16 U16(std::span<const u8> s, std::size_t o) {
-    return o + 2 <= s.size() ? dsmod_sdk::Le16(s.data() + o) : 0;
+// [o, o + n) lies inside s (no wrap-around for offsets read from the file).
+bool Fits(std::span<const u8> s, u64 o, u64 n) {
+    return o <= s.size() && n <= s.size() - o;
 }
-u32 U32(std::span<const u8> s, std::size_t o) {
-    return o + 4 <= s.size() ? dsmod_sdk::Le32(s.data() + o) : 0;
+u16 U16(std::span<const u8> s, u64 o) {
+    return Fits(s, o, 2) ? dsmod_sdk::Le16(s.data() + o) : 0;
 }
-u64 U64(std::span<const u8> s, std::size_t o) {
-    return o + 8 <= s.size() ? dsmod_sdk::Le64(s.data() + o) : 0;
+u32 U32(std::span<const u8> s, u64 o) {
+    return Fits(s, o, 4) ? dsmod_sdk::Le32(s.data() + o) : 0;
+}
+u64 U64(std::span<const u8> s, u64 o) {
+    return Fits(s, o, 8) ? dsmod_sdk::Le64(s.data() + o) : 0;
 }
 bool Magic(std::span<const u8> s, std::string_view m) {
     return s.size() >= m.size() && std::memcmp(s.data(), m.data(), m.size()) == 0;
 }
-u16 EU16(std::span<const u8> s, std::size_t o, bool be) {
-    if (o + 2 > s.size())
+u16 EU16(std::span<const u8> s, u64 o, bool be) {
+    if (!Fits(s, o, 2))
         return 0;
     return be ? static_cast<u16>(s[o] << 8 | s[o + 1]) : U16(s, o);
 }
-u32 EU32(std::span<const u8> s, std::size_t o, bool be) {
-    if (o + 4 > s.size())
+u32 EU32(std::span<const u8> s, u64 o, bool be) {
+    if (!Fits(s, o, 4))
         return 0;
     return be ? dsmod_sdk::Be32(s.data() + o) : U32(s, o);
 }
@@ -177,23 +181,23 @@ std::vector<Texture> Textures(std::span<const u8> b) {
         return out;
     const u32 count = U32(b, 0x24);
     const u64 array = U64(b, 0x28);
-    if (!count || count > 4096 || array + u64{count} * 8 > b.size())
+    if (!count || count > 4096 || !Fits(b, array, u64{count} * 8))
         return out;
     for (u32 i = 0; i < count; ++i) {
         const u64 o = U64(b, array + u64{i} * 8);
-        if (o + 0xa0 > b.size() || !Magic(b.subspan(o), "BRTI"))
+        if (!Fits(b, o, 0xa0) || !Magic(b.subspan(o), "BRTI"))
             continue;
         Texture t{U32(b, o + 0x24), U32(b, o + 0x28), U32(b, o + 0x1c), U32(b, o + 0x50),
                   U32(b, o + 0x30), U32(b, o + 0x34), U32(b, o + 0x58), U16(b, o + 0x12),
                   0,                {}};
         const u64 mip = U64(b, o + 0x70);
-        if (mip + 8 > b.size())
+        if (!Fits(b, mip, 8))
             continue;
         t.image = U64(b, mip);
         const u64 no = U64(b, o + 0x60);
-        if (no + 2 <= b.size()) {
+        if (Fits(b, no, 2)) {
             const u16 nl = U16(b, no);
-            if (no + 2 + nl <= b.size())
+            if (Fits(b, no + 2, nl))
                 t.name.assign(reinterpret_cast<const char*>(b.data() + no + 2), nl);
         }
         if (!t.w || !t.h || t.w > MaxDimension || t.h > MaxDimension ||
@@ -211,7 +215,7 @@ std::optional<Image> DecodeTexture(std::span<const u8> b, const Texture& t, Astc
     const u32 bx = (t.w + f->bw - 1) / f->bw, by = (t.h + f->bh - 1) / f->bh;
     const std::size_t linear_size = static_cast<std::size_t>(bx) * by * f->bpb;
     const std::size_t array_size = t.size / t.arrays;
-    if (t.image + array_size > b.size())
+    if (!Fits(b, t.image, array_size))
         return std::nullopt;
     auto src = b.subspan(t.image, array_size);
     std::vector<u8> blocks(linear_size);
@@ -517,7 +521,9 @@ std::shared_ptr<const Image> Decoder::Load(const RomfsReader& read, std::string_
         return nullptr;
     auto shared = std::make_shared<const Image>(std::move(*image));
     std::scoped_lock lock{impl->mutex};
-    impl->images[k] = shared;
+    if (const auto it = impl->images.find(k); it != impl->images.end())
+        return it->second;
+    impl->images.emplace(k, shared);
     impl->lru.push_front(k);
     impl->used += shared->rgba.size();
     while (impl->used > impl->budget && impl->lru.size() > 1) {

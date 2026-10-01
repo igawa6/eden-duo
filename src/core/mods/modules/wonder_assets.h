@@ -46,6 +46,8 @@ std::optional<Image> DecodeBntx(std::span<const std::uint8_t> bntx, std::string_
 ///   power/<1|2|3|6|9>    power-up / reserve item icon
 ///   course/<NNN>         course thumbnail
 ///   lyt/<Layout>/<Tex>   a texture from /Layout/<Layout>.Nin_NX_NVN.blarc.zs timg/__Combined.bntx
+///   icon/<Name>          /UI/Tex/Icon/<Name>.bntx.zs
+/// (The module also serves pict/, blur/, gen/ and font/ keys itself, outside this decoder.)
 /// Thread-safe, cached (LRU by bytes). Nothing decoded is persisted or shipped.
 class Decoder {
 public:
