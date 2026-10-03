@@ -27,10 +27,12 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include "common/dsmod_dev_tools.h"
 #include "common/logging.h"
 #include "core/core.h"
 #include "core/mods/mod_runtime.h"
 #include "core/mods/mod_runtime_shared.h"
+#include "core/mods/mod_settings.h"
 #include "core/mods/mod_view_default.h"
 #include "input_common/drivers/virtual_gamepad.h"
 
@@ -345,7 +347,7 @@ ModRuntime::ActionResult ModRuntime::RunAction(const Action& action, const State
                                                std::optional<s64> payload,
                                                const std::array<s32, 4>* tap_origin) {
     const auto trace = [](const std::string& line) {
-        if (const char* const p = std::getenv("EDEN_DSMOD_CMD")) {
+        if (const char* const p = Common::DSMod::DevEnvironment("EDEN_DSMOD_CMD")) {
             std::ofstream f(std::string(p) + ".out", std::ios::app);
             if (f) {
                 f << line << '\n';
@@ -522,7 +524,17 @@ ModRuntime::ActionResult ModRuntime::RunAction(const Action& action, const State
         return ActionResult::Done;
     }
     case ActionKind::Module:
-        RunModuleAction(action.module_action, action.value_from_payload ? *payload : action.value);
+        // Runtime 16: a module that declines (on_action false, or it threw) refuses the action:
+        // the "refused" haptic, nothing after it. No module / no on_action stays Done as before.
+        if (RunModuleAction(action.module_action,
+                            action.value_from_payload ? *payload : action.value) ==
+            ModuleActionOutcome::Declined) {
+            const std::string line = fmt::format("DSMod: action '{}' refused: module declined '{}'",
+                                                 action.name, action.module_action);
+            LOG_INFO(Core, "{}", line);
+            trace(line);
+            return ActionResult::Refused;
+        }
         break;
     case ActionKind::Write: {
         std::string point_name = action.point;
@@ -695,17 +707,13 @@ ModRuntime::ActionResult ModRuntime::RunAction(const Action& action, const State
         break;
     case ActionKind::Page: {
         const size_t before = current_page;
-        bool found = false;
-        for (size_t i = 0; i < manifest.pages.size(); ++i) {
-            if (manifest.pages[i].id == action.page) {
-                current_page = i;
-                found = true;
-                break;
-            }
-        }
-        if (!found) {
+        // A page id, or (runtime 17) "@back" from the built-in "@settings" page (mod_settings.h).
+        const auto target =
+            ResolvePageTarget(manifest.pages, action.page, current_page, settings_return_page);
+        if (!target) {
             return ActionResult::Skipped;
         }
+        current_page = *target;
         if (current_page != before && action.transition != PageTransition::None &&
             action.duration_ms > 0) {
             std::array<s32, 4> origin{}; // {0,0,0,0} = unresolved; DrivePageTransition falls
@@ -781,7 +789,7 @@ ModRuntime::ActionResult ModRuntime::RunAction(const Action& action, const State
 
 void ModRuntime::DriveLiveInput() {
 #if EDEN_DSMOD_BUILD_DEV_TOOLS
-    static const char* const path = std::getenv("EDEN_DSMOD_INPUT_LIVE");
+    static const char* const path = Common::DSMod::DevEnvironment("EDEN_DSMOD_INPUT_LIVE");
     if (path == nullptr) {
         return;
     }
@@ -871,7 +879,7 @@ void ModRuntime::DriveInputScript() {
     // wait measured from tick 0 lands the first press on a different screen each time. Gate on a
     // fixed floor (overridable) counted from boot -- coarse but stable enough to reach a menu.
     static const u64 delay = [] {
-        const char* const v = std::getenv("EDEN_DSMOD_INPUT_DELAY");
+        const char* const v = Common::DSMod::DevEnvironment("EDEN_DSMOD_INPUT_DELAY");
         return v != nullptr ? std::strtoull(v, nullptr, 0) : u64{0};
     }();
     if (tick_count < delay) {

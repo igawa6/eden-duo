@@ -29,9 +29,11 @@
 
 #include <cstdlib>
 #include <filesystem>
+#include "common/dsmod_dev_tools.h"
 #include "common/logging.h"
 #include "core/core.h"
 #include "core/hle/kernel/k_process.h"
+#include "core/mods/mod_expr.h"
 #include "core/mods/mod_runtime.h"
 #include "core/mods/mod_runtime_shared.h"
 #include "hid_core/frontend/emulated_controller.h"
@@ -660,6 +662,15 @@ void ModRuntime::EvaluateDerived(StateSnapshot& snapshot, bool volatile_only) {
                     for (const auto& src : d.nonzero_sources) {
                         wait = wait || waits(src);
                     }
+                } else if (!d.countdown_now.empty()) {
+                    wait = (!d.countdown_target.is_const && waits(d.countdown_target.name)) ||
+                           waits(d.countdown_now);
+                } else if (d.expr_program) {
+                    // An expression may name derived values declared after it: like every other
+                    // form it waits for them (topological), so declaration order does not matter.
+                    for (const auto& ref : d.expr_program->refs) {
+                        wait = wait || waits(ref);
+                    }
                 } else {
                     for (const auto& term : d.terms) {
                         wait = wait || waits(term.first);
@@ -681,7 +692,10 @@ void ModRuntime::EvaluateDerived(StateSnapshot& snapshot, bool volatile_only) {
         // Which values the post-tap pass must recompute.
         derived_volatile.assign(list.size(), 0);
         const auto is_volatile_key = [](const std::string& name) {
-            return name.starts_with('@') || name.starts_with("view_custom:");
+            // The runtime 16 clock keys are published before the first pass and do not change
+            // between the two: reading them does not make a value volatile.
+            return (name.starts_with('@') && !IsClockKey(name)) ||
+                   name.starts_with("view_custom:");
         };
         for (size_t i = 0; i < list.size(); ++i) {
             const DerivedPoint& d = list[i];
@@ -696,6 +710,12 @@ void ModRuntime::EvaluateDerived(StateSnapshot& snapshot, bool volatile_only) {
                 vol = vol || is_volatile_key(src);
             for (const auto& term : d.terms)
                 vol = vol || is_volatile_key(term.first);
+            vol = vol || (!d.countdown_target.is_const && is_volatile_key(d.countdown_target.name)) ||
+                  is_volatile_key(d.countdown_now);
+            if (d.expr_program) {
+                for (const auto& ref : d.expr_program->refs)
+                    vol = vol || is_volatile_key(ref);
+            }
             derived_volatile[i] = vol ? 1 : 0;
         }
         // A value computed from a volatile derived value is volatile itself. Every derived-typed
@@ -722,6 +742,13 @@ void ModRuntime::EvaluateDerived(StateSnapshot& snapshot, bool volatile_only) {
                 one(src);
             for (const auto& term : d.terms)
                 one(term.first);
+            if (!d.countdown_target.is_const)
+                one(d.countdown_target.name);
+            one(d.countdown_now);
+            if (d.expr_program) {
+                for (const auto& ref : d.expr_program->refs)
+                    one(ref);
+            }
         };
         for (bool changed = true; changed;) {
             changed = false;
@@ -752,6 +779,7 @@ void ModRuntime::EvaluateDerived(StateSnapshot& snapshot, bool volatile_only) {
         }
         return std::nullopt;
     };
+    const ExprLookup expr_lookup = lookup; // built once per pass, not per expression
     const auto publish = [&snapshot](const std::string& name, f64 v) {
         if (!std::isfinite(v)) {
             return;
@@ -857,6 +885,24 @@ void ModRuntime::EvaluateDerived(StateSnapshot& snapshot, bool volatile_only) {
                 }
                 if (!missing) {
                     publish(d.name, (d.nonzero_require_all ? all_true : any_true) ? 1.0 : 0.0);
+                }
+                continue;
+            }
+            if (!d.countdown_now.empty()) {
+                if (const auto v = EvaluateCountdown(d, expr_lookup)) {
+                    publish(d.name, *v);
+                }
+                continue;
+            }
+            if (d.expr_program) {
+                // Runtime 17. floor/round apply to the result like they do to terms.
+                if (auto v = EvaluateExpr(*d.expr_program, expr_lookup)) {
+                    if (d.floor) {
+                        *v = std::floor(*v);
+                    } else if (d.round) {
+                        *v = std::round(*v);
+                    }
+                    publish(d.name, *v);
                 }
                 continue;
             }
@@ -1349,14 +1395,14 @@ bool ModRuntime::InGameplay() const {
     // Exploration override for games whose package has no points yet: with nothing to read,
     // neither source below can ever open the gate, and every search tool stays parked.
     // Never set this together with a tool that drives the pad on its own.
-    static const bool assume = std::getenv("EDEN_DSMOD_ASSUME_GAMEPLAY") != nullptr;
+    static const bool assume = Common::DSMod::DevEnvironment("EDEN_DSMOD_ASSUME_GAMEPLAY") != nullptr;
     if (assume) {
         return true;
     }
     // A trigger file lets a person mark "I am in-game now" from outside -- the moment it appears,
     // the search tools (which collect their baseline the first frame gameplay is true) begin, on
     // real in-game memory rather than the title screen. Removing it pauses them again.
-    static const char* const trigger = std::getenv("EDEN_DSMOD_GAMEPLAY_TRIGGER");
+    static const char* const trigger = Common::DSMod::DevEnvironment("EDEN_DSMOD_GAMEPLAY_TRIGGER");
     if (trigger != nullptr) {
         return std::filesystem::exists(trigger);
     }

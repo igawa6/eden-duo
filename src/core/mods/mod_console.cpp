@@ -30,6 +30,7 @@
 #include "common/cityhash.h"
 #include "common/fs/path_util.h"
 #include "common/hex_util.h"
+#include "common/dsmod_dev_tools.h"
 #include "common/logging.h"
 #include "common/settings.h"
 #include "common/stb.h"
@@ -74,7 +75,7 @@ void ModRuntime::DriveCmdImpl() {
     //   findi <val>           heap search (aligned) for an int32 value, log matches
     //   findf <val>           heap search for a float value
     //   watch <hexaddr>       log this addr's float+int every tick until "watch 0"
-    static const char* const path = std::getenv("EDEN_DSMOD_CMD");
+    static const char* const path = Common::DSMod::DevEnvironment("EDEN_DSMOD_CMD");
     if (path == nullptr) {
         return;
     }
@@ -83,7 +84,7 @@ void ModRuntime::DriveCmdImpl() {
     // cannot read still hands results back through a file.
     const auto emit = [](const std::string& line) {
         LOG_INFO(Core, "{}", line);
-        if (const char* const p = std::getenv("EDEN_DSMOD_CMD")) {
+        if (const char* const p = Common::DSMod::DevEnvironment("EDEN_DSMOD_CMD")) {
             std::ofstream f(std::string(p) + ".out", std::ios::app);
             if (f) {
                 f << line << '\n';

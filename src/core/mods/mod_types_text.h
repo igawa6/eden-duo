@@ -35,6 +35,9 @@ struct FontMetrics {
     /// Design pixels from a glyph cell's top to the baseline (0 = unknown): inline icons from a
     /// second font are sized so the two ascents match.
     u32 ascent{0};
+    /// Runtime 17: > 0 = the atlas is paged (FontPages): glyph y is in pages of this height
+    /// stacked top to bottom (page = y / page_h, row in it = y % page_h). 0 = one atlas.
+    u32 page_h{0};
     [[nodiscard]] bool Valid() const {
         return !glyphs.empty() && line_height > 0;
     }

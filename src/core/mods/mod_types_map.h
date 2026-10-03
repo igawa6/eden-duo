@@ -135,6 +135,7 @@ struct DynamicMarkerDef {
     std::string icon_src_bind;
     /// Marker size in world units (scales with the map's zoom); 0 = the pixel `size`.
     float size_world{0.0f};
+    float size_max{0.0f}; ///< Optional screen-pixel cap on a world-sized marker.
     /// A bar under the icon: value / max (bar_max_bind, else bar_max), filled with bar_color
     /// over bar_bg; bar_h px tall (0 = an eighth of the icon, at least 3).
     std::string bar_bind, bar_max_bind;

@@ -87,6 +87,7 @@ std::string R(const ArrayFind& o);
 std::string R(const PlayerFind& o);
 std::string R(const TextScan& o);
 std::string R(const DataPoint& o);
+std::string R(const std::shared_ptr<const ExprProgram>& o);
 std::string R(const DerivedPoint::CmpOperand& o);
 std::string R(const DerivedPoint& o);
 std::string R(const WidgetAnim& o);
@@ -95,6 +96,7 @@ std::string R(const MapWidgetExtras::LabelStyle& o);
 std::string R(const MapWidgetExtras::Overlay& o);
 std::string R(const MapWidgetExtras& o);
 std::string R(const ViewDefaultBinds& o);
+std::string R(const ChartSpec& o);
 std::string R(const Widget& o);
 std::string R(const ScrollRegion& o);
 std::string R(const ActionValue& o);
@@ -116,6 +118,7 @@ std::string R(const CompositeLayer& o);
 std::string R(const CompositeDef& o);
 std::string R(const MsbtConfig& o);
 std::string R(const HapticsConfig& o);
+std::string R(const NavConfig& o);
 std::string R(const CallStep& o);
 std::string R(const CallSequence& o);
 std::string R(const GuestPatch& o);
@@ -288,6 +291,13 @@ std::string R(const DataPoint& o) {
     F(stride);
     DUMP_END;
 }
+std::string R(const std::shared_ptr<const ExprProgram>& o) {
+    if (!o) {
+        return "-";
+    }
+    return o->Ok() ? fmt::format("ok:{}n/{}r", o->nodes.size(), o->refs.size())
+                   : "err:" + o->error;
+}
 std::string R(const DerivedPoint::CmpOperand& o) {
     DUMP_BEGIN(DerivedPoint::CmpOperand);
     F(is_const);
@@ -315,6 +325,10 @@ std::string R(const DerivedPoint& o) {
     F(cmp_b);
     F(nonzero_sources);
     F(nonzero_require_all);
+    F(countdown_target);
+    F(countdown_now);
+    F(expr);
+    F(expr_program);
     DUMP_END;
 }
 std::string R(const ViewDefaultBinds& o) {
@@ -323,6 +337,18 @@ std::string R(const ViewDefaultBinds& o) {
     F(cx_bind);
     F(cy_bind);
     F(reset_bind);
+    DUMP_END;
+}
+std::string R(const ChartSpec& o) {
+    DUMP_BEGIN(ChartSpec);
+    F(key);
+    F(samples);
+    F(interval_ms);
+    F(style);
+    F(has_min);
+    F(has_max);
+    F(min);
+    F(max);
     DUMP_END;
 }
 std::string R(const WidgetAnim& o) {
@@ -501,12 +527,34 @@ std::string R(const Widget& o) {
     F(text_src);
     F(text_bind);
     F(text_map);
+    // Runtime 18 defaults preserve the serialized model of older packages.
+    if (o.fit_text) { F(fit_text); }
+    if (o.text_min_scale != 1) { F(text_min_scale); }
+    if (o.text_center_h != 0) { F(text_center_h); }
     F(wrap_width);
     F(max_lines);
     F(line_gap);
     F(icon_silhouette);
     F(color_markup);
     F(outline_copy);
+    F(auto_w);
+    F(auto_box);
+    F(group);
+    F(group_sep);
+    F(rotate);
+    F(rotate_bind);
+    F(scale_bind);
+    F(pivot);
+    F(has_pivot);
+    C(tint);
+    F(has_tint);
+    F(tint_bind);
+    F(tint_colors);
+    F(fill);
+    F(slice);
+    F(fill_dir);
+    F(fill_image);
+    F(chart);
     DUMP_END;
 }
 std::string R(const ScrollRegion& o) {
@@ -521,6 +569,8 @@ std::string R(const ScrollRegion& o) {
     F(reset_bind);
     F(fling);
     F(friction);
+    if (!o.bar_src.empty()) { F(bar_src); }
+    if (!o.bar_track_src.empty()) { F(bar_track_src); }
     C(bar_color);
     C(bar_track);
     F(bar_w);
@@ -689,6 +739,7 @@ std::string R(const DynamicMarkerDef& o) {
     F(hide);
     F(icon_src_bind);
     F(size_world);
+    if (o.size_max != 0.0f) { F(size_max); }
     F(bar_bind);
     F(bar_max_bind);
     F(bar_max);
@@ -856,6 +907,17 @@ std::string R(const HapticsConfig& o) {
     F(strength);
     DUMP_END;
 }
+std::string R(const NavConfig& o) {
+    DUMP_BEGIN(NavConfig);
+    F(enabled);
+    F(toggle);
+    F(toggle_mask);
+    C(color);
+    F(frame);
+    F(src);
+    F(haptic);
+    DUMP_END;
+}
 std::string R(const CallStep& o) {
     DUMP_BEGIN(CallStep);
     F(fn);
@@ -950,6 +1012,7 @@ std::string PageHeader(const Page& o) {
     F(mirror);
     F(mirror_rect);
     F(no_auto_leave);
+    F(nav_order);
     dd.out += fmt::format(" widgets#={} scrolls#={}", o.widgets.size(), o.scrolls.size());
     DUMP_END;
 }
@@ -1000,12 +1063,15 @@ std::string DumpManifest(const Manifest& o) {
         F(debug_page);
         F(font_metrics_src);
         F(font_atlas_src);
+        F(font_page_h);
         F(msbt);
         F(haptics);
+        F(nav);
         F(anim_hz);
         F(find_spec);
         F(trace_target);
         F(dump_registry);
+        F(uses_clock_keys);
         F(describe_string);
         F(valid);
         dd.out += fmt::format(" asset_dir={}", o.asset_dir ? "set" : "null");
@@ -1144,11 +1210,12 @@ void CheckLayouts() {
     };
     // clang-format off
     const Size sizes[] = {
-        {"Manifest", sizeof(Manifest), 2336},
-        {"Page", sizeof(Page), 136},
-        {"Widget", sizeof(Widget), 1936},
+        {"Manifest", sizeof(Manifest), 2448},
+        {"Page", sizeof(Page), 160},
+        {"Widget", sizeof(Widget), 2208},
+        {"ChartSpec", sizeof(ChartSpec), 64},
         {"ViewDefaultBinds", sizeof(ViewDefaultBinds), 128},
-        {"ScrollRegion", sizeof(ScrollRegion), 192},
+        {"ScrollRegion", sizeof(ScrollRegion), 256},
         {"MapWidgetExtras", sizeof(MapWidgetExtras), 408},
         {"MapWidgetExtras::Group", sizeof(MapWidgetExtras::Group), 112},
         {"MapWidgetExtras::LabelStyle", sizeof(MapWidgetExtras::LabelStyle), 20},
@@ -1162,7 +1229,7 @@ void CheckLayouts() {
         {"ArrayFind", sizeof(ArrayFind), 32},
         {"PlayerFind", sizeof(PlayerFind), 24},
         {"TextScan", sizeof(TextScan), 32},
-        {"DerivedPoint", sizeof(DerivedPoint), 440},
+        {"DerivedPoint", sizeof(DerivedPoint), 568},
         {"DerivedPoint::CmpOperand", sizeof(DerivedPoint::CmpOperand), 48},
         {"MapRoom", sizeof(MapRoom), 80},
         {"MapArea", sizeof(MapArea), 320},
@@ -1178,6 +1245,7 @@ void CheckLayouts() {
         {"CompositeLayer", sizeof(CompositeLayer), 200},
         {"MsbtConfig", sizeof(MsbtConfig), 264},
         {"HapticsConfig", sizeof(HapticsConfig), 11},
+        {"NavConfig", sizeof(NavConfig), 96},
         {"PageBind", sizeof(PageBind), 240},
         {"PageBindTarget", sizeof(PageBindTarget), 80},
         {"CallStep", sizeof(CallStep), 232},
@@ -1285,4 +1353,17 @@ TEST_CASE("DSMod golden: manifest digest of every published package", "[dsmod][g
             CHECK(diff.empty());
         }
     }
+}
+
+TEST_CASE("DSMod runtime18 golden digest includes new non-default layout fields", "[dsmod][runtime18][digest]") {
+    Widget w; w.fit_text = true; w.text_min_scale = 2; w.text_center_h = 30;
+    const auto widget = R(w);
+    REQUIRE(widget.find("fit_text=") != std::string::npos);
+    REQUIRE(widget.find("text_min_scale=") != std::string::npos);
+    REQUIRE(widget.find("text_center_h=") != std::string::npos);
+    ScrollRegion scroll; scroll.bar_src = "module:thumb"; scroll.bar_track_src = "module:track";
+    REQUIRE(R(scroll).find("bar_src=") != std::string::npos);
+    REQUIRE(R(scroll).find("bar_track_src=") != std::string::npos);
+    DynamicMarkerDef marker; marker.size_max = 16.0f;
+    REQUIRE(R(marker).find("size_max=") != std::string::npos);
 }

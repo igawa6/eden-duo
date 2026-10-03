@@ -216,6 +216,19 @@ namespace AndroidSettings {
                                                         "enable_quick_settings",
                                                         Settings::Category::Android, Settings::Specialization::Default, true,
                                                       false};
+
+        // Eden Duo: Graphics -> Second Screen. native.cpp hands both to
+        // VideoCore::DSMod::SecondScreenOptions, where the renderer and the mod runtime read them.
+        // companion_ratio is per-game here; no_companion's per-game value lives in Kotlin
+        // (NoCompanion.kt), since Off is decided before the game window opens.
+        Settings::SwitchableSetting<s32> companion_ratio{linkage, 0, "companion_ratio",
+                                                         Settings::Category::Android,
+                                                         Settings::Specialization::Default, true,
+                                                         true};
+        // Changeable in game: EmulationFragment.reapplyNoCompanion applies it on return.
+        Settings::Setting<s32> no_companion{linkage, 0, "no_companion",
+                                            Settings::Category::Android,
+                                            Settings::Specialization::Default, true, true};
     };
 
     extern Values values;

@@ -15,6 +15,7 @@
 #include "video_core/renderer_vulkan/renderer_vulkan.h"
 
 #include "common/assert.h"
+#include "common/dsmod_dev_tools.h"
 #include "common/logging.h"
 #include "common/scope_exit.h"
 #include "common/settings.h"
@@ -234,6 +235,9 @@ RasterizerVulkan::~RasterizerVulkan() {
 }
 
 void RasterizerVulkan::DSModCaptureRenderTarget(VideoCommon::ImageViewId view_id) {
+    if constexpr (!Common::DSMod::DevToolsEnabled) {
+        return;
+    }
     if (!view_id) {
         return;
     }
@@ -302,7 +306,7 @@ void RasterizerVulkan::PrepareDraw(bool is_indexed, Func&& draw_func) {
     // that draws its UI into its own target can have that target intercepted here, which is the
     // one place it exists separately from the scene.
     // EDEN_DSMOD_RT_PICK=<w>x<h>[:k] -- the k-th pass at that size.
-    static const char* const pick_env = std::getenv("EDEN_DSMOD_RT_PICK");
+    static const char* const pick_env = Common::DSMod::DevEnvironment("EDEN_DSMOD_RT_PICK");
     if (pick_env != nullptr) {
         static u32 want_w = 0, want_h = 0, want_k = 0;
         static bool parsed = false;
@@ -348,7 +352,7 @@ void RasterizerVulkan::PrepareDraw(bool is_indexed, Func&& draw_func) {
     // A single presented layer says nothing about the pass structure underneath it: if the UI
     // goes into its own target, it can be intercepted there even though the compositor only ever
     // sees one surface. EDEN_DSMOD_RTLOG=1 to find out.
-    static const bool rt_log = std::getenv("EDEN_DSMOD_RTLOG") != nullptr;
+    static const bool rt_log = Common::DSMod::DevEnvironment("EDEN_DSMOD_RTLOG") != nullptr;
     if (rt_log) {
         // Order matters more than totals: UI is drawn last, into whichever target is presented.
         // Record the passes as a sequence, collapsing consecutive draws into the same target.

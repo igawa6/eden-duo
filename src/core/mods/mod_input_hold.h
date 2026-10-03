@@ -7,12 +7,25 @@
 // (default 600 ms). The lift that ends a fired hold is not a tap, so a hold never also runs the
 // on_tap of whatever is under the finger. Kept free of ModRuntime so it can be unit tested
 // (src/tests/core/mods/runtime13.cpp).
+//
+// Hold and drag on one widget (runtime 16): a hold also arms over a drag candidate when its
+// on_hold widget is the draggable widget itself or drawn above it (HoldArmsOverDrag). The finger
+// leaving the tap slop before hold_ms cancels the hold and starts the drag (the drag threshold is
+// the tap slop); a hold that fires first drops the drag candidate, so that touch never drags.
 
 #include <cstdint>
 
 namespace Core::Mods {
 
 inline constexpr std::int32_t DefaultHoldMs = 600;
+
+/// Runtime 16: whether the on_hold widget at `hold_hit` (an index into the expanded page, the
+/// topmost on_hold / input_block hit) arms when the first finger also picked a drag candidate at
+/// `drag_hit` (-1: none). It arms on the draggable widget itself or on one drawn above it, never
+/// on one beneath it (the draggable widget owns that touch, as before runtime 16).
+inline bool HoldArmsOverDrag(std::int64_t hold_hit, std::int64_t drag_hit) {
+    return hold_hit >= 0 && (drag_hit < 0 || hold_hit >= drag_hit);
+}
 
 class HoldTracker {
 public:

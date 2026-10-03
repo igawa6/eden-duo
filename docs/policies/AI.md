@@ -43,9 +43,9 @@ See the [Addendum](#addendum-commit-messages) for an instance of how bad AI mode
 ## Miscellaneous concerns
 
 - While many environmental concerns about AI are typically blown out of proportion, it *is* a legitimate issue, and should be taken into account.
-- Many people have significant concerns over the ethics of AI usage due to inhumane and predatory behavior by large AI companies, particularly Anthropic and OpenAI. This can technically be avoided through the usage of local LLMs.
+- Many people have significant concerns over the ethics of AI usage due to inhumane and predatory behavior by commercial AI providers. This can technically be avoided through the usage of local LLMs.
 - LLMs have a tendency to add unicode characters (such as the arrow → and the em-dash — symbols) to their output, which can make viewing code or documents harder on command-line editors and viewers.
-- Dedicated coding models--namely Claude--also like to add a lot of comments to overexplain every individual line of code it produces. This actually makes it *harder* to understand the code!
+- Coding models can add a lot of comments to overexplain every individual line of code it produces. This actually makes it *harder* to understand the code!
 
 ## Unacceptable Use Examples
 

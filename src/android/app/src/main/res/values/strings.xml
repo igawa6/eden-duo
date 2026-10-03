@@ -614,6 +614,27 @@
     <string name="renderer_screen_layout">Orientation</string>
     <string name="renderer_aspect_ratio">Aspect ratio</string>
     <string name="vertical_alignment">Vertical alignment</string>
+
+    <!-- Eden Duo: Graphics -> Second Screen -->
+    <string name="second_screen">Second Screen</string>
+    <string name="swap_screens">Swap Screens</string>
+    <string name="swap_screens_description">Game on the second screen, companion on the main one. Applies when a game starts.</string>
+    <string name="companion_ratio">Companion Ratio</string>
+    <string name="companion_ratio_description">Fit keeps the companion page shape; Stretch fills the screen.</string>
+    <string name="companion_ratio_fit">Fit</string>
+    <string name="companion_ratio_stretch">Stretch</string>
+    <string name="no_companion">No Companion</string>
+    <string name="no_companion_description">What the second screen shows when a game has no companion. Off leaves it free for other apps; App opens the app you pick there. Applies when a game starts.</string>
+    <string name="no_companion_icon">Icon</string>
+    <string name="no_companion_black">Black</string>
+    <string name="no_companion_off">Off</string>
+    <string name="no_companion_app">App</string>
+    <string name="companion_app">App</string>
+    <string name="companion_app_description">Opens on the second screen when a game has no companion</string>
+    <string name="companion_app_description_none">Opens on the second screen when a game has no companion. Until you choose one, App works like Off.</string>
+    <string name="companion_app_choose">Choose an app</string>
+    <string name="companion_app_missing">%1$s (not installed)</string>
+    <string name="companion_app_search">Search apps</string>
     <string name="picture_in_picture">Picture in Picture</string>
     <string name="picture_in_picture_description">Minimize window when placed in the background</string>
 
@@ -898,6 +919,9 @@
     <string name="dual_screen_mods">Dual screen mods</string>
     <string name="installing_dual_screen_mod">Installing dual screen mod</string>
     <string name="dual_screen_mod_installed">Dual screen mod installed successfully</string>
+    <string name="dual_screen_mod_check_no_scan">The package was unpacked, but the add-on scanner could not open this game, so Eden Duo cannot confirm it will be used. Restart Eden Duo and check the Add-ons list.</string>
+    <string name="dual_screen_mod_check_missing">The package was unpacked, but its files are missing from %1$s.</string>
+    <string name="dual_screen_mod_check_not_listed">The package was unpacked to %1$s, but the add-on scanner (reading %2$s) does not list it, so the second screen will not use it. Please report this with the log file.</string>
     <string name="dual_screen_mod_install_cancelled">Dual screen mod installation cancelled</string>
     <string name="dual_screen_mod_install_failed">Dual screen mod installation failed</string>
     <string name="dual_screen_mod_title_mismatch">This package is for a different game.</string>

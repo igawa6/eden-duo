@@ -28,6 +28,7 @@
 #include <cstring>
 
 #include <cstdlib>
+#include "common/dsmod_dev_tools.h"
 #include "common/logging.h"
 #include "core/arm/debug.h"
 #include "core/core.h"
@@ -568,7 +569,7 @@ void ModRuntime::ApplyPatches() {
         return;
     }
     auto& memory = system.ApplicationMemory();
-    const char* const opt_in = std::getenv("EDEN_DSMOD_PATCHES");
+    const char* const opt_in = Common::DSMod::DevEnvironment("EDEN_DSMOD_PATCHES");
     const bool apply_optional = opt_in != nullptr && opt_in[0] == '1';
     // Each patch is written (and logged) once. A patch whose address is not mapped yet waits for
     // a later tick; the ones before it are not rewritten every tick meanwhile.

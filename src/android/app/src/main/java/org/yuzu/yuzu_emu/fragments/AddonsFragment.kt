@@ -20,21 +20,30 @@ import androidx.fragment.app.activityViewModels
 import androidx.navigation.fragment.navArgs
 import androidx.recyclerview.widget.LinearLayoutManager
 import com.google.android.material.transition.MaterialSharedAxis
+import org.yuzu.yuzu_emu.NativeLibrary
 import org.yuzu.yuzu_emu.R
 import org.yuzu.yuzu_emu.adapters.AddonAdapter
 import org.yuzu.yuzu_emu.databinding.FragmentAddonsBinding
 import org.yuzu.yuzu_emu.model.AddonViewModel
+import org.yuzu.yuzu_emu.model.Game
 import org.yuzu.yuzu_emu.model.HomeViewModel
+import org.yuzu.yuzu_emu.model.PatchType
 import org.yuzu.yuzu_emu.utils.AddonUtil
 import org.yuzu.yuzu_emu.utils.DualScreenPackageInstaller
 import org.yuzu.yuzu_emu.utils.FileUtil.copyFilesTo
 import org.yuzu.yuzu_emu.utils.InstallableActions
+import org.yuzu.yuzu_emu.utils.Log
 import org.yuzu.yuzu_emu.utils.NativeConfig
 import org.yuzu.yuzu_emu.utils.ViewUtils.updateMargins
 import org.yuzu.yuzu_emu.utils.collect
 import java.io.File
 
 class AddonsFragment : Fragment() {
+    private companion object {
+        /** The type PatchManager reports for a folder holding dualscreen/manifest.json. */
+        const val DUAL_SCREEN_ADDON_TYPE = "Dual screen mod"
+    }
+
     private var _binding: FragmentAddonsBinding? = null
     private val binding get() = _binding!!
 
@@ -221,20 +230,28 @@ class AddonsFragment : Fragment() {
             R.string.installing_dual_screen_mod,
             true
         ) { progressCallback, _ ->
+            val addonDirectory = File(game.addonDir)
             when (
                 val result = DualScreenPackageInstaller.install(
                     context = activity,
                     uri = uri,
                     gameTitleId = game.programIdHex,
-                    addonDirectory = File(game.addonDir),
+                    addonDirectory = addonDirectory,
                     progressCallback = progressCallback
                 )
             ) {
                 is DualScreenPackageInstaller.Result.Installed -> {
                     addonViewModel.persistAddonStates()
                     val notes = applyDualScreenAddonStates(activity, game.programId, result)
+                    val problem = verifyDualScreenInstall(activity, game, addonDirectory, result)
                     addonViewModel.refreshAddons(force = true)
-                    if (notes.isEmpty()) {
+                    if (problem != null) {
+                        MessageDialogFragment.newInstance(
+                            activity,
+                            titleId = R.string.dual_screen_mod_install_failed,
+                            descriptionString = problem
+                        )
+                    } else if (notes.isEmpty()) {
                         activity.getString(R.string.dual_screen_mod_installed)
                     } else {
                         MessageDialogFragment.newInstance(
@@ -276,8 +293,14 @@ class AddonsFragment : Fragment() {
     ): String {
         val disabled = NativeConfig.getDisabledAddons(programId).toMutableList()
         val replaced = result.removed + result.notRemoved
-        if (replaced.any { it in disabled } && result.folderName !in disabled) {
-            disabled += result.folderName
+        if (replaced.any { it in disabled }) {
+            if (result.folderName !in disabled) {
+                disabled += result.folderName
+            }
+        } else {
+            // A fresh install (or a reinstall over the same folder) is meant to be used: a
+            // leftover entry for this folder name must not leave the second screen idle.
+            disabled.remove(result.folderName)
         }
         disabled.removeAll(result.removed.toSet())
 
@@ -317,6 +340,43 @@ class AddonsFragment : Fragment() {
             )
         }
         return notes.joinToString("\n\n")
+    }
+
+    /**
+     * Asks the same scanner the Add-ons list uses whether the package just installed is visible.
+     * Returns null when it is listed, otherwise what is wrong (also logged), so a package the
+     * list and the second screen cannot see is never reported as installed.
+     */
+    private fun verifyDualScreenInstall(
+        context: Context,
+        game: Game,
+        addonDirectory: File,
+        result: DualScreenPackageInstaller.Result.Installed
+    ): String? {
+        val folder = File(addonDirectory, result.folderName)
+        val scanned = NativeLibrary.getModLoadDirectory(game.programId)
+        val patches = NativeLibrary.getPatchesForFile(game.path, game.programId)
+        val problem = when {
+            patches == null -> context.getString(R.string.dual_screen_mod_check_no_scan)
+            patches.any {
+                PatchType.from(it.type) == PatchType.Mod && it.name == result.folderName &&
+                    it.version.contains(DUAL_SCREEN_ADDON_TYPE)
+            } -> null
+            !File(folder, "dualscreen/manifest.json").isFile ->
+                context.getString(R.string.dual_screen_mod_check_missing, folder.path)
+            else -> context.getString(
+                R.string.dual_screen_mod_check_not_listed,
+                folder.path,
+                scanned.ifEmpty { "-" }
+            )
+        }
+        val scannedText = scanned.ifEmpty { "-" }
+        Log.info(
+            "[DSModInstaller] self-check ${result.folderName}: " +
+                "installed under ${addonDirectory.path}, scanner reads $scannedText, " +
+                "${patches?.size ?: "no"} add-on(s) listed -> ${problem ?: "listed"}"
+        )
+        return problem
     }
 
     /** The message for a failed install: what went wrong, then the installer's detail. */

@@ -255,3 +255,6 @@ if(ANDROID)
 endif()
 
 create_target_directory_groups(common)
+
+# Keep header-only runtime/renderer development gates consistent in every consumer.
+target_compile_definitions(common PUBLIC EDEN_DSMOD_BUILD_DEV_TOOLS=$<BOOL:${EDEN_DSMOD_BUILD_DEV_TOOLS}>)

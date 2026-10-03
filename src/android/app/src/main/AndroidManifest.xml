@@ -32,6 +32,16 @@ SPDX-License-Identifier: GPL-3.0-or-later
     <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" tools:ignore="ScopedStorage" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
+    <!-- Eden Duo "No Companion: App": give the controller back to the game after opening the
+         chosen app on the second screen, and list launcher apps for the picker. -->
+    <uses-permission android:name="android.permission.REORDER_TASKS" />
+
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+    </queries>
 
     <application
         android:name="org.yuzu.yuzu_emu.YuzuApplication"
@@ -101,6 +111,16 @@ SPDX-License-Identifier: GPL-3.0-or-later
             </intent-filter>
             <meta-data android:name="android.nfc.action.TECH_DISCOVERED" android:resource="@xml/nfc_tech_filter" />
         </activity>
+
+        <!-- Eden Duo: the second screen on the default display while the game runs on a
+             secondary one. Its own task: the game's is pinned to the game's display. -->
+        <activity
+            android:name="org.yuzu.yuzu_emu.activities.AuxCompanionActivity"
+            android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:taskAffinity="${applicationId}.companion"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|uiMode|density|keyboard|keyboardHidden|navigation|locale|layoutDirection|fontScale" />
 
         <service android:name="org.yuzu.yuzu_emu.utils.ForegroundService" android:foregroundServiceType="specialUse">
             <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="Keep emulation running in background"/>

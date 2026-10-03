@@ -39,6 +39,8 @@ import org.yuzu.yuzu_emu.features.settings.model.view.SliderSetting
 import org.yuzu.yuzu_emu.features.settings.model.view.SpinBoxSetting
 import org.yuzu.yuzu_emu.features.settings.model.view.StringInputSetting
 import org.yuzu.yuzu_emu.features.settings.model.view.StringSingleChoiceSetting
+import org.yuzu.yuzu_emu.utils.CompanionApp
+import org.yuzu.yuzu_emu.utils.CompanionAppPicker
 import org.yuzu.yuzu_emu.utils.ParamPackage
 import org.yuzu.yuzu_emu.utils.collect
 
@@ -112,6 +114,13 @@ class SettingsDialogFragment : DialogFragment(), DialogInterface.OnClickListener
                             else -> {
                                 item.setting.reset()
                                 settingsViewModel.setAdapterItemChanged(position)
+                                if (CompanionApp.affectsPicker(item.setting)) { // Eden Duo
+                                    CompanionApp.onGlobalNoCompanionSet(
+                                        item.setting,
+                                        IntSetting.NO_COMPANION.defaultValue
+                                    )
+                                    settingsViewModel.setShouldReloadSettingsList(true)
+                                }
                             }
                         }
                     }
@@ -322,6 +331,10 @@ class SettingsDialogFragment : DialogFragment(), DialogInterface.OnClickListener
 
             SettingsItem.TYPE_STRING_SINGLE_CHOICE -> {
                 val item = settingsViewModel.clickedItem as StringSingleChoiceSetting
+                // Eden Duo: the No Companion app picker has a search field and app icons.
+                if (CompanionApp.rowLabel(item) != null) {
+                    return CompanionAppPicker.create(requireContext(), item, this)
+                }
                 MaterialAlertDialogBuilder(requireContext())
                     .setTitle(item.title)
                     .setSingleChoiceItems(item.choices, item.selectedValueIndex, this)
@@ -381,9 +394,11 @@ class SettingsDialogFragment : DialogFragment(), DialogInterface.OnClickListener
                         .show()
                 }
                 scSetting.setSelectedValue(value)
+                CompanionApp.onGlobalNoCompanionSet(scSetting.setting, value) // Eden Duo
 
                 if (scSetting.setting.key == IntSetting.RENDERER_SCALING_FILTER.key ||
-                    scSetting.setting.key == IntSetting.RENDERER_FRAME_GEN_TARGET_RATE.key
+                    scSetting.setting.key == IntSetting.RENDERER_FRAME_GEN_TARGET_RATE.key ||
+                    CompanionApp.affectsPicker(scSetting.setting) // Eden Duo
                 ) {
                     settingsViewModel.setShouldReloadSettingsList(true)
                 }
@@ -399,6 +414,9 @@ class SettingsDialogFragment : DialogFragment(), DialogInterface.OnClickListener
                 val scSetting = settingsViewModel.clickedItem as StringSingleChoiceSetting
                 val value = scSetting.getValueAt(which)
                 scSetting.setSelectedValue(value)
+                if (CompanionApp.affectsPicker(scSetting.setting)) { // Eden Duo
+                    settingsViewModel.setShouldReloadSettingsList(true)
+                }
             }
 
             is IntSingleChoiceSetting -> {

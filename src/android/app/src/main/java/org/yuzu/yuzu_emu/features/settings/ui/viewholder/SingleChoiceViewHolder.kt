@@ -10,6 +10,7 @@ import org.yuzu.yuzu_emu.features.settings.model.view.SettingsItem
 import org.yuzu.yuzu_emu.features.settings.model.view.SingleChoiceSetting
 import org.yuzu.yuzu_emu.features.settings.model.view.StringSingleChoiceSetting
 import org.yuzu.yuzu_emu.features.settings.ui.SettingsAdapter
+import org.yuzu.yuzu_emu.utils.CompanionApp
 import org.yuzu.yuzu_emu.utils.ViewUtils.setVisible
 
 class SingleChoiceViewHolder(val binding: ListItemSettingBinding, adapter: SettingsAdapter) :
@@ -36,7 +37,9 @@ class SingleChoiceViewHolder(val binding: ListItemSettingBinding, adapter: Setti
             }
 
             is StringSingleChoiceSetting -> {
-                binding.textSettingValue.text = item.getSelectedValue()
+                // Eden Duo: the No Companion app picker shows the app's name, not its component.
+                binding.textSettingValue.text =
+                    CompanionApp.rowLabel(item) ?: item.getSelectedValue()
             }
 
             is IntSingleChoiceSetting -> {

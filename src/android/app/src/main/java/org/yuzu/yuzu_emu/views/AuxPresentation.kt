@@ -3,165 +3,59 @@
 
 package org.yuzu.yuzu_emu.views
 
-import android.annotation.SuppressLint
 import android.app.Presentation
 import android.content.Context
-import android.content.res.Resources
-import android.database.ContentObserver
 import android.hardware.display.DisplayManager
-import android.os.Build
 import android.os.Bundle
-import android.os.Handler
-import android.os.Looper
-import android.os.VibrationAttributes
-import android.os.VibrationEffect
-import android.os.Vibrator
-import android.os.VibratorManager
-import android.provider.Settings
 import android.view.Display
-import android.view.HapticFeedbackConstants
-import android.view.MotionEvent
-import android.view.SurfaceHolder
-import android.view.SurfaceView
 import android.view.WindowManager
-import java.lang.ref.WeakReference
-import org.yuzu.yuzu_emu.NativeLibrary
-import org.yuzu.yuzu_emu.features.input.NativeInput
 import org.yuzu.yuzu_emu.utils.Log
 
 /**
- * DSMod second screen: a Presentation on the non-primary display holding one SurfaceView.
- * The native side presents the aux output (bound guest layer / mirror) to this surface and
+ * DSMod second screen: a Presentation on the non-primary display holding the AuxScreenHost
+ * view. The native side presents the aux output (bound guest layer / mirror) to its surface and
  * receives its touches as aux touch for the dsm:u service.
  *
  * Window rules learned on the AYN Thor: NOT_FOCUSABLE (a focusable second window steals the
  * controller), KEEP_SCREEN_ON (the main window's flag does not cover it).
+ *
+ * A Presentation can only go to a display carrying FLAG_PRESENTATION, which the default display
+ * never does; with the game on a secondary display, AuxCompanionActivity hosts the same view on
+ * the default one instead.
  */
-class AuxPresentation(context: Context, display: Display) :
-    Presentation(context, display), SurfaceHolder.Callback {
+class AuxPresentation(outerContext: Context, display: Display) :
+    Presentation(outerContext, display) {
 
-    private lateinit var surfaceView: SurfaceView
+    // Built on the Presentation's own context (the target display's), not the Activity's.
+    private val host by lazy {
+        AuxScreenHost(
+            context = context,
+            window = { window },
+            displayId = { getDisplay().displayId },
+            followSystemBrightness = true,
+            logTag = "[AuxPresentation]"
+        )
+    }
 
     /** The display this presentation is on. */
     val displayId: Int get() = display.displayId
 
-    @SuppressLint("ClickableViewAccessibility")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window?.addFlags(
             WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON or
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
         )
-        surfaceView = SurfaceView(context)
-        surfaceView.holder.addCallback(this)
-        surfaceView.setOnTouchListener { _, event -> onAuxTouch(event) }
-        surfaceView.isHapticFeedbackEnabled = true
-        setContentView(surfaceView)
+        setContentView(host.createView())
     }
 
     override fun onStart() {
         super.onStart()
-        // The two panels are lit independently on this hardware -- the same reason the window
-        // flags above have to be set here at all -- so the second screen keeps its own
-        // brightness unless it is told to follow. Left alone it sits at full while the main
-        // screen dims, which on a handheld reads as a fault and costs battery all evening.
-        applyBrightness(systemBrightness())
-        if (brightnessObserver == null) {
-            brightnessObserver = object : ContentObserver(Handler(Looper.getMainLooper())) {
-                override fun onChange(selfChange: Boolean) = applyBrightness(systemBrightness())
-            }.also { observer ->
-                try {
-                    context.contentResolver.registerContentObserver(
-                        Settings.System.getUriFor(Settings.System.SCREEN_BRIGHTNESS), false,
-                        observer
-                    )
-                    context.contentResolver.registerContentObserver(
-                        Settings.System.getUriFor(Settings.System.SCREEN_BRIGHTNESS_MODE), false,
-                        observer
-                    )
-                } catch (e: Exception) {
-                    Log.warning("[AuxPresentation] cannot watch brightness: ${e.message}")
-                }
-            }
-        }
-        current = WeakReference(this)
-    }
-
-    override fun surfaceCreated(holder: SurfaceHolder) {
-        // All work happens in surfaceChanged, which always follows creation.
-    }
-
-    override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
-        Log.info("[AuxPresentation] surface changed: ${width}x${height} on display ${display.displayId}")
-        NativeLibrary.auxSurfaceChanged(holder.surface)
-    }
-
-    override fun surfaceDestroyed(holder: SurfaceHolder) {
-        Log.info("[AuxPresentation] surface destroyed")
-        NativeLibrary.auxSurfaceDestroyed()
-    }
-
-    private var brightnessObserver: ContentObserver? = null
-
-    /// The system's brightness as a window value in 0..1, or BRIGHTNESS_OVERRIDE_NONE when it
-    /// cannot be known -- under automatic brightness the stored number is not what is on screen,
-    /// and guessing would fight the light sensor rather than follow it.
-    private fun systemBrightness(): Float = try {
-        val automatic = Settings.System.getInt(
-            context.contentResolver, Settings.System.SCREEN_BRIGHTNESS_MODE,
-            Settings.System.SCREEN_BRIGHTNESS_MODE_MANUAL
-        ) == Settings.System.SCREEN_BRIGHTNESS_MODE_AUTOMATIC
-        if (automatic) {
-            WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
-        } else {
-            val raw = Settings.System.getInt(
-                context.contentResolver, Settings.System.SCREEN_BRIGHTNESS, -1
-            )
-            if (raw < 0) {
-                WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
-            } else {
-                (raw.toFloat() / brightnessMax.toFloat()).coerceIn(0.01f, 1.0f)
-            }
-        }
-    } catch (e: Exception) {
-        WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
-    }
-
-    /// Full scale is not 255 everywhere -- panels reporting 1023 and 2047 are both common, and
-    /// assuming 255 on one of those pins the second screen at maximum no matter the setting.
-    private val brightnessMax: Int by lazy {
-        try {
-            val id = Resources.getSystem()
-                .getIdentifier("config_screenBrightnessSettingMaximum", "integer", "android")
-            if (id != 0) Resources.getSystem().getInteger(id).coerceAtLeast(1) else 255
-        } catch (e: Exception) {
-            255
-        }
-    }
-
-    /** Sets this screen's brightness (a window value in 0..1, or BRIGHTNESS_OVERRIDE_NONE). */
-    private fun applyBrightness(value: Float) {
-        window?.let { w ->
-            val params = w.attributes
-            if (params.screenBrightness != value) {
-                params.screenBrightness = value
-                w.attributes = params
-            }
-        }
+        host.start()
     }
 
     override fun onStop() {
-        if (current?.get() === this) {
-            current = null
-        }
-        brightnessObserver?.let {
-            try {
-                context.contentResolver.unregisterContentObserver(it)
-            } catch (e: Exception) {
-                Log.warning("[AuxPresentation] brightness observer already gone: ${e.message}")
-            }
-        }
-        brightnessObserver = null
+        host.stop()
         super.onStop()
     }
 
@@ -179,182 +73,14 @@ class AuxPresentation(context: Context, display: Display) :
         }
     }
 
-    // --- DSMod haptics -----------------------------------------------------------------------
-
-    private val mainHandler = Handler(Looper.getMainLooper())
-
-    private val vibrator: Vibrator? by lazy {
-        try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                (context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as? VibratorManager)
-                    ?.defaultVibrator
-            } else {
-                @Suppress("DEPRECATION")
-                context.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
-            }
-        } catch (e: Exception) {
-            Log.warning("[AuxPresentation] no vibrator service: ${e.message}")
-            null
-        }
-    }
-
-    /// The user's "touch feedback" switch (Settings > Sound & vibration). Unknown counts as on.
-    @Suppress("DEPRECATION")
-    private fun systemHapticsEnabled(): Boolean = try {
-        Settings.System.getInt(
-            context.contentResolver, Settings.System.HAPTIC_FEEDBACK_ENABLED, 1
-        ) != 0
-    } catch (e: Exception) {
-        true
-    }
-
-    /**
-     * Plays one runtime haptic (UI thread). The view path is preferred: it follows the system's
-     * haptic settings and the device's own tuned effects. When the view declines although the
-     * user has touch feedback on (a window the system does not vibrate for), or the package asks
-     * to play regardless of the setting, the default vibrator plays the matching predefined effect.
-     */
-    private fun performHaptic(strength: Int, kind: Int, flags: Int) {
-        // Posted from a native thread: the screen may have been dismissed since.
-        if (!isShowing || !this::surfaceView.isInitialized) return
-        val respectSystem = (flags and 1) != 0
-        val constant = when (strength) {
-            1 -> HapticFeedbackConstants.CONTEXT_CLICK
-            2 -> HapticFeedbackConstants.KEYBOARD_TAP
-            3 -> if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                HapticFeedbackConstants.CONFIRM
-            } else {
-                HapticFeedbackConstants.VIRTUAL_KEY
-            }
-            4 -> HapticFeedbackConstants.LONG_PRESS
-            5 -> if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                HapticFeedbackConstants.REJECT
-            } else {
-                HapticFeedbackConstants.LONG_PRESS
-            }
-            else -> return
-        }
-        @Suppress("DEPRECATION")
-        val viewFlags =
-            if (respectSystem) 0 else HapticFeedbackConstants.FLAG_IGNORE_GLOBAL_SETTING
-        val systemOn = systemHapticsEnabled()
-        var path = "view"
-        if (!surfaceView.performHapticFeedback(constant, viewFlags)) {
-            path = if (respectSystem && !systemOn) {
-                "skipped (system touch feedback off)"
-            } else if (vibrateFallback(strength)) {
-                "vibrator"
-            } else {
-                "unavailable"
-            }
-        }
-        if (hapticLogBudget > 0) {
-            hapticLogBudget--
-            Log.info(
-                "[AuxPresentation] haptic strength $strength kind $kind -> $path " +
-                    "(system touch feedback ${if (systemOn) "on" else "off"}, " +
-                    "respect_system $respectSystem, display ${display.displayId})"
-            )
-        }
-    }
-
-    private fun vibrateFallback(strength: Int): Boolean {
-        val vib = vibrator ?: return false
-        if (!vib.hasVibrator() || Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return false
-        val effectId = when (strength) {
-            1 -> VibrationEffect.EFFECT_TICK
-            2, 3 -> VibrationEffect.EFFECT_CLICK
-            4 -> VibrationEffect.EFFECT_HEAVY_CLICK
-            5 -> VibrationEffect.EFFECT_DOUBLE_CLICK
-            else -> return false
-        }
-        return try {
-            val effect = VibrationEffect.createPredefined(effectId)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                vib.vibrate(
-                    effect,
-                    VibrationAttributes.createForUsage(VibrationAttributes.USAGE_TOUCH)
-                )
-            } else {
-                @Suppress("DEPRECATION")
-                vib.vibrate(effect)
-            }
-            true
-        } catch (e: Exception) {
-            Log.warning("[AuxPresentation] vibrator failed: ${e.message}")
-            false
-        }
-    }
-
-    private val touchIds = IntArray(MAX_TOUCH)
-    private val touchXs = FloatArray(MAX_TOUCH)
-    private val touchYs = FloatArray(MAX_TOUCH)
-
-    private fun onAuxTouch(event: MotionEvent): Boolean {
-        val action = event.actionMasked
-        when (action) {
-            MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN,
-            MotionEvent.ACTION_MOVE, MotionEvent.ACTION_UP,
-            MotionEvent.ACTION_POINTER_UP, MotionEvent.ACTION_CANCEL -> Unit
-            else -> return false
-        }
-        if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
-            NativeInput.onAuxTouchEvent(touchIds, touchXs, touchYs, 0, 0)
-            return true
-        }
-        // Report every pointer still down; on POINTER_UP the lifted pointer is dropped. The
-        // buffers are reused: the native side copies them before returning.
-        val lifting = if (action == MotionEvent.ACTION_POINTER_UP) event.actionIndex else -1
-        val n = event.pointerCount
-        val ids = touchIds
-        val xs = touchXs
-        val ys = touchYs
-        var count = 0
-        var startMask = 0
-        for (i in 0 until n) {
-            if (i == lifting) continue
-            if (count == MAX_TOUCH) break
-            ids[count] = event.getPointerId(i)
-            xs[count] = event.getX(i)
-            ys[count] = event.getY(i)
-            if ((action == MotionEvent.ACTION_DOWN || action == MotionEvent.ACTION_POINTER_DOWN) &&
-                i == event.actionIndex
-            ) {
-                startMask = startMask or (1 shl count)
-            }
-            count++
-        }
-        NativeInput.onAuxTouchEvent(ids, xs, ys, count, startMask)
-        return true
-    }
-
     companion object {
-        /** Touch points the native side takes (AuxRouting::MaxTouch). */
-        private const val MAX_TOUCH = 16
-
-        /** The presentation currently on screen, for native haptic requests. */
-        @Volatile
-        private var current: WeakReference<AuxPresentation>? = null
-
-        /** The first haptics of a session are logged with the path that played them. */
-        @Volatile
-        private var hapticLogBudget = 24
-
         /**
-         * A haptic from the dual-screen runtime (any thread): played on the UI thread by the
-         * second screen's view. Dropped while no presentation is showing.
-         */
-        @JvmStatic
-        fun playHaptic(strength: Int, kind: Int, flags: Int) {
-            val presentation = current?.get() ?: return
-            presentation.mainHandler.post { presentation.performHaptic(strength, kind, flags) }
-        }
-
-        /**
-         * Candidate aux displays, best first. Physical second panels come first: the AYN Thor's
-         * "Screen-2" and Cuttlefish's second built-in screen do NOT carry FLAG_PRESENTATION,
-         * while simulated/overlay displays do -- picking by that flag alone lands on the wrong
-         * screen. Some displays still refuse app windows, so callers must fall back down the list.
+         * Candidate aux displays, best first. Physical second panels come first and simulated or
+         * overlay displays last: both kinds can carry FLAG_PRESENTATION (the AYN Thor's
+         * "Screen-2" does, which is why a Presentation works there), so that flag alone does not
+         * find the real panel. A Presentation is refused on any display without the flag -- the
+         * default display never has it -- and some displays refuse app windows anyway, so
+         * callers must fall back down the list.
          */
         fun auxDisplayCandidates(context: Context, ownDisplayId: Int): List<Display> {
             val dm = context.getSystemService(Context.DISPLAY_SERVICE) as DisplayManager
@@ -377,15 +103,17 @@ class AuxPresentation(context: Context, display: Display) :
             val candidates = all.values.filter {
                 it.displayId != ownDisplayId && it.state != Display.STATE_OFF
             }
-            val simulated = candidates.filter {
-                it.name.contains("Overlay", ignoreCase = true) ||
-                    it.name.contains("Simulated", ignoreCase = true) ||
-                    it.name.contains("Virtual", ignoreCase = true)
-            }
+            val simulated = candidates.filter { isSimulatedDisplay(it) }
             val physical = candidates - simulated.toSet()
             return (physical.sortedByDescending { it.name.contains("Screen-2", ignoreCase = true) } +
                 simulated)
         }
+
+        /** A developer-options overlay or a virtual display rather than a real panel. */
+        fun isSimulatedDisplay(display: Display): Boolean =
+            display.name.contains("Overlay", ignoreCase = true) ||
+                display.name.contains("Simulated", ignoreCase = true) ||
+                display.name.contains("Virtual", ignoreCase = true)
 
         /**
          * Shows the aux presentation on the first candidate display that accepts a window.

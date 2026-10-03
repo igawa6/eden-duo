@@ -9,11 +9,13 @@
 
 #pragma once
 
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include "common/common_types.h"
+#include "core/mods/mod_expr.h"
 
 namespace Core::Mods {
 
@@ -221,6 +223,15 @@ struct DerivedPoint {
     /// when any one of them is missing (fails closed, like any_eq). Empty list = not this form.
     std::vector<std::string> nonzero_sources;
     bool nonzero_require_all{false}; ///< true = all_nonzero, false = any_nonzero
+    /// Runtime 16 countdown form: publishes max(0, countdown_target - countdown_now), missing when
+    /// either side is missing. countdown_now is the "now" source (default "@clock.epoch", or e.g.
+    /// "@game.seconds"); empty = not a countdown entry.
+    CmpOperand countdown_target;
+    std::string countdown_now;
+    /// Runtime 17 expression form (mod_expr.h): the source text and its program, compiled once at
+    /// load. A program that failed to compile publishes 0. Null program = not an expr entry.
+    std::string expr;
+    std::shared_ptr<const ExprProgram> expr_program;
 };
 
 } // namespace Core::Mods

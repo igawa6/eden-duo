@@ -29,6 +29,9 @@ class AddonAdapter(val addonViewModel: AddonViewModel) :
             }
             binding.title.text = model.name
             binding.version.text = model.version
+            // A recycled holder still carries the previous item's listener: setting isChecked
+            // with it attached would copy this item's state onto that other add-on.
+            binding.addonSwitch.setOnCheckedChangeListener(null)
             binding.addonSwitch.isChecked = model.enabled
 
             binding.addonSwitch.setOnCheckedChangeListener { _, checked ->

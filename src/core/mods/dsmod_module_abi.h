@@ -59,6 +59,16 @@ enum {
     EDEN_DSMOD_CAP_SOURCE_PREFIXES = UINT64_C(1) << 7,
     EDEN_DSMOD_CAP_SOURCE_BASE = UINT64_C(1) << 8,
     EDEN_DSMOD_CAP_SOURCE_AOC = UINT64_C(1) << 9,
+    // Runtime 17: set while the "user:" source is registered -- files the player puts in
+    // <Eden data>/dualscreen/user/<TITLEID>/ (read-only; no "..", 32 MiB per file).
+    EDEN_DSMOD_CAP_SOURCE_USER = UINT64_C(1) << 10,
+    // Runtime 18 (host capability only -- a module must not set it in its own
+    // capabilities, or older hosts refuse it): the host watches the module's published integer
+    // "__font_epoch" (publish_i64, missing = 0) and calls decode_font again whenever it differs
+    // from its value when decode_font last ran (a fresh bounded retry; the font in use stays
+    // until the new one is decoded), then reloads the font atlas image and repaints. For a module
+    // whose glyph set depends on state it learns late (the game language).
+    EDEN_DSMOD_CAP_FONT_EPOCH = UINT64_C(1) << 11,
 };
 
 enum {
@@ -198,6 +208,9 @@ struct EdenDsmodModuleApi {
     uint64_t capabilities;
 
     EdenDsmodBool (*supports_build)(const char* build_id);
+    // `host` is fully set up when create() runs: read_romfs (every registered source) and the
+    // other readers work from inside it (runtime 16 guarantees it; a romfs that is not ready yet
+    // is opened again on a later read instead of staying unavailable for the session).
     void* (*create)(const EdenDsmodHostApi* host, const char* config_json);
     void (*destroy)(void* instance);
     void (*sample)(void* instance, const EdenDsmodHostApi* host);

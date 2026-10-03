@@ -19,6 +19,7 @@
 
 #include <chrono>
 #include <ranges>
+#include "common/dsmod_dev_tools.h"
 #include "common/logging.h"
 #include "common/scope_exit.h"
 #include "common/settings.h"
@@ -91,9 +92,10 @@ constexpr VkFormat CaptureFormat = VK_FORMAT_A8B8G8R8_UNORM_PACK32;
 
 bool DsmodProfilingEnabled() {
     static const bool enabled = [] {
-        const char* value = std::getenv("EDEN_DSMOD_PROFILE");
-        return !value || (std::strcmp(value, "0") != 0 && std::strcmp(value, "false") != 0 &&
-                          std::strcmp(value, "FALSE") != 0);
+        const char* value = Common::DSMod::DevEnvironment("EDEN_DSMOD_PROFILE");
+        return Common::DSMod::DevToolsEnabled &&
+               (!value || (std::strcmp(value, "0") != 0 && std::strcmp(value, "false") != 0 &&
+                           std::strcmp(value, "FALSE") != 0));
     }();
     return enabled;
 }
@@ -316,7 +318,7 @@ void RendererVulkan::Composite(std::span<const Tegra::FramebufferConfig> framebu
     // swapchain images, and presenting then blocks the GPU thread, which stalls the guest with
     // it. EDEN_NO_PRESENT keeps everything upstream of the present -- including screenshots --
     // running and simply never hands a frame to the window.
-    static const bool no_present = std::getenv("EDEN_NO_PRESENT") != nullptr;
+    static const bool no_present = Common::DSMod::DevEnvironment("EDEN_NO_PRESENT") != nullptr;
     if (no_present || !render_window.IsShown() || primary.empty()) {
         gpu.RendererFrameEndNotify();
         rasterizer.TickFrame();
@@ -717,7 +719,7 @@ bool RendererVulkan::RenderAuxModUi() {
     };
     // Developer check (EDEN_DSMOD_AUX_VERIFY): read the aux image back after every upload and
     // compare it with the routing buffer the upload came from. Costs a GPU drain per upload.
-    static const bool verify_uploads = std::getenv("EDEN_DSMOD_AUX_VERIFY") != nullptr;
+    static const bool verify_uploads = Common::DSMod::DevEnvironment("EDEN_DSMOD_AUX_VERIFY") != nullptr;
     static std::vector<u32> verify_expect;
     std::array<s32, 4> dirty{0, 0, 0, 0};
     const bool updated =
@@ -795,11 +797,15 @@ bool RendererVulkan::RenderAuxModUi() {
                      verified, bad_frames, bad_px_max);
         }
     }
+    // Eden Duo: Fit keeps the canvas shape inside a panel of another shape (bars in the page
+    // background); a full rect is the plain whole-frame blit.
+    const auto fit = VideoCore::DSMod::FitCompanion(layout.width, layout.height, aux_ui_w, aux_ui_h,
+                                                    VideoCore::DSMod::SecondScreenOptions::Ratio());
     // The UI changes at <=30 Hz but this runs every presented frame; re-blitting an identical
     // image cost a whole extra present per frame (~6 ms on the Adreno panel). The panel holds
     // the last present, so when nothing changed leave it up.
     if (!updated && aux_ui_presented && aux_ui_last_w == layout.width &&
-        aux_ui_last_h == layout.height) {
+        aux_ui_last_h == layout.height && aux_ui_last_full == fit.full) {
         return true;
     }
     const VkExtent2D ui_extent{aux_ui_w, aux_ui_h};
@@ -820,8 +826,12 @@ bool RendererVulkan::RenderAuxModUi() {
 
     const VkExtent2D dst_extent{frame->width, frame->height};
     scheduler.RequestOutsideRenderPassOperationContext();
-    scheduler.Record([src = *aux_ui_image, dst = *frame->image, ui_extent,
-                      dst_extent](vk::CommandBuffer cmdbuf) {
+    const u32 bar = aux.ui_bg.load(std::memory_order_relaxed);
+    const VkClearColorValue bar_color{.float32 = {static_cast<f32>((bar >> 16) & 0xFF) / 255.0f,
+                                                  static_cast<f32>((bar >> 8) & 0xFF) / 255.0f,
+                                                  static_cast<f32>(bar & 0xFF) / 255.0f, 1.0f}};
+    scheduler.Record([src = *aux_ui_image, dst = *frame->image, ui_extent, dst_extent, fit,
+                      bar_color](vk::CommandBuffer cmdbuf) {
         const auto transition = [&](VkImage image, VkImageLayout old_layout,
                                     VkImageLayout new_layout, VkAccessFlags src_access,
                                     VkAccessFlags dst_access) {
@@ -844,6 +854,14 @@ bool RendererVulkan::RenderAuxModUi() {
                    VK_ACCESS_TRANSFER_READ_BIT);
         transition(dst, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 0,
                    VK_ACCESS_TRANSFER_WRITE_BIT);
+        if (!fit.full) {
+            // The blit covers only the fitted rect: the bars are the page background.
+            cmdbuf.ClearColorImage(dst, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, bar_color,
+                                   VkImageSubresourceRange{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1});
+            transition(dst, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                       VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_ACCESS_TRANSFER_WRITE_BIT,
+                       VK_ACCESS_TRANSFER_WRITE_BIT);
+        }
         const VkImageBlit region{
             .srcSubresource{.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
                             .mipLevel = 0,
@@ -856,8 +874,12 @@ bool RendererVulkan::RenderAuxModUi() {
                             .baseArrayLayer = 0,
                             .layerCount = 1},
             .dstOffsets{
-                {0, 0, 0},
-                {static_cast<s32>(dst_extent.width), static_cast<s32>(dst_extent.height), 1}},
+                fit.full ? VkOffset3D{0, 0, 0}
+                         : VkOffset3D{static_cast<s32>(fit.x), static_cast<s32>(fit.y), 0},
+                fit.full ? VkOffset3D{static_cast<s32>(dst_extent.width),
+                                      static_cast<s32>(dst_extent.height), 1}
+                         : VkOffset3D{static_cast<s32>(fit.x + fit.w),
+                                      static_cast<s32>(fit.y + fit.h), 1}},
         };
         cmdbuf.BlitImage(src, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, dst,
                          VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, region, VK_FILTER_LINEAR);
@@ -872,6 +894,7 @@ bool RendererVulkan::RenderAuxModUi() {
     aux_ui_presented = true;
     aux_ui_last_w = layout.width;
     aux_ui_last_h = layout.height;
+    aux_ui_last_full = fit.full;
     return true;
 }
 
@@ -1002,7 +1025,7 @@ bool RendererVulkan::RenderAuxModUiGpu() {
         ++aux_c_upload_count[s];
         // Developer check (EDEN_DSMOD_AUX_VERIFY), as for the canvas path: read the slot image
         // back after every upload and compare it with the routing buffer it came from.
-        static const bool verify_slots = std::getenv("EDEN_DSMOD_AUX_VERIFY") != nullptr;
+        static const bool verify_slots = Common::DSMod::DevEnvironment("EDEN_DSMOD_AUX_VERIFY") != nullptr;
         if (verify_slots) {
             static std::array<u64, NumAuxTex> verified{}, bad_uploads{};
             const size_t nbytes = px.size_bytes();
@@ -1070,11 +1093,15 @@ bool RendererVulkan::RenderAuxModUiGpu() {
         device.GetLogical().UpdateDescriptorSets(writes, {});
         aux_c_map_desc_ready = true;
     }
+    // Eden Duo: Fit keeps the canvas shape (see RenderAuxModUi); the bars are the page
+    // background the full-frame clear below already lays down.
+    const auto fit = VideoCore::DSMod::FitCompanion(layout.width, layout.height, aux_c_cw, aux_c_ch,
+                                                    VideoCore::DSMod::SecondScreenOptions::Ratio());
     // Hold the last present when nothing changed: the panel keeps showing it, so we neither
     // re-record nor re-present (presenting every game frame halved fps). A panel resize or a
     // reattach (DestroyAuxLocked clears aux_c_presented) re-presents the kept composite.
     if (!aux_c_dirty && aux_c_presented && aux_c_last_w == layout.width &&
-        aux_c_last_h == layout.height) {
+        aux_c_last_h == layout.height && aux_c_last_full == fit.full) {
         return true;
     }
 
@@ -1089,8 +1116,12 @@ bool RendererVulkan::RenderAuxModUiGpu() {
     const VkExtent2D render_area{frame->width, frame->height};
     const std::array<f32, 4> scale_offset{2.0f / static_cast<f32>(aux_c_cw),
                                           2.0f / static_cast<f32>(aux_c_ch), -1.0f, -1.0f};
-    const f32 canvas_to_frame_x = static_cast<f32>(render_area.width) / aux_c_cw;
-    const f32 canvas_to_frame_y = static_cast<f32>(render_area.height) / aux_c_ch;
+    const f32 canvas_to_frame_x =
+        static_cast<f32>(fit.full ? render_area.width : fit.w) / aux_c_cw;
+    const f32 canvas_to_frame_y =
+        static_cast<f32>(fit.full ? render_area.height : fit.h) / aux_c_ch;
+    const s32 frame_x0 = fit.full ? 0 : static_cast<s32>(fit.x);
+    const s32 frame_y0 = fit.full ? 0 : static_cast<s32>(fit.y);
     const f32 br = static_cast<f32>((aux_c_bg >> 16) & 0xFF) / 255.0f;
     const f32 bgg = static_cast<f32>((aux_c_bg >> 8) & 0xFF) / 255.0f;
     const f32 bb = static_cast<f32>(aux_c_bg & 0xFF) / 255.0f;
@@ -1123,8 +1154,8 @@ bool RendererVulkan::RenderAuxModUiGpu() {
     scheduler.Record([draws = std::move(draws), fb = *frame->framebuffer, rp = *aux_c_render_pass,
                       pipe = *aux_c_pipeline, map_pipe = *aux_c_map_pipeline,
                       pl = *aux_c_pipe_layout, map_pl = *aux_c_map_pipe_layout, render_area,
-                      scale_offset, canvas_to_frame_x, canvas_to_frame_y, br, bgg, bb,
-                      ba](vk::CommandBuffer cmdbuf) {
+                      scale_offset, canvas_to_frame_x, canvas_to_frame_y, frame_x0, frame_y0,
+                      fit, br, bgg, bb, ba](vk::CommandBuffer cmdbuf) {
         BeginRenderPass(cmdbuf, rp, fb, render_area);
         const VkClearAttachment clear_att{
             .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
@@ -1137,6 +1168,27 @@ bool RendererVulkan::RenderAuxModUiGpu() {
             .layerCount = 1,
         };
         cmdbuf.ClearAttachments({clear_att}, {clear_rect});
+        if (!fit.full) {
+            // Draw the canvas into the fitted rect only; the clear above made the bars.
+            const VkViewport fit_viewport{
+                .x = static_cast<f32>(fit.x),
+                .y = static_cast<f32>(fit.y),
+                .width = static_cast<f32>(fit.w),
+                .height = static_cast<f32>(fit.h),
+                .minDepth = 0.0f,
+                .maxDepth = 1.0f,
+            };
+            const VkRect2D fit_scissor{
+                .offset = {static_cast<s32>(fit.x), static_cast<s32>(fit.y)},
+                .extent = {fit.w, fit.h},
+            };
+            cmdbuf.SetViewport(0, fit_viewport);
+            cmdbuf.SetScissor(0, fit_scissor);
+        }
+        const s32 area_x1 = fit.full ? static_cast<s32>(render_area.width)
+                                     : static_cast<s32>(fit.x + fit.w);
+        const s32 area_y1 = fit.full ? static_cast<s32>(render_area.height)
+                                     : static_cast<s32>(fit.y + fit.h);
         for (const auto& d : draws) {
             const Quad& q = d.q;
             if (q.solid) {
@@ -1144,16 +1196,18 @@ bool RendererVulkan::RenderAuxModUiGpu() {
                 const f32 sg = static_cast<f32>((q.color >> 8) & 0xFF) / 255.0f;
                 const f32 sb = static_cast<f32>(q.color & 0xFF) / 255.0f;
                 const f32 sa = static_cast<f32>((q.color >> 24) & 0xFF) / 255.0f;
-                const auto left = static_cast<s32>(std::floor(q.x * canvas_to_frame_x));
-                const auto top = static_cast<s32>(std::floor(q.y * canvas_to_frame_y));
+                const auto left =
+                    frame_x0 + static_cast<s32>(std::floor(q.x * canvas_to_frame_x));
+                const auto top =
+                    frame_y0 + static_cast<s32>(std::floor(q.y * canvas_to_frame_y));
                 const auto right =
-                    static_cast<s32>(std::ceil((q.x + q.w) * canvas_to_frame_x));
+                    frame_x0 + static_cast<s32>(std::ceil((q.x + q.w) * canvas_to_frame_x));
                 const auto bottom =
-                    static_cast<s32>(std::ceil((q.y + q.h) * canvas_to_frame_y));
-                const s32 x0 = std::clamp(left, 0, static_cast<s32>(render_area.width));
-                const s32 y0 = std::clamp(top, 0, static_cast<s32>(render_area.height));
-                const s32 x1 = std::clamp(right, x0, static_cast<s32>(render_area.width));
-                const s32 y1 = std::clamp(bottom, y0, static_cast<s32>(render_area.height));
+                    frame_y0 + static_cast<s32>(std::ceil((q.y + q.h) * canvas_to_frame_y));
+                const s32 x0 = std::clamp(left, frame_x0, area_x1);
+                const s32 y0 = std::clamp(top, frame_y0, area_y1);
+                const s32 x1 = std::clamp(right, x0, area_x1);
+                const s32 y1 = std::clamp(bottom, y0, area_y1);
                 const VkClearAttachment solid_att{
                     .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
                     .colorAttachment = 0,
@@ -1191,7 +1245,7 @@ bool RendererVulkan::RenderAuxModUiGpu() {
     aux_c_draw_tick = scheduler.CurrentTick();
     // Debug: pull the composited frame back and hand it to the screenshot path (screen2.png).
     // Costs a full GPU drain per present, so it is a developer switch, read once.
-    static const bool readback = std::getenv("EDEN_DSMOD_GPU_READBACK") != nullptr;
+    static const bool readback = Common::DSMod::DevEnvironment("EDEN_DSMOD_GPU_READBACK") != nullptr;
     if (readback) {
         const size_t nbytes = static_cast<size_t>(frame->width) * frame->height * 4;
         if (!aux_c_readback_buf || aux_c_readback_w != frame->width ||
@@ -1214,6 +1268,7 @@ bool RendererVulkan::RenderAuxModUiGpu() {
     aux_c_dirty = false;
     aux_c_last_w = layout.width;
     aux_c_last_h = layout.height;
+    aux_c_last_full = fit.full;
     if (readback) {
         scheduler.Finish();
         aux_c_readback_buf.Invalidate();

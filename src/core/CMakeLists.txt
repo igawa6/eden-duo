@@ -919,13 +919,23 @@ add_library(core STATIC
     mods/mod_manifest.cpp
     mods/mod_persist.cpp
     mods/mod_persist.h
+    mods/mod_clock.cpp
+    mods/mod_clock.h
+    mods/mod_expr.cpp
+    mods/mod_expr.h
     mods/mod_state.cpp
     mods/mod_actions.cpp
     mods/mod_input.cpp
+    mods/mod_nav.cpp
+    mods/mod_nav.h
     mods/mod_pages.cpp
     mods/mod_assets.cpp
     mods/mod_sources.cpp
     mods/mod_sources.h
+    mods/mod_settings.cpp
+    mods/mod_settings.h
+    mods/mod_user_source.cpp
+    mods/mod_user_source.h
     mods/mod_romfs_sources.cpp
     mods/mod_romfs_sources.h
     mods/mod_map.cpp
@@ -948,6 +958,9 @@ add_library(core STATIC
     mods/mod_nx_assets.cpp
     mods/mod_nx_assets.h
     mods/mod_nx_runtime.cpp
+    mods/mod_font_pages.cpp
+    mods/mod_font_pages.h
+    mods/mod_font_epoch.h
     mods/mod_load_plan.cpp
     mods/mod_load_plan.h
     mods/dsmod_module_extensions.h
@@ -957,6 +970,7 @@ add_library(core STATIC
     mods/mod_types_composite.h
     mods/mod_types_guest.h
     mods/mod_types_map.h
+    mods/mod_types_nav.h
     mods/mod_types_page.h
     mods/mod_types_points.h
     mods/mod_types_text.h
@@ -1282,8 +1296,7 @@ endif()
 # a plain local `cmake -B build` with no extra flags -- because it is actively used for RE work;
 # only the release build turns it OFF: one option, default chosen for the common (dev) case,
 # flipped for the one build that ships.
-option(EDEN_DSMOD_BUILD_DEV_TOOLS "Build the DSMod RE/heap-analysis developer toolkit" ON)
-target_compile_definitions(core PRIVATE EDEN_DSMOD_BUILD_DEV_TOOLS=$<BOOL:${EDEN_DSMOD_BUILD_DEV_TOOLS}>)
+# The option is declared at the root and propagated by common to all consumers.
 
 target_include_directories(core PRIVATE ${OPUS_INCLUDE_DIRS})
 target_link_libraries(core PUBLIC common PRIVATE audio_core hid_core network video_core nx_tzdb tz)

@@ -73,10 +73,14 @@ std::shared_ptr<const LabelBitmap> MapLabelBitmap(const Canvas& target, const st
     static std::unordered_map<std::string, std::shared_ptr<const LabelBitmap>> cache;
     std::scoped_lock lock{MapLabelBitmapMutex()};
     const FontMetrics* const fm = target.HasFont() ? target.font_metrics : nullptr;
+    // A paged font (runtime 17) has no atlas image: its page cache stands for it in the key.
+    const void* const atlas_id =
+        !target.HasFont() ? nullptr
+        : target.font_atlas != nullptr ? static_cast<const void*>(target.font_atlas)
+                                       : static_cast<const void*>(target.font_pages);
     const std::string key = fmt::format(
         "{}\x1f{}\x1f{:08X}\x1f{:08X}\x1f{}\x1f{}\x1f{}\x1f{}", text, scale, color, outline_color,
-        outline, static_cast<const void*>(target.HasFont() ? target.font_atlas : nullptr),
-        static_cast<const void*>(fm), fm != nullptr ? fm->line_height : 0);
+        outline, atlas_id, static_cast<const void*>(fm), fm != nullptr ? fm->line_height : 0);
     if (const auto it = cache.find(key); it != cache.end()) {
         return it->second;
     }
@@ -86,6 +90,7 @@ std::shared_ptr<const LabelBitmap> MapLabelBitmap(const Canvas& target, const st
     Canvas tmp;
     if (target.HasFont()) {
         tmp.SetFont(target.font_atlas, target.font_metrics);
+        tmp.SetFontPages(target.font_pages); // runtime 17 paged font
     }
     const s32 o = std::clamp(outline, 0, 16);
     const s32 text_w = tmp.MeasureText(text, scale);
@@ -108,6 +113,12 @@ std::shared_ptr<const LabelBitmap> MapLabelBitmap(const Canvas& target, const st
         }
     }
     tmp.DrawText(ox, oy, text, scale, color);
+    // A glyph whose font page is still loading drew blank: hand this picture out uncached.
+    const bool partial = tmp.TakeGlyphsPending();
+    const auto keep = [&](LabelBitmap&& b) {
+        auto made = std::make_shared<const LabelBitmap>(std::move(b));
+        return partial ? made : cache.emplace(key, std::move(made)).first->second;
+    };
     // Keep only the inked box: the margins for accents / descenders are mostly empty, and every
     // redraw blits the whole picture.
     const auto& px = tmp.Pixels();
@@ -125,8 +136,7 @@ std::shared_ptr<const LabelBitmap> MapLabelBitmap(const Canvas& target, const st
     LabelBitmap bmp;
     bmp.text_w = text_w;
     if (x1 < x0) {
-        return cache.emplace(key, std::make_shared<const LabelBitmap>(std::move(bmp)))
-            .first->second; // nothing inked
+        return keep(std::move(bmp)); // nothing inked
     }
     bmp.image.w = static_cast<u32>(x1 - x0 + 1);
     bmp.image.h = static_cast<u32>(y1 - y0 + 1);
@@ -137,7 +147,7 @@ std::shared_ptr<const LabelBitmap> MapLabelBitmap(const Canvas& target, const st
     }
     bmp.ox = ox - x0;
     bmp.oy = oy - y0;
-    return cache.emplace(key, std::make_shared<const LabelBitmap>(std::move(bmp))).first->second;
+    return keep(std::move(bmp));
 }
 
 /// The area a Map widget shows this draw: named by the room (or area) string point, by the
@@ -1412,8 +1422,10 @@ void GeometryMapDraw::DrawDynamicMarkers() {
             const float wy = static_cast<float>(*vy) * dm.scale_y + dm.offset_y;
             const bool is_sel = selected == i;
             // A world-sized marker scales with the zoom (ppw includes it).
-            const float sz = dm.size_world > 0.0f ? dm.size_world * ppw
-                                                  : static_cast<float>(is_sel ? sel_sz : base_sz);
+            const float world_sz = dm.size_world > 0.0f
+                                       ? dm.size_world * ppw
+                                       : static_cast<float>(is_sel ? sel_sz : base_sz);
+            const float sz = dm.size_max > 0.0f ? std::min(world_sz, dm.size_max) : world_sz;
             const float qx = to_x(wx) - dm.anchor_x * sz;
             const float qy = to_y(wy) - dm.anchor_y * sz;
             const float hx = qx + sz * 0.5f, hy = qy + sz * 0.5f;

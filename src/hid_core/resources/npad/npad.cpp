@@ -23,6 +23,7 @@
 #include "hid_core/hid_util.h"
 #include "hid_core/resources/applet_resource.h"
 #include "hid_core/resources/npad/npad.h"
+#include "hid_core/resources/npad/dsmod_pad_gate.h" // Eden Duo
 #include "hid_core/resources/npad/npad_vibration.h"
 #include "hid_core/resources/shared_memory_format.h"
 
@@ -478,6 +479,17 @@ void NPad::RequestPadStateUpdate(Kernel::KernelCore& kernel, u64 aruid, Core::HI
         pad_entry.npad_buttons.zr.Assign(button_state.r);
         pad_entry.npad_buttons.l.Assign(button_state.zl);
         pad_entry.npad_buttons.r.Assign(button_state.zr);
+    }
+
+    // Eden Duo: the second screen's controller focus mode hides the pad from the game.
+    {
+        u64 raw = static_cast<u64>(pad_entry.npad_buttons.raw);
+        if (Core::HID::DSModPadGate::Apply(NpadIdTypeToIndex(npad_id), raw,
+                                                 pad_entry.l_stick, pad_entry.r_stick)) {
+            trigger_entry.l_analog = 0;
+            trigger_entry.r_analog = 0;
+        }
+        pad_entry.npad_buttons.raw = static_cast<Core::HID::NpadButton>(raw);
     }
 
     if (pad_entry.npad_buttons.raw != Core::HID::NpadButton::None) {

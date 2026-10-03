@@ -167,7 +167,37 @@ enum class WidgetType {
     Pips,   ///< N small squares, `value` of them filled (hearts, masks, ...)
     Image,  ///< a picture loaded from the package or the game's own romfs
     Map,    ///< the game's own map: rooms of one area, with the current one lit
+    Chart,  ///< runtime 17: a bound value's recent history, sampled into a ring buffer
 };
+
+/// Runtime 16: how an Image (or a Bar's "image") fills its rect. Stretch is the classic scaled
+/// blit; Tile repeats the source region at its own pixel size from the rect's top-left; Slice is a
+/// 9-slice: Widget::slice insets (source px) keep the corners at their own size, stretch the edges
+/// along one axis and the centre along both.
+enum class ImageFill : u8 { Stretch, Tile, Slice };
+/// Runtime 16: the direction a Bar fills from (Right = today's left-to-right).
+enum class BarFillDir : u8 { Right, Left, Up, Down };
+
+/// Runtime 17: a Chart widget's sampling and scale. The samples themselves live in the runtime's
+/// ring buffers (mod_chart.h), published per tick as StateSnapshot::charts under `key`.
+struct ChartSpec {
+    /// The ring buffer's name: the widget's id, else "<page id>#<widget index on the page>".
+    std::string key;
+    u32 samples{60};      ///< ring buffer length (2..1024)
+    u32 interval_ms{1000}; ///< time between samples (>= 16)
+    enum class Style : u8 { Line, Bar } style{Style::Line};
+    bool has_min{false}; ///< false = the smallest sample shown
+    bool has_max{false}; ///< false = the largest sample shown
+    f64 min{0.0};
+    f64 max{0.0};
+};
+
+/// Runtime 17: one chart's samples as of a tick, oldest first (at most ChartSpec::samples).
+struct ChartSeries {
+    std::vector<f32> values;
+    u64 count{0}; ///< samples taken so far (changes whenever `values` does)
+};
+using ChartSeriesMap = std::unordered_map<std::string, ChartSeries>;
 
 /// Map widget: marker groups, label style and tap handling (shared: widgets are copied per frame).
 struct MapWidgetExtras {
@@ -421,6 +451,9 @@ struct Widget {
     std::string text_bind;
     std::shared_ptr<const std::unordered_map<s64, std::string>> text_map;
     s32 wrap_width{0}; ///< Label: wrap on spaces at this width in px (0 = no wrap)
+    bool fit_text{false}; ///< Shrink a one-line label within wrap_width before ellipsis.
+    s32 text_min_scale{1};
+    s32 text_center_h{}; ///< Center the laid-out cap block inside this height.
     s32 max_lines{0};  ///< Label: keep at most this many lines, the last ending in an ellipsis
     s32 line_gap{-1};  ///< Label: px between lines beyond the cap height (-1 = text_scale * 3)
     bool icon_silhouette{false}; ///< Label: inline icons drawn as a mask in the label colour
@@ -429,6 +462,46 @@ struct Widget {
     /// Label/Value: this widget is an outline / shadow copy of another label ("outline_copy"):
     /// with color_markup it lays out the tags like the main copy but draws in its own colour only.
     bool outline_copy{false};
+    // --- runtime 17: text-sized boxes, grouped numbers ------------------------------------------
+    /// Label/Button ("auto_w"): the widget's width follows its text plus `pad` px on each side
+    /// (a left-aligned button caption: text_inset + text + pad). The declared w is the minimum.
+    /// Button: align 1 keeps the declared rect's centre, else its left edge. Label: the box sits
+    /// around the text at its anchor and its `bg` (a capsule with `pill`) is drawn behind it.
+    bool auto_w{false};
+    /// Set by ExpandWidgets on an auto_w widget whose rect is now its measured box (never parsed).
+    bool auto_box{false};
+    /// Value ("group"): thousands separators in the number(s) shown ("12,345"); `group_sep` is
+    /// the separator (default ",").
+    bool group{false};
+    std::string group_sep{","};
+    // --- runtime 16: image transforms and fills ------------------------------------------------
+    /// Image: a fixed rotation in degrees (+ = clockwise), about `pivot`.
+    float rotate{0.0f};
+    /// Image: degrees read from this published value, added to `rotate`.
+    std::string rotate_bind;
+    /// Image: scale x 1000 read from this published value (1000 = 1x), about `pivot`; a missing
+    /// value draws at 1x.
+    std::string scale_bind;
+    /// Image: the rotate / scale centre, px from the rect's top-left; unset = the rect's centre.
+    std::array<float, 2> pivot{0.0f, 0.0f};
+    bool has_pivot{false};
+    /// Image / Pips / Bar image: multiplies the texels (Pips: the lit pips' colour), replacing
+    /// `color` in that role. `tint_bind` picks tint_colors[value]; out of range = `tint` / `color`.
+    u32 tint{0xFFFFFFFFu};
+    bool has_tint{false};
+    std::string tint_bind;
+    std::vector<u32> tint_colors;
+    /// Image / Bar image: how the picture fills the rect, and the 9-slice insets {l, t, r, b} in
+    /// source px.
+    ImageFill fill{ImageFill::Stretch};
+    std::array<s32, 4> slice{0, 0, 0, 0};
+    /// Bar: the direction the bar fills from, and an optional picture for the filled part
+    /// (manifest key "image").
+    BarFillDir fill_dir{BarFillDir::Right};
+    std::string fill_image;
+    // --- runtime 17 ------------------------------------------------------------------------------
+    /// Chart: sampling and scale (null on every other type).
+    std::shared_ptr<const ChartSpec> chart;
 };
 
 /// A drag-to-scroll list region on a page (page "scrolls", or a widget's inline "scroll" object).
@@ -445,6 +518,8 @@ struct ScrollRegion {
     std::string reset_bind; ///< offset returns to 0 whenever this value changes (a tab switch)
     bool fling{true};       ///< keep gliding after a flick, slowing by `friction`
     float friction{0.135f}; ///< velocity kept per second of fling (0..1)
+    std::string bar_src;    ///< Optional decoded game-art scrollbar thumb.
+    std::string bar_track_src;
     u32 bar_color{0};       ///< scrollbar thumb colour (0 = no bar)
     u32 bar_track{0};       ///< scrollbar track colour (0 = none)
     s32 bar_w{6};           ///< bar width, px, drawn inside the rect's right edge
@@ -463,6 +538,9 @@ struct Page {
     /// While this page is current, a "page_binds" edge never navigates away from it (the edge is
     /// dropped, not queued). Manual taps are unaffected.
     bool no_auto_leave{false};
+    /// Runtime 17: controller focus order, widget ids (a repeat template's own "x_{i}" id stands
+    /// for all its elements). Empty = geometric navigation over every tappable widget.
+    std::vector<std::string> nav_order;
 };
 
 } // namespace Core::Mods

@@ -63,6 +63,7 @@ extern "C" {
 #include "core/cpu_manager.h"
 #include "core/crypto/key_manager.h"
 #include "core/file_sys/card_image.h"
+#include "core/file_sys/common_funcs.h"
 #include "core/file_sys/content_archive.h"
 #include "core/file_sys/control_metadata.h"
 #include "core/file_sys/fs_filesystem.h"
@@ -95,6 +96,7 @@ extern "C" {
 #include "hid_core/hid_core.h"
 #include "hid_core/hid_types.h"
 #include "input_common/drivers/virtual_amiibo.h"
+#include "jni/android_settings.h"
 #include "jni/native.h"
 #include "video_core/frame_gen/lossless_dll.h"
 #include "video_core/renderer_base.h"
@@ -243,6 +245,7 @@ const Core::PerfStatsResults& EmulationSession::PerfStats() {
     m_perf_stats = m_system.GetAndResetPerfStats();
     // Reuse the result requested by the Android FPS overlay. Do not make another resetting query:
     // other frontends and overlays own the cadence of these cumulative counters.
+#if EDEN_DSMOD_BUILD_DEV_TOOLS
     if (m_system.ModRuntime()) {
         // EDEN_DSMOD_PROFILE turns the 5 s line on or off; unset means on in developer builds
         // (dsmod_env.txt) and off in a published build, which writes no periodic log lines.
@@ -265,6 +268,7 @@ const Core::PerfStatsResults& EmulationSession::PerfStats() {
             report_at = now;
         }
     }
+#endif
     return m_perf_stats;
 }
 
@@ -340,6 +344,38 @@ bool EmulationSession::SetAuxTouch(std::span<const VideoCore::DSMod::AuxTouchPoi
     }
     m_system.GPU().DSModAux().SetTouch(points);
     return true;
+}
+
+int EmulationSession::CompanionIsIdle() {
+    // m_mod_runtime_live guards the runtime's lifetime only (it is cleared under m_aux_mutex
+    // before ShutdownMainProcess destroys the runtime); the aux surface plays no part.
+    std::scoped_lock lock(m_aux_mutex);
+    if (!m_mod_runtime_live) {
+        return -1;
+    }
+    const auto* const runtime = m_system.ModRuntime();
+    return runtime != nullptr && runtime->IsIdlePage() ? 1 : 0;
+}
+
+namespace {
+// Eden Duo: the running (or next) game's own No Companion value, -1 for the global setting.
+// Kept in the Kotlin per-game store, since Off must be known before the game window opens.
+std::atomic<s32> g_no_companion_override{-1};
+} // namespace
+
+void EmulationSession::ApplySecondScreenOptions() {
+    using Options = VideoCore::DSMod::SecondScreenOptions;
+    // companion_ratio is a SwitchableSetting: GetValue() is the game's own value when its
+    // per-game config was applied before boot.
+    Options::companion_ratio.store(
+        static_cast<u32>(std::max(0, AndroidSettings::values.companion_ratio.GetValue())));
+    const s32 no_companion_override = g_no_companion_override.load();
+    const s32 no_companion = no_companion_override >= 0
+                                 ? no_companion_override
+                                 : std::max(0, AndroidSettings::values.no_companion.GetValue());
+    // Eden Duo: "App" (3) is Off for the runtime; the app itself is opened by the frontend.
+    Options::no_companion.store(static_cast<u32>(
+        no_companion == 3 ? static_cast<s32>(VideoCore::DSMod::NoCompanion::Off) : no_companion));
 }
 
 void EmulationSession::ConfigureFilesystemProvider(const std::string& filepath) {
@@ -464,6 +500,7 @@ Core::SystemResultStatus EmulationSession::InitializeEmulation(const std::string
     m_software_keyboard = android_keyboard.get();
     m_system.SetShuttingDown(false);
     m_system.ApplySettings();
+    ApplySecondScreenOptions(); // DSMod: before Load, which builds the idle page
     Settings::LogSettings();
     m_system.HIDCore().ReloadInputDevices();
     m_system.SetFrontendAppletSet({
@@ -494,6 +531,10 @@ Core::SystemResultStatus EmulationSession::InitializeEmulation(const std::string
     if (m_load_result != Core::SystemResultStatus::Success) {
         return m_load_result;
     }
+    {
+        std::scoped_lock aux_lock(m_aux_mutex);
+        m_mod_runtime_live = true; // Load built the mod runtime (Eden Duo CompanionIsIdle)
+    }
 
     // Complete initialization.
     m_system.GPU().Start();
@@ -523,6 +564,9 @@ void EmulationSession::ShutdownEmulation() {
     if (m_next_program_index != -1) {
         ChangeProgram(m_next_program_index);
         m_next_program_index = -1;
+    } else {
+        // Eden Duo: the game is gone; a later applySettings must not use its No Companion.
+        g_no_companion_override.store(-1);
     }
 
     m_is_running = false;
@@ -540,6 +584,7 @@ void EmulationSession::ShutdownEmulation() {
             std::scoped_lock aux_lock(m_aux_mutex);
             DetachAuxWindowLocked();
             m_aux_renderer_ready = false;
+            m_mod_runtime_live = false;
         }
         m_system.DetachDebugger();
         m_system.ShutdownMainProcess();
@@ -554,6 +599,7 @@ void EmulationSession::ShutdownEmulation() {
         std::scoped_lock aux_lock(m_aux_mutex);
         m_aux_window.reset();
         m_aux_renderer_ready = false;
+        m_mod_runtime_live = false;
     }
     m_window.reset();
 }
@@ -913,6 +959,15 @@ void Java_org_yuzu_yuzu_1emu_NativeLibrary_auxSurfaceDestroyed(JNIEnv* env, jobj
     EmulationSession::GetInstance().AuxSurfaceDestroyed();
 }
 
+jint Java_org_yuzu_yuzu_1emu_NativeLibrary_isCompanionIdle(JNIEnv* env, jobject instance) {
+    return static_cast<jint>(EmulationSession::GetInstance().CompanionIsIdle());
+}
+
+void Java_org_yuzu_yuzu_1emu_NativeLibrary_setNoCompanionOverride(JNIEnv* env, jobject instance,
+                                                                  jint value) {
+    g_no_companion_override.store(value >= 0 && value <= 3 ? static_cast<s32>(value) : -1);
+}
+
 jint Java_org_yuzu_yuzu_1emu_NativeLibrary_dualScreenRuntimeVersion(JNIEnv* env,
                                                                      jobject instance) {
     return static_cast<jint>(Core::Mods::DualScreenRuntimeVersion);
@@ -967,6 +1022,34 @@ jboolean Java_org_yuzu_yuzu_1emu_NativeLibrary_doesUpdateMatchProgram(JNIEnv* en
         }
     }
     return false;
+}
+
+// Eden Duo: the base title ids a content container (an update/DLC NSP or XCI) carries content
+// for, so the library scan can remember which containers a game needs registered at boot.
+jlongArray Java_org_yuzu_yuzu_1emu_NativeLibrary_getContainerBaseTitleIds(JNIEnv* env,
+                                                                         jobject jobj,
+                                                                         jstring jpath) {
+    std::set<u64> base_title_ids;
+    const auto file = EmulationSession::GetInstance().System().GetFilesystem()->OpenFile(
+        Common::Android::GetJString(env, jpath), FileSys::OpenMode::Read);
+    if (file) {
+        auto nsp = std::make_shared<FileSys::NSP>(file);
+        if (nsp->GetStatus() != Loader::ResultStatus::Success) {
+            FileSys::XCI xci{file};
+            nsp = xci.GetStatus() == Loader::ResultStatus::Success ? xci.GetSecurePartitionNSP()
+                                                                   : nullptr;
+        }
+        if (nsp) {
+            for (const auto& [title_id, ncas] : nsp->GetNCAs()) {
+                base_title_ids.insert(FileSys::GetBaseTitleID(title_id));
+            }
+        }
+    }
+
+    const std::vector<jlong> ids(base_title_ids.begin(), base_title_ids.end());
+    jlongArray result = env->NewLongArray(static_cast<jsize>(ids.size()));
+    env->SetLongArrayRegion(result, 0, static_cast<jsize>(ids.size()), ids.data());
+    return result;
 }
 
 void JNICALL Java_org_yuzu_yuzu_1emu_NativeLibrary_initializeGpuDriver(JNIEnv* env,
@@ -1452,6 +1535,7 @@ jstring Java_org_yuzu_yuzu_1emu_NativeLibrary_getGpuModel(JNIEnv* env, jobject j
 
 void Java_org_yuzu_yuzu_1emu_NativeLibrary_applySettings(JNIEnv* env, jobject jobj) {
     EmulationSession::GetInstance().System().ApplySettings();
+    EmulationSession::ApplySecondScreenOptions();
     EmulationSession::GetInstance().System().HIDCore().ReloadInputDevices();
 }
 
@@ -1734,6 +1818,18 @@ jobjectArray Java_org_yuzu_yuzu_1emu_NativeLibrary_getPatchesForFile(JNIEnv* env
         ++i;
     }
     return jpatchArray;
+}
+
+// DSMod: the directory the add-on scanner (PatchManager and the dual-screen runtime) reads for
+// this title, so the Android installers write exactly where the scan looks. Empty when the
+// title has no mod root (id 0, or an update id).
+jstring Java_org_yuzu_yuzu_1emu_NativeLibrary_getModLoadDirectory(JNIEnv* env, jobject jobj,
+                                                                  jstring jprogramId) {
+    const auto program_id = EmulationSession::GetProgramId(env, jprogramId);
+    const auto dir =
+        EmulationSession::GetInstance().System().GetFileSystemController().GetModificationLoadRoot(
+            program_id);
+    return Common::Android::ToJString(env, dir ? dir->GetFullPath() : std::string{});
 }
 
 void Java_org_yuzu_yuzu_1emu_NativeLibrary_removeUpdate(JNIEnv* env, jobject jobj,

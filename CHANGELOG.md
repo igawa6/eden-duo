@@ -1,5 +1,48 @@
 # Changelog
 
+## 1.1.0
+
+Companion runtime 18. Every companion that works on 1.0.2 keeps working unchanged.
+
+**New: Second Screen settings**
+
+In **Settings → Graphics → Second Screen**, and per game (long-press the game, **Settings → Graphics → Second Screen**). A game's own value overrides the global one; long-press a setting to reset it to the global value.
+
+- **Swap Screens.** The game on the second screen and the companion on the main screen. Works from the game list and from frontends. A game with its own Swap Off always opens on the main screen.
+- **Companion Ratio.** Fit (default) keeps the companion's shape and adds bars if needed. Stretch fills the screen.
+- **No Companion.** What the second screen does for a game without a companion: Icon (default, the game icon dimmed on black), Black, Off (no window, so the second screen is free for other apps), or App (opens an app you choose on the second screen when the game starts, picked from a searchable list). Until you choose an app, App works like Off.
+- No Companion can be changed while a game runs. It applies when you return to the game (Icon and Black from the next start).
+- With Swap Screens on and a game that has no companion, Off (or App with no app chosen) keeps the game on the main screen.
+- When the game runs on a second display (for example the Retroid Pocket with its Dual Screen Add-on), the companion opens on the main display.
+
+**New: runtimes 16–18 for companion makers** (see [Contribute to Another Game](https://github.com/igawa6/eden-duo-companions/blob/main/docs/CONTRIBUTE.md))
+
+- **Controller navigation.** A button chord moves a focus over the companion's tappable widgets with the D-pad; A taps, B leaves. The game gets a neutral pad meanwhile. On by default for packages that set `"min_runtime": 17` or higher.
+- **Companion settings page.** A manifest `settings` list gives a built-in options page, saved per game.
+- **Player files.** `user:<path>` reads files the player puts in `dualscreen/user/<TITLEID>/`.
+- **Data.** Clock points (`@clock.*`, `@game.seconds`), `countdown` and `expr` derived values.
+- **Pictures.** Image rotate and scale (fixed or bound), tint, tiled and 9-slice image fills, bars that fill from any side, and a **chart** widget for values over time.
+- **Text.** Labels and buttons that size to their text (`auto_w`), `max_lines` with an ellipsis, thousands separators on values (`group`), `{i}` in repeat templates, and paged font atlases for large character sets.
+- **Input and modules.** A hold and a drag can share one widget. A module can refuse an action (refused haptic, nothing after it runs). Selection and drag points are ready before taps, so gates can judge them. `read_romfs` works in a module's `create()`. Longer module image keys.
+- Packages that use these set `"min_runtime": 17` (or 16); an older Eden Duo then shows its "update" page.
+
+- **Runtime 18.** Fitted single-line labels (`fit_text`, `text_min_scale`), vertically centered labels (`text_center_h`), image scrollbars (`bar_src`, `bar_track_src`), and map marker size caps (`size_max`). Modules can refresh their font after a late language change through `__font_epoch`.
+- **Rendering fixes.** Null label text, decimal widget coordinates, negated repeat gates and format-only image sources now work. Font refresh discards stale atlases and keeps image-cache accounting accurate.
+
+**Release build**
+
+- Development console, heap tools, profiling, animation dumps and test overrides are excluded from the APK.
+
+**Maybe fixed**
+
+- A game's update or DLC was sometimes missing when the game started right after opening Eden Duo (#1).
+- An installed companion sometimes did not appear in Add-ons, or the second screen only showed the logo (#3). Companion installs now check that Eden Duo can find the package, and say why if it cannot.
+- The companion did not show on the Retroid Pocket Dual Screen Add-on when Eden Duo ran on the add-on screen (#4).
+
+**Fixed**
+
+- Add-on on/off switches could change on their own while scrolling a long list, or reset after an install. Deleting an add-on that was off no longer keeps it off when reinstalled.
+
 ## 1.0.2
 
 Companion runtime 15. Needed by the Super Mario Bros. Wonder companion. Companions made for 1.0.0 and 1.0.1 keep working unchanged.

@@ -368,6 +368,7 @@ struct System::Impl {
                                                               : system.GetApplicationProcessProgramID();
             auto manifest = Mods::ModRuntime::Discover(system, mod_title_id,
                                                        pending_mod_build_id);
+            const bool idle = !manifest;
             if (!manifest) {
                 // No package for this title: the second screen shows the game's own icon,
                 // dimmed on black, instead of mirroring the top screen.
@@ -375,6 +376,9 @@ struct System::Impl {
             }
             if (manifest) {
                 mod_runtime.emplace(system, std::move(*manifest));
+                if (idle) {
+                    mod_runtime->MarkIdlePage();
+                }
                 mod_runtime->SetMainMemoryParameters(pending_mod_base, pending_mod_size);
                 mod_runtime->Initialize();
             }

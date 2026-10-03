@@ -25,6 +25,7 @@
 #include <vector>
 
 #include "common/common_types.h"
+#include "common/dsmod_dev_tools.h"
 #include "common/logging.h"
 
 namespace VideoCore::DSMod {
@@ -94,7 +95,7 @@ struct TileMask {
 /// The one reading of an EDEN_DSMOD_* on/off switch: unset = `fallback`; set = on unless it is
 /// "0", "false" or "FALSE". Callers keep the answer in a function-local static (read once).
 inline bool DsmodEnvFlag(const char* name, bool fallback) {
-    const char* const value = std::getenv(name);
+    const char* const value = Common::DSMod::DevEnvironment(name);
     if (value == nullptr) {
         return fallback;
     }
@@ -107,6 +108,96 @@ inline bool DsmodEnvFlag(const char* name, bool fallback) {
 inline bool UiDiffEnabled() {
     static const bool enabled = DsmodEnvFlag("EDEN_DSMOD_UI_DIFF", true);
     return enabled;
+}
+
+/// How a companion page whose shape differs from the second screen's is shown.
+enum class CompanionRatio : u32 {
+    Fit = 0,     ///< keep the page's shape, centred, the rest in the page background
+    Stretch = 1, ///< fill the whole screen
+};
+
+/// What the second screen shows for a game without a usable companion package.
+enum class NoCompanion : u32 {
+    Icon = 0,  ///< the game's icon, dimmed on black (the idle page)
+    Black = 1, ///< the idle page without its icon
+    Off = 2,   ///< the frontend does not show its second-screen window at all
+};
+
+/// The user's second-screen options. Process-wide rather than per AuxRouting: the frontend sets
+/// them whenever its settings apply (on Android also before a game boots, so the idle page is
+/// built with them), and both the renderer and the mod runtime read them. A frontend that never
+/// sets them gets Fit and Icon.
+struct SecondScreenOptions {
+    static inline std::atomic<u32> companion_ratio{static_cast<u32>(CompanionRatio::Fit)};
+    static inline std::atomic<u32> no_companion{static_cast<u32>(NoCompanion::Icon)};
+
+    static CompanionRatio Ratio() {
+        return companion_ratio.load(std::memory_order_relaxed) ==
+                       static_cast<u32>(CompanionRatio::Stretch)
+                   ? CompanionRatio::Stretch
+                   : CompanionRatio::Fit;
+    }
+    static NoCompanion WithoutCompanion() {
+        const u32 v = no_companion.load(std::memory_order_relaxed);
+        return v <= static_cast<u32>(NoCompanion::Off) ? static_cast<NoCompanion>(v)
+                                                       : NoCompanion::Icon;
+    }
+};
+
+/// Where a companion canvas sits inside the second screen's frame, in frame pixels.
+struct CompanionRect {
+    u32 x{0};
+    u32 y{0};
+    u32 w{0};
+    u32 h{0};
+    bool full{true}; ///< the whole frame: drawn and touched exactly as with Stretch
+
+    bool Contains(u32 px, u32 py) const {
+        return px >= x && py >= y && px - x < w && py - y < h;
+    }
+};
+
+/// The rect a cw x ch canvas takes in a fw x fh frame. Fit keeps the canvas aspect, centred;
+/// when the two shapes already agree (or with Stretch, or nothing known) it is the full frame.
+inline CompanionRect FitCompanion(u32 fw, u32 fh, u32 cw, u32 ch, CompanionRatio ratio) {
+    const CompanionRect whole{0, 0, fw, fh, true};
+    if (ratio == CompanionRatio::Stretch || fw == 0 || fh == 0 || cw == 0 || ch == 0) {
+        return whole;
+    }
+    const u64 frame_cross = static_cast<u64>(fw) * ch;
+    const u64 canvas_cross = static_cast<u64>(fh) * cw;
+    if (frame_cross == canvas_cross) {
+        return whole;
+    }
+    CompanionRect rect{0, 0, fw, fh, false};
+    if (frame_cross > canvas_cross) {
+        // Frame is wider than the canvas: bars left and right.
+        rect.w = static_cast<u32>(std::clamp<u64>((canvas_cross + ch / 2) / ch, 1, fw));
+        rect.x = (fw - rect.w) / 2;
+    } else {
+        // Frame is taller than the canvas: bars above and below.
+        rect.h = static_cast<u32>(std::clamp<u64>((frame_cross + cw / 2) / cw, 1, fh));
+        rect.y = (fh - rect.h) / 2;
+    }
+    // Shapes within 2 px of each other (a 1240x1079 surface for a 1240x1080 canvas): draw and
+    // touch the whole frame rather than leave a 1-px bar and shift every touch by it.
+    if (fw - rect.w <= 2 && fh - rect.h <= 2) {
+        return whole;
+    }
+    return rect;
+}
+
+/// The rect a companion's touches map through. A mirror page (the game's own pixels) is always
+/// drawn over the whole panel, whatever Companion Ratio says.
+inline CompanionRect CompanionTouchRect(u32 fw, u32 fh, u32 cw, u32 ch, bool mirror) {
+    return FitCompanion(fw, fh, cw, ch,
+                        mirror ? CompanionRatio::Stretch : SecondScreenOptions::Ratio());
+}
+
+/// One axis of a second-screen touch, panel pixels -> canvas pixels, for a point inside the
+/// rect (origin/extent = CompanionRect x/w or y/h). On a full rect this is v * canvas / panel.
+inline s32 PanelToCanvas(u32 v, u32 origin, u32 extent, u32 canvas) {
+    return static_cast<s32>(static_cast<u64>(v - origin) * canvas / std::max(1u, extent));
 }
 
 /// Marks in `mask` (already Reset to w x h and Cleared) every tile where `a` and `b` (both w x h,
@@ -206,7 +297,40 @@ public:
     // the capture and the screen shows widgets instead of the intercepted pass.
     std::atomic<bool> rt_capture{false};
 
+    /// The companion page's background (canvas pixel order), for the bars around a Fit canvas.
+    std::atomic<u32> ui_bg{0xFF000000u};
+
     std::atomic<bool> mirror_enabled{false};
+
+    /// Eden Duo: where the companion canvas sits on the panel, published by the mod runtime each
+    /// tick (w == 0: not known yet, the whole panel). Lets a frontend's scripted 0..1 touches
+    /// land on the canvas as drawn (Companion Ratio "Fit").
+    std::atomic<u32> canvas_rect_x{0};
+    std::atomic<u32> canvas_rect_y{0};
+    std::atomic<u32> canvas_rect_w{0};
+    std::atomic<u32> canvas_rect_h{0};
+
+    void SetCanvasRect(const CompanionRect& r) {
+        canvas_rect_x.store(r.x, std::memory_order_relaxed);
+        canvas_rect_y.store(r.y, std::memory_order_relaxed);
+        canvas_rect_w.store(r.w, std::memory_order_relaxed);
+        canvas_rect_h.store(r.h, std::memory_order_relaxed);
+    }
+
+    /// A point normalised 0..1 to the companion canvas, in panel pixels.
+    [[nodiscard]] std::pair<u32, u32> NormalisedToPanel(float fx, float fy) const {
+        u32 x0 = canvas_rect_x.load(std::memory_order_relaxed);
+        u32 y0 = canvas_rect_y.load(std::memory_order_relaxed);
+        u32 w = canvas_rect_w.load(std::memory_order_relaxed);
+        u32 h = canvas_rect_h.load(std::memory_order_relaxed);
+        if (w == 0 || h == 0) {
+            x0 = y0 = 0;
+            w = width.load();
+            h = height.load();
+        }
+        return {x0 + static_cast<u32>(fx * static_cast<float>(w)),
+                y0 + static_cast<u32>(fy * static_cast<float>(h))};
+    }
     std::atomic<float> mirror_x{0.0f};
     std::atomic<float> mirror_y{0.0f};
     std::atomic<float> mirror_w{1.0f};
@@ -835,7 +959,7 @@ private:
     // load-bearing.
     struct CopyStats {
         using Clock = std::chrono::steady_clock;
-        Clock::time_point window = Clock::now();
+        Clock::time_point window = Common::DSMod::DevToolsEnabled ? Clock::now() : Clock::time_point{};
         double total_ms{};
         double max_ms{};
         u64 calls{};
@@ -848,9 +972,10 @@ private:
     template <typename F>
     void TimeAuxCopy(F&& copy) {
         static const bool profile_enabled = [] {
-            const char* value = std::getenv("EDEN_DSMOD_PROFILE");
-            return !value || (std::strcmp(value, "0") != 0 && std::strcmp(value, "false") != 0 &&
-                              std::strcmp(value, "FALSE") != 0);
+            const char* value = Common::DSMod::DevEnvironment("EDEN_DSMOD_PROFILE");
+            return Common::DSMod::DevToolsEnabled &&
+                   (!value || (std::strcmp(value, "0") != 0 && std::strcmp(value, "false") != 0 &&
+                               std::strcmp(value, "FALSE") != 0));
         }();
         if (!profile_enabled) {
             copy();

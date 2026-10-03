@@ -142,6 +142,15 @@ class AddonViewModel : ViewModel() {
     }
 
     fun onDeleteAddon(patch: Patch) {
+        val programId = game?.programId
+        if (programId != null && !patch.enabled) {
+            val key = disabledKey(patch)
+            NativeConfig.setDisabledAddons(
+                programId,
+                NativeConfig.getDisabledAddons(programId).filter { it != key }.toTypedArray()
+            )
+            NativeConfig.saveGlobalConfig()
+        }
         when (PatchType.from(patch.type)) {
             PatchType.Update -> NativeLibrary.removeUpdate(patch.programId)
             PatchType.DLC -> NativeLibrary.removeDLC(patch.programId)
@@ -150,28 +159,42 @@ class AddonViewModel : ViewModel() {
         refreshAddons(force = true)
     }
 
-    /** Persist switch changes before an installation refresh replaces the in-memory patch list. */
+    /**
+     * Persist switch changes before an installation refresh replaces the in-memory patch list.
+     * Only a list committed for this game is written: a refresh that failed or has not finished
+     * leaves an empty or stale list, and writing it would wipe the game's disabled add-ons.
+     */
     fun persistAddonStates() {
         val currentGame = game ?: return
+        if (loadedGameKey != gameKey(currentGame)) {
+            return
+        }
+        val patches = _patchList.value
+        val listed = patches.map { disabledKey(it) }.toSet()
+        // Entries for add-ons this list does not show (an update folder that is not mounted
+        // right now, for example) are kept rather than silently re-enabled.
+        val unlisted = NativeConfig.getDisabledAddons(currentGame.programId)
+            .filter { it.isNotEmpty() && it !in listed }
         NativeConfig.setDisabledAddons(
             currentGame.programId,
-            _patchList.value.mapNotNull { patch ->
-                if (patch.enabled) {
-                    null
-                } else if (PatchType.from(patch.type) == PatchType.Update) {
-                    when {
-                        patch.name.contains("(NAND)") || patch.name.contains("(SDMC)") ->
-                            patch.name
-                        patch.numericVersion != 0L -> "Update@${patch.numericVersion}"
-                        else -> patch.name
-                    }
-                } else {
-                    patch.name
-                }
-            }.toTypedArray()
+            (unlisted + patches.filter { !it.enabled }.map { disabledKey(it) })
+                .distinct()
+                .toTypedArray()
         )
         NativeConfig.saveGlobalConfig()
     }
+
+    /** The name the core's disabled-add-on list uses for [patch]. */
+    private fun disabledKey(patch: Patch): String =
+        if (PatchType.from(patch.type) == PatchType.Update) {
+            when {
+                patch.name.contains("(NAND)") || patch.name.contains("(SDMC)") -> patch.name
+                patch.numericVersion != 0L -> "Update@${patch.numericVersion}"
+                else -> patch.name
+            }
+        } else {
+            patch.name
+        }
 
     fun onCloseAddons() {
         if (game == null) {

@@ -12,6 +12,7 @@
 
 #include "common/atomic_ops.h"
 #include "common/fs/path_util.h"
+#include "common/dsmod_dev_tools.h"
 #include "common/logging.h"
 #include "common/uuid.h"
 #include "core/core.h"
@@ -44,7 +45,7 @@ constexpr size_t ImageBudget = 64 * 1024 * 1024;
 /// EDEN_DSMOD_IMAGE_TIMING=1: log when each module image lands (queue -> decoded -> drained).
 bool ImageTimingEnabled() {
     static const bool on = [] {
-        const char* v = std::getenv("EDEN_DSMOD_IMAGE_TIMING");
+        const char* v = Common::DSMod::DevEnvironment("EDEN_DSMOD_IMAGE_TIMING");
         return v != nullptr && std::strcmp(v, "0") != 0;
     }();
     return on;
@@ -292,17 +293,11 @@ void ModRuntime::InitializeModuleWriteExtensions() {
     game_module->WriteExtensions()->configure(game_module_instance, &module_write_api);
 }
 
-void ModRuntime::RunModuleAction(const std::string& name, s64 argument) {
-    if (!game_module || !game_module_instance || !game_module->Extensions() ||
-        !game_module->Extensions()->on_action || name.empty() || name.size() > 256)
-        return;
-    try {
-        if (!game_module->Extensions()->on_action(game_module_instance, name.c_str(), argument)) {
-            LOG_INFO(Core, "DSMod: module declined action '{}'", name);
-        }
-    } catch (...) {
-        LOG_ERROR(Core, "DSMod: module action threw");
+ModuleActionOutcome ModRuntime::RunModuleAction(const std::string& name, s64 argument) {
+    if (!game_module || !game_module_instance) {
+        return ModuleActionOutcome::NotRun;
     }
+    return CallModuleAction(game_module->Extensions(), game_module_instance, name, argument);
 }
 
 void ModRuntime::StartModuleAssetWorker() {
@@ -313,6 +308,7 @@ void ModRuntime::StartModuleAssetWorker() {
     module_asset_worker = std::jthread([this, loader, host](std::stop_token stop) {
         while (!stop.stop_requested()) {
             std::string key;
+            u64 generation{};
             {
                 std::unique_lock lock{module_asset_mutex};
                 module_asset_cv.wait(lock, stop, [&] {
@@ -322,6 +318,7 @@ void ModRuntime::StartModuleAssetWorker() {
                     break;
                 key = std::move(module_asset_queue.front());
                 module_asset_queue.pop_front();
+                generation = module_asset_generation;
             }
             Image result;
             try {
@@ -346,6 +343,11 @@ void ModRuntime::StartModuleAssetWorker() {
                 LOG_ERROR(Core, "DSMod: image decoder failed for '{}'", key);
             }
             std::scoped_lock lock{module_asset_mutex};
+            if (generation != module_asset_generation) {
+                module_asset_pending.erase(key);
+                module_asset_times.erase(key);
+                continue; // the next request decodes against the new font
+            }
             if (result.Valid()) {
                 if (ImageTimingEnabled()) {
                     module_asset_times[key].second = std::chrono::steady_clock::now();
@@ -396,6 +398,13 @@ void ModRuntime::DrainModuleImages() {
         std::scoped_lock lock{asset_cache_mutex};
         for (auto& [key, image] : ready) {
             const size_t bytes = image.pixels.size() * sizeof(u32);
+            if (const auto old = image_cache.find(key);
+                old != image_cache.end() && module_asset_used.contains(key)) {
+                module_asset_bytes -=
+                    std::min(module_asset_bytes,
+                             (old->second ? old->second->pixels.size() : 0) * sizeof(u32));
+                module_asset_used.erase(key);
+            }
             while (module_asset_bytes + bytes > ImageBudget && !module_asset_used.empty()) {
                 const auto oldest = std::min_element(
                     module_asset_used.begin(), module_asset_used.end(),
@@ -420,7 +429,7 @@ void ModRuntime::DrainModuleImages() {
 }
 
 bool ModRuntime::LoadModuleImageSync(const std::string& key, Image& out) {
-    if (key.size() > 256)
+    if (!ModuleImageKeyOk(key)) // runtime 16: 4096 (was 256)
         return false;
     std::scoped_lock loader_lock{module_loader_mutex};
     if (!game_module || !game_module_instance || !game_module->Extensions() ||
@@ -457,7 +466,7 @@ bool ModRuntime::LoadModuleImageSync(const std::string& key, Image& out) {
 }
 
 std::shared_ptr<const Image> ModRuntime::GetModuleImage(const std::string& key) {
-    if (key.size() > 256)
+    if (!ModuleImageKeyOk(key)) // runtime 16: 4096 (was 256)
         return nullptr;
     if (const auto found = CacheFindImage(key)) {
         // GetImage runs on the redraw worker too, while DrainModuleImages (tick thread) inserts and

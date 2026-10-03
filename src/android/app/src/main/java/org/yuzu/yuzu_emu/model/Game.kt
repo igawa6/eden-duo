@@ -66,7 +66,23 @@ class Game(
     val saveDir: String
         get() = NativeConfig.getSaveDir() + NativeLibrary.getSavePath(programId)
 
+    /**
+     * Where add-ons for this game are installed: the directory the native scanner (the Add-ons
+     * list and the dual-screen runtime) actually reads, which follows the configured load
+     * directory. The app's own load/ folder is the fallback when the scanner has none.
+     */
     val addonDir: String
+        get() {
+            val scanned = NativeLibrary.getModLoadDirectory(programId)
+            return if (scanned.isNotEmpty()) {
+                scanned.trimEnd('/') + "/"
+            } else {
+                defaultAddonDir
+            }
+        }
+
+    /** The app's own load/<TITLEID>/ folder. */
+    val defaultAddonDir: String
         get() = DirectoryInitialization.userDirectory + "/load/" + programIdHex + "/"
 
     val launchIntent: Intent

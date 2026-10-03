@@ -74,9 +74,12 @@ typedef struct EdenDsmodModuleExtensions {
     void (*configure)(void* instance, const EdenDsmodHostExtensions* host);
     // Runs serialized with sample/tick on the timing thread. Return true only if accepted,
     // not as proof that a guest operation completed. Result state is published by the reader.
+    // Runtime 16: false (or a throw) refuses the action: the "refused" haptic, no follow-up.
+    // The action's gates may read "@sel:<group>" / "@drag*" as of the tap or drop.
     EdenDsmodBool (*on_action)(void* instance, const char* action, int64_t argument);
     // Runs on a single asset worker and may overlap sample/tick; implementation must isolate
-    // decoder state. Keys include the "module:" prefix. The host joins the worker before
+    // decoder state. Keys include the "module:" prefix and are at most 4096 characters (256
+    // through runtime 15). The host joins the worker before
     // destroying the module instance. `host` is a worker copy: read_memory, get_read_pointer,
     // is_mapped, read_romfs, log, get_tick and get_heap_* work as usual; publish_* do nothing and
     // get_i64/get_f64/get_text return the fallback (except get_i64 "__relocation_delta").
@@ -125,7 +128,9 @@ typedef struct EdenDsmodFontExtensions {
     // font_metrics_src asset, exactly as read from disk/romfs -- the host carries no opinion at
     // all about what format they're in. Decode this asset into a texture/glyph set and report it
     // through `sink` before returning; return false (and call `sink` zero times) on a malformed
-    // or unrecognised blob.
+    // or unrecognised blob. A declined decode is retried about once a second, 30 times. Hosts
+    // with EDEN_DSMOD_CAP_FONT_EPOCH (runtime 18) call it again whenever the module's
+    // published integer "__font_epoch" changes (dsmod_module_abi.h).
     EdenDsmodBool (*decode_font)(void* instance, const uint8_t* bytes, size_t size, void* receiver,
                                  EdenDsmodFontSink sink);
 } EdenDsmodFontExtensions;

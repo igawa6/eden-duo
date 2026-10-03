@@ -13,11 +13,14 @@
 
 #include <algorithm>
 #include <array>
+#include <cstdio>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <vector>
 
 #include "common/cityhash.h"
+#include "core/mods/mod_font_pages.h"
 #include "core/mods/mod_msbt.h"
 #include "core/mods/mod_ui.h"
 
@@ -246,6 +249,25 @@ size_t TextMarkupBytes(std::string_view text) {
     return bytes;
 }
 
+std::string FormatGroupedNumber(s64 value, s32 pad, std::string_view sep) {
+    char digits[48];
+    std::snprintf(digits, sizeof(digits), "%0*lld", std::clamp(pad, 0, 40),
+                  static_cast<long long>(value));
+    std::string_view d = digits;
+    std::string out;
+    if (!d.empty() && d.front() == '-') {
+        out += '-';
+        d.remove_prefix(1);
+    }
+    for (size_t i = 0; i < d.size(); ++i) {
+        if (i > 0 && (d.size() - i) % 3 == 0) {
+            out += sep;
+        }
+        out += d[i];
+    }
+    return out;
+}
+
 char32_t TextFallbackCodepoint(char32_t c) {
     return FallbackCodepoint(c);
 }
@@ -371,6 +393,9 @@ u64 FontContentHash(const FontMetrics& font) {
     h = MixLayoutHash(h, font.line_height);
     h = MixLayoutHash(h, font.first_codepoint);
     h = MixLayoutHash(h, font.ascent);
+    if (font.page_h != 0) {
+        h = MixLayoutHash(h, font.page_h); // runtime 17 paged font
+    }
     h = MixLayoutHash(h, font.extra.size());
     u64 extra = 0; // order-free: an unordered_map's iteration order is not part of its content
     for (const auto& [c, g] : font.extra) {
@@ -634,6 +659,27 @@ void Canvas::DrawText(s32 x, s32 y, std::string_view text, s32 scale, u32 argb) 
         // (16 directions), then the fill on top -- the game's HUD lettering. Optional rise: glyph
         // i sits i * text_rise pixels higher, as the game's HUD digits step up.
         const bool outline = text_outline_px > 0 && (text_outline >> 24) != 0;
+        // Runtime 17: a paged font's glyph comes from its page (y within the page); the page in
+        // hand is kept across glyphs, so a run of text locks the page cache once per page change.
+        std::shared_ptr<const Image> page_hold;
+        u32 page_now = ~0u;
+        const auto glyph_atlas = [&](const FontGlyph& g, s32& sy) -> const Image* {
+            const u32 page_h = font_metrics->page_h;
+            if (page_h == 0 || font_pages == nullptr) {
+                sy = g.y;
+                return font_atlas;
+            }
+            const u32 page = g.y / page_h;
+            sy = static_cast<s32>(g.y % page_h);
+            if (page != page_now) {
+                page_hold = font_pages->Get(page);
+                page_now = page;
+            }
+            if (page_hold == nullptr) {
+                glyphs_pending = true;
+            }
+            return page_hold.get();
+        };
         for (int pass = outline ? 0 : 1; pass < 2; ++pass) {
             f32 pen = static_cast<f32>(x);
             s32 index = 0;
@@ -668,17 +714,20 @@ void Canvas::DrawText(s32 x, s32 y, std::string_view text, s32 scale, u32 argb) 
                                                     static_cast<f32>(g->bearing_y) * ratio);
                     const s32 gw = std::max(1, static_cast<s32>(static_cast<f32>(g->w) * ratio));
                     const s32 gh = std::max(1, static_cast<s32>(static_cast<f32>(g->h) * ratio));
-                    if (pass == 0) {
+                    s32 sy = 0;
+                    const Image* const atlas = glyph_atlas(*g, sy);
+                    if (atlas == nullptr) {
+                        // its page is still loading: blank until it lands
+                    } else if (pass == 0) {
                         const f32 r = static_cast<f32>(text_outline_px);
                         for (int k = 0; k < 16; ++k) {
                             const f32 a = static_cast<f32>(k) * 0.39269908f; // 2*pi/16
                             DrawImageMask(gx + static_cast<s32>(std::lround(r * std::cos(a))),
                                           gy + static_cast<s32>(std::lround(r * std::sin(a))), gw,
-                                          gh, *font_atlas, g->x, g->y, g->w, g->h, text_outline);
+                                          gh, *atlas, g->x, sy, g->w, g->h, text_outline);
                         }
                     } else {
-                        DrawImageRegion(gx, gy, gw, gh, *font_atlas, g->x, g->y, g->w, g->h,
-                                        argb);
+                        DrawImageRegion(gx, gy, gw, gh, *atlas, g->x, sy, g->w, g->h, argb);
                     }
                 }
                 pen += static_cast<f32>(g->advance) * ratio;

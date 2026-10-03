@@ -51,6 +51,15 @@ size_t ExpandTemplateInto(const Page& page, const Widget& source, const StateSna
     const bool text_map_indexed =
         source.text_map != nullptr &&
         std::ranges::any_of(*source.text_map, [&](const auto& kv) { return has_index(kv.second); });
+    // Runtime 17: the remaining list fields.
+    const bool value_names_indexed = std::ranges::any_of(source.names, has_index);
+    const bool hidden_icons_indexed = std::ranges::any_of(source.hidden_icons, has_index);
+    const bool thresholds_indexed = std::ranges::any_of(
+        source.src_thresholds, [&](const auto& t) { return has_index(t.second); });
+    const bool view_default_indexed =
+        source.view_default != nullptr &&
+        (has_index(source.view_default->zoom_bind) || has_index(source.view_default->cx_bind) ||
+         has_index(source.view_default->cy_bind) || has_index(source.view_default->reset_bind));
     {
         const s64 rows = RepeatElementCount(source, snapshot);
         // Scrolled list: only the cells whose rows show through the region's rect are built, at
@@ -158,6 +167,10 @@ size_t ExpandTemplateInto(const Page& page, const Widget& source, const StateSna
                     if (region != nullptr) {
                         clone.rect[1] -= scroll_offset;
                     }
+                    if (source.auto_w) {
+                        clone.auto_box = false; // re-measured: its text may have changed
+                        ApplyAutoWidth(clone, snapshot);
+                    }
                     ++placed;
                     continue;
                 }
@@ -198,10 +211,51 @@ size_t ExpandTemplateInto(const Page& page, const Widget& source, const StateSna
             substitute(clone.drag_under_src);
             substitute(clone.text_src);
             substitute(clone.text_bind);
+            substitute(clone.rotate_bind); // runtime 16
+            substitute(clone.scale_bind);
+            substitute(clone.tint_bind);
+            substitute(clone.fill_image);
             substitute(clone.empty_src);
             substitute(clone.suffix);
             substitute(clone.max_sep);
             substitute(clone.table);
+            // Runtime 17: every other per-element string field (not `scroll`, which places the
+            // template, nor the page-level anim group or the map's shared extras).
+            substitute(clone.src_format);
+            substitute(clone.group_sep);
+            substitute(clone.area_bind);
+            substitute(clone.room_bind);
+            substitute(clone.area);
+            substitute(clone.marker_x_bind);
+            substitute(clone.marker_y_bind);
+            substitute(clone.marker_icon);
+            substitute(clone.marker_src);
+            substitute(clone.actor_x_bind);
+            substitute(clone.actor_y_bind);
+            substitute(clone.actor_icon);
+            if (value_names_indexed) {
+                for (auto& name : clone.names) {
+                    substitute(name);
+                }
+            }
+            if (hidden_icons_indexed) {
+                for (auto& icon : clone.hidden_icons) {
+                    substitute(icon);
+                }
+            }
+            if (thresholds_indexed) {
+                for (auto& threshold : clone.src_thresholds) {
+                    substitute(threshold.second);
+                }
+            }
+            if (view_default_indexed) {
+                auto binds = std::make_shared<ViewDefaultBinds>(*source.view_default);
+                substitute(binds->zoom_bind);
+                substitute(binds->cx_bind);
+                substitute(binds->cy_bind);
+                substitute(binds->reset_bind);
+                clone.view_default = std::move(binds);
+            }
             if (names_indexed) {
                 for (auto& name : clone.src_names) {
                     substitute(name);
@@ -233,12 +287,123 @@ size_t ExpandTemplateInto(const Page& page, const Widget& source, const StateSna
                 // already gated here; don't let the draw pass hide it again
                 clone.hide_bind.clear();
             }
+            ApplyAutoWidth(clone, snapshot);
             ++placed;
         }
     }
     return count;
 }
 } // namespace
+
+namespace {
+// Runtime 17 auto_w: the measuring canvas of this thread's innermost TextMeasureScope.
+thread_local Canvas* measure_canvas = nullptr;
+thread_local const TextProvider* measure_texts = nullptr;
+} // namespace
+
+TextMeasureScope::TextMeasureScope(Canvas& canvas, const TextProvider* texts)
+    : prev_canvas{measure_canvas}, prev_texts{measure_texts} {
+    measure_canvas = &canvas;
+    measure_texts = texts;
+}
+
+TextMeasureScope::~TextMeasureScope() {
+    measure_canvas = prev_canvas;
+    measure_texts = prev_texts;
+}
+
+const std::string* LabelShownText(const Widget& widget, const StateSnapshot& snapshot,
+                                  const TextProvider& texts,
+                                  std::shared_ptr<const std::string>& owner) {
+    // texts() returns shared_ptr<const std::string> (see TextProvider's own declaration
+    // comment); `owner` keeps a resolved msbt string alive past this call.
+    const auto resolve = [&texts, &owner](const std::string& ref) -> const std::string* {
+        if (!ref.starts_with("msbt:")) {
+            return &ref;
+        }
+        owner = texts ? texts(ref) : nullptr;
+        return owner.get();
+    };
+    if (!widget.text_bind.empty()) {
+        const auto bound = snapshot.ints.find(widget.text_bind);
+        if (bound != snapshot.ints.end() && bound->second != -1 && widget.text_map) {
+            if (const auto m = widget.text_map->find(bound->second); m != widget.text_map->end()) {
+                return resolve(m->second);
+            }
+        }
+        return nullptr;
+    }
+    if (!widget.text_src.empty()) {
+        return resolve(widget.text_src);
+    }
+    if (!widget.bind_text.empty()) {
+        static const std::string dash = "-";
+        const auto text = snapshot.texts.find(widget.bind_text);
+        return text == snapshot.texts.end() ? &dash : &text->second;
+    }
+    return &widget.text;
+}
+
+std::array<s32, 4> AutoWidthBox(const Widget& widget, const std::array<s32, 4>& rect, s32 text_w,
+                                s32 text_h) {
+    const s32 pad = std::max(0, widget.pad);
+    if (widget.type == WidgetType::Button) {
+        const s32 content =
+            widget.align == 1 ? text_w + 2 * pad : std::max(0, widget.text_inset) + text_w + pad;
+        const s32 width = std::max(rect[2], content);
+        const s32 x = widget.align == 1 ? rect[0] + rect[2] / 2 - width / 2 : rect[0];
+        return {x, rect[1], width, rect[3]};
+    }
+    const s32 width = std::max(rect[2], text_w + 2 * pad);
+    const s32 x = widget.align == 2   ? rect[0] + pad - width
+                  : widget.align == 1 ? rect[0] - width / 2
+                                      : rect[0] - pad;
+    return {x, rect[1] - pad, width, std::max(rect[3], text_h) + 2 * pad};
+}
+
+std::array<s32, 2> AutoBoxTextAnchor(const Widget& widget, s32 x, s32 y, s32 rw) {
+    const s32 pad = std::max(0, widget.pad);
+    const s32 tx = widget.align == 2 ? x + rw - pad : widget.align == 1 ? x + rw / 2 : x + pad;
+    return {tx, y + pad};
+}
+
+void ApplyAutoWidth(Widget& widget, const StateSnapshot& snapshot) {
+    if (!widget.auto_w || widget.auto_box || measure_canvas == nullptr ||
+        (widget.type != WidgetType::Label && widget.type != WidgetType::Button)) {
+        return;
+    }
+    Canvas& canvas = *measure_canvas;
+    const s32 scale = std::max(1, widget.text_scale);
+    s32 text_w = 0;
+    s32 text_h = scale * 5;
+    const bool markup = canvas.ColorMarkup();
+    if (widget.type == WidgetType::Button) {
+        canvas.SetColorMarkup(false); // as DrawButton draws its caption
+        text_w = canvas.MeasureText(widget.text, scale);
+    } else {
+        static const TextProvider no_texts;
+        std::shared_ptr<const std::string> owner;
+        const std::string* const shown = LabelShownText(
+            widget, snapshot, measure_texts != nullptr ? *measure_texts : no_texts, owner);
+        canvas.SetColorMarkup(widget.color_markup);
+        if (shown != nullptr && !shown->empty()) {
+            if (widget.wrap_width > 0 || shown->find('\n') != std::string::npos) {
+                const auto& lines =
+                    canvas.LayoutLines(*shown, scale, widget.wrap_width, widget.max_lines);
+                for (const auto& line : lines) {
+                    text_w = std::max(text_w, canvas.MeasureText(line, scale));
+                }
+                const s32 pitch = scale * 5 + (widget.line_gap >= 0 ? widget.line_gap : scale * 3);
+                text_h = static_cast<s32>(std::max<size_t>(lines.size(), 1) - 1) * pitch + scale * 5;
+            } else {
+                text_w = canvas.MeasureText(*shown, scale);
+            }
+        }
+    }
+    canvas.SetColorMarkup(markup);
+    widget.rect = AutoWidthBox(widget, widget.rect, text_w, text_h);
+    widget.auto_box = true;
+}
 
 size_t ExpandRepeatTemplateInto(const Page& page, const Widget& source,
                                 const StateSnapshot& snapshot, std::vector<Widget>& slots,
@@ -260,6 +425,7 @@ size_t ExpandWidgetsInto(const Page& page, const StateSnapshot& snapshot,
             w = source;
             w.rect[0] = ResolveBindOffset(source.rect[0], source.x_bind, source.x_scale, snapshot);
             w.rect[1] = ResolveBindOffset(source.rect[1], source.y_bind, source.y_scale, snapshot);
+            ApplyAutoWidth(w, snapshot);
             continue;
         }
         count = ExpandTemplateInto(page, source, snapshot, slots, count, &memo);
@@ -279,7 +445,7 @@ void ExpandWidgetRefsInto(const Page& page, const StateSnapshot& snapshot,
     size_t count = 0;
     for (const auto& source : page.widgets) {
         if (source.repeat <= 0) {
-            if (source.x_bind.empty() && source.y_bind.empty()) {
+            if (source.x_bind.empty() && source.y_bind.empty() && !source.auto_w) {
                 plan.emplace_back(&source, 0);
                 continue;
             }
@@ -287,6 +453,7 @@ void ExpandWidgetRefsInto(const Page& page, const StateSnapshot& snapshot,
             w = source;
             w.rect[0] = ResolveBindOffset(source.rect[0], source.x_bind, source.x_scale, snapshot);
             w.rect[1] = ResolveBindOffset(source.rect[1], source.y_bind, source.y_scale, snapshot);
+            ApplyAutoWidth(w, snapshot);
             plan.emplace_back(nullptr, count++);
             continue;
         }

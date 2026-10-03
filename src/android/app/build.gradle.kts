@@ -69,7 +69,7 @@ android {
         targetSdk = 36
         // Eden Duo release version (shown to users); versionCode stays time-based so every new
         // build installs as an update.
-        versionName = "1.0.2"
+        versionName = "1.1.0"
         versionCode = autoVersion
 
         externalNativeBuild {

@@ -24,6 +24,7 @@
 
 #include <cstdlib>
 #include <fstream>
+#include "common/dsmod_dev_tools.h"
 #include "common/logging.h"
 #include "core/core.h"
 #include "core/mods/mod_runtime.h"
@@ -117,7 +118,7 @@ void ModRuntime::DrivePageBinds(const StateSnapshot& snapshot) {
 
 float ModRuntime::AnimTimeScale() {
     static const float scale = [] {
-        const char* const v = std::getenv("EDEN_DSMOD_ANIM_SCALE");
+        const char* const v = Common::DSMod::DevEnvironment("EDEN_DSMOD_ANIM_SCALE");
         const float f = v != nullptr ? std::strtof(v, nullptr) : 1.0f;
         return f > 0.0f ? std::min(f, 100.0f) : 1.0f;
     }();
@@ -126,8 +127,11 @@ float ModRuntime::AnimTimeScale() {
 
 void ModRuntime::DumpAnimFrame(std::span<const u32> pixels, u32 w, u32 h,
                                const std::string& label) {
+    if constexpr (!Common::DSMod::DevToolsEnabled) {
+        return;
+    }
     static const std::string dir = [] {
-        const char* const v = std::getenv("EDEN_DSMOD_ANIM_DUMP");
+        const char* const v = Common::DSMod::DevEnvironment("EDEN_DSMOD_ANIM_DUMP");
         return v != nullptr ? std::string{v} : std::string{};
     }();
     if (dir.empty() || pixels.size() < static_cast<size_t>(w) * h) {
@@ -292,11 +296,14 @@ bool ModRuntime::DrivePageTransition(const StateSnapshot& snapshot, u64 sig, u32
         // The canvas keeps raw pointers: the atlases are held in canvas_font_ref /
         // canvas_icon_ref until the next SetFont, not by a temporary.
         if (font_metrics.Valid()) {
-            canvas_font_ref = GetImage(manifest.font_atlas_src);
+            const bool paged = font_pages != nullptr && font_metrics.page_h > 0; // runtime 17
+            canvas_font_ref = paged ? nullptr : GetImage(manifest.font_atlas_src);
             canvas.SetFont(canvas_font_ref.get(), &font_metrics);
+            canvas.SetFontPages(paged ? font_pages.get() : nullptr);
         } else {
             canvas_font_ref.reset();
             canvas.SetFont(nullptr, nullptr);
+            canvas.SetFontPages(nullptr);
         }
         {
             bool icon_pending = false;
@@ -378,7 +385,7 @@ bool ModRuntime::DrivePageTransition(const StateSnapshot& snapshot, u64 sig, u32
             page_anim.start_ms, reuse ? "old page reused, new page drawn" : "both pages drawn",
             origin_note);
         LOG_INFO(Core, "{}", line);
-        if (const char* const p = std::getenv("EDEN_DSMOD_CMD")) {
+        if (const char* const p = Common::DSMod::DevEnvironment("EDEN_DSMOD_CMD")) {
             std::ofstream f(std::string(p) + ".out", std::ios::app);
             if (f) {
                 f << line << '\n';
@@ -484,7 +491,7 @@ bool ModRuntime::DrivePageTransition(const StateSnapshot& snapshot, u64 sig, u32
             page_anim.frames, elapsed, page_anim.compose_ms / page_anim.frames,
             page_anim.compose_max_ms, page_anim.redraws);
         LOG_INFO(Core, "{}", line);
-        if (const char* const p = std::getenv("EDEN_DSMOD_CMD")) {
+        if (const char* const p = Common::DSMod::DevEnvironment("EDEN_DSMOD_CMD")) {
             std::ofstream f(std::string(p) + ".out", std::ios::app);
             if (f) {
                 f << line << '\n';

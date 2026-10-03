@@ -58,9 +58,13 @@
 #include "core/hle/kernel/svc_types.h"
 #include "core/mods/dsmod_module_abi.h"
 #include "core/mods/dsmod_module_extensions.h"
+#include "core/mods/mod_chart.h"
+#include "core/mods/mod_clock.h"
+#include "core/mods/mod_font_epoch.h"
 #include "core/mods/mod_input_hold.h"
 #include "core/mods/mod_input_swipe.h"
 #include "core/mods/mod_module.h"
+#include "core/mods/mod_nav.h"
 #include "core/mods/mod_persist.h"
 #include "core/mods/mod_sources.h"
 #include "core/mods/mod_types.h"
@@ -93,6 +97,12 @@ namespace Core::Mods {
 /// `areas` is not an object or a value has the wrong type.
 [[nodiscard]] bool ParseMapAreasJson(const nlohmann::json& areas,
                                      std::unordered_map<std::string, MapArea>& out) noexcept;
+/// Runtime 17: the widgets of `page` the controller focus can land on, as expanded for
+/// `snapshot` (mod_nav.cpp): a tappable, visible widget whose centre a tap would reach, clipped
+/// to its list viewport and the canvas (canvas_w / canvas_h <= 0 = unbounded).
+[[nodiscard]] std::vector<Nav::Candidate> NavCandidates(const Page& page,
+                                                        const StateSnapshot& snapshot,
+                                                        s32 canvas_w, s32 canvas_h);
 
 /// The dual-screen runtime contract version this build implements. A package declares the oldest
 /// runtime it works with as "min_runtime" (an integer, in dualscreen/manifest.json and/or the
@@ -116,15 +126,35 @@ namespace Core::Mods {
 ///   15     named asset sources (AssetSources): "base:" (the program romfs without update or
 ///          LayeredFS) and "aoc:" (the add-on content data romfs), module read_romfs through
 ///          them, EDEN_DSMOD_CAP_SOURCE_* bits + get_i64("__source:<prefix>"), unknown prefixes
-///          fail instead of reading romfs; "module_tick_hidden" + EDEN_DSMOD_CAP_(NO_)TICK_WHEN_HIDDEN;
-///          label/value "outline_copy"; button "border" / "text_inset", pips "gap", bar "frame",
-///          map "label_offset" and the map.style door / collectible / blink / pin keys; "{i}" in
-///          src_names, empty_src, suffix, max_sep, table and text_map; vertical swipe (widget
-///          "on_swipe_up" / "on_swipe_down", mod_input_swipe.h) and the bound default view of a
-///          non-map pan_zoom widget ("view_zoom_bind" / "view_cx_bind" / "view_cy_bind" /
-///          "view_reset_bind", mod_view_default.h); manifest "persist_flags" (runtime flags saved
-///          on change and restored at load, mod_persist.h)
-inline constexpr u32 DualScreenRuntimeVersion = 15;
+///          fail instead of reading romfs; "module_tick_hidden" +
+///          EDEN_DSMOD_CAP_(NO_)TICK_WHEN_HIDDEN; label/value "outline_copy"; button "border" /
+///          "text_inset", pips "gap", bar "frame", map "label_offset" and the map.style door /
+///          collectible / blink / pin keys; "{i}" in src_names, empty_src, suffix, max_sep, table
+///          and text_map; vertical swipe (widget "on_swipe_up" / "on_swipe_down",
+///          mod_input_swipe.h) and the bound default view of a non-map pan_zoom widget
+///          ("view_zoom_bind" / "view_cx_bind" / "view_cy_bind" / "view_reset_bind",
+///          mod_view_default.h); manifest "persist_flags" (runtime flags saved on change and
+///          restored at load, mod_persist.h)
+///   16     hold and drag on one widget (a hold armed over a drag candidate, cancelled by moving
+///          past the tap slop); a module action returning false is Refused; "@sel:" / "@drag*"
+///          published before the taps; read_romfs from a module's create() (romfs source
+///          retry_ms); module image keys up to 4096 chars; image "rotate" / "rotate_bind" /
+///          "pivot" / "scale_bind", "tint" / "tint_bind" / "tint_colors" (image, pips, bar
+///          image), "fill" stretch / tile / slice + "slice", bar "fill_dir" + "image";
+///          "@clock.*" and "@game.seconds" points, derived "countdown" (mod_clock.h)
+///   17     widget type "chart" (mod_chart.h); derived "expr" (mod_expr.h); "auto_w", value
+///          "group" / "group_sep", "{i}" in every repeat string field, paged font atlases
+///          ("font_page_h", mod_font_pages.h); controller focus mode ("nav", page "nav_order",
+///          "@nav.*", mod_nav.h, HID pad gate); "user:" asset source
+///          (EDEN_DSMOD_CAP_SOURCE_USER, mod_user_source.h); manifest "settings" and the
+///          built-in "@settings" page with page target "@back" (mod_settings.h)
+///   18     a module's published "__font_epoch"
+///          re-requests its font (decode_font again, atlas reloaded), host capability
+///          EDEN_DSMOD_CAP_FONT_EPOCH (mod_font_epoch.h); label fit_text / text_min_scale /
+///          text_center_h; game-art scroll bar_src / bar_track_src; world marker size_max.
+///          Also fixes null label text, decimal coordinates, negated need gates and src_format-only
+///          images.
+inline constexpr u32 DualScreenRuntimeVersion = 18;
 
 /// Regions a redraw-worker job painted into its canvas but did not publish because it went stale
 /// (runtime 13). Before runtime 13 a job already running when the next was dispatched finished
@@ -160,6 +190,12 @@ struct UnpublishedRegions {
 /// half-loaded.
 [[nodiscard]] u32 PackageMinRuntime(const nlohmann::json* manifest,
                                     const nlohmann::json* package) noexcept;
+
+/// Runtime 17 "nav" default: whether controller navigation is on for a package that has no "nav"
+/// key -- only when it declares min_runtime >= 17 (manifest or package.json), so a package
+/// published for an older runtime never gains the chord or the pad suppression.
+[[nodiscard]] bool NavDefaultOn(const nlohmann::json* manifest,
+                                const nlohmann::json* package) noexcept;
 
 /// Nintendo asset references and composite images (mod_nx_runtime.cpp): caches, the decode
 /// worker and its queues. Kept out of this header; always allocated with the runtime.
@@ -246,6 +282,15 @@ public:
     /// Discovers a package for the running title. Returns nullopt when the title has none.
     static std::optional<Manifest> Discover(System& system, u64 title_id,
                                             const std::array<u8, 0x20>& build_id);
+
+    /// The runtime shows the idle page (the title has no usable package). Set by the boot code
+    /// right after construction; the frontend asks after boot (Eden Duo "No Companion: Off").
+    void MarkIdlePage() {
+        idle_page.store(true, std::memory_order_relaxed);
+    }
+    [[nodiscard]] bool IsIdlePage() const {
+        return idle_page.load(std::memory_order_relaxed);
+    }
 
 private:
     void Tick(); // mod_runtime.cpp
@@ -757,6 +802,7 @@ private:
     };
     std::unordered_map<std::string, ModuleAssetFailure> module_asset_failed;
     std::unordered_map<std::string, Image> module_asset_completed;
+    u64 module_asset_generation{}; ///< guarded by module_asset_mutex; font refresh barrier
     /// EDEN_DSMOD_IMAGE_TIMING=1: when each module image was queued / decoded (steady clock), for
     /// the per-image "landed" log line in DrainModuleImages. Guarded by module_asset_mutex.
     std::unordered_map<std::string, std::pair<std::chrono::steady_clock::time_point,
@@ -814,7 +860,8 @@ public:
     /// it.
     bool LoadModuleImageSync(const std::string& key, Image& out); // mod_module_services.cpp
 private:
-    void RunModuleAction(const std::string& name, s64 argument); // mod_module_services.cpp
+    ModuleActionOutcome RunModuleAction(const std::string& name,
+                                        s64 argument);           // mod_module_services.cpp
     void AcceptModuleMap(const EdenDsmodMapFrame& frame);        // mod_module_host.cpp
     void AcceptModuleMapState(const char* json);                 // mod_module_host.cpp
 
@@ -972,6 +1019,16 @@ private:
     /// around the node rather than the node itself.
     bool WalkList(VAddr list, const ChainHop& hop, s64 index, VAddr& out) const;
     void DrainTaps(const StateSnapshot& snapshot); // mod_input.cpp
+    // --- controller navigation, runtime 17 (mod_nav.cpp) -------------------------------------
+    /// The input stage's controller focus mode: toggle, move, A as a tap, the HID gate, "@nav.*".
+    void UpdateNav(StateSnapshot& snapshot);
+    /// Leaves the focus mode (if on) and lifts the HID gate, latching the held buttons.
+    void NavOff(const char* why);
+    /// Player 1 and handheld buttons as the EmulatedControllers hold them (before the HID gate).
+    u64 ReadNavPad() const;
+    /// Latches (DSModPadGate) what Player 1 and the handheld each still hold, on its own slot.
+    void LatchNavPad() const;
+    Nav::RuntimeState nav_state;
     /// What an action did: its work (Done), nothing because its enabled_bind gate or a full slot
     /// refused it (Refused), or nothing because a value / point / write was missing (Skipped).
     enum class ActionResult : u8 { Done, Refused, Skipped };
@@ -1245,6 +1302,9 @@ private:
     /// Per derived value: whether it reads this tick's interaction state ("@..", "view_custom:..")
     /// directly or through another derived value; the post-tap pass recomputes only those.
     std::vector<u8> derived_volatile;
+    /// Runtime 16: publishes @clock.* / @game.seconds each tick ahead of the derived pass
+    /// (mod_clock.h). Its source is set in the constructor (game time = CoreTiming).
+    ClockPublisher clock_points;
     void UpdateHeldButtons();                      // mod_actions.cpp
     void PublishUi(const StateSnapshot& snapshot); // mod_redraw.cpp
     /// GPU-composite publish: hand the renderer a quad display list plus up to three source
@@ -1420,6 +1480,7 @@ private:
     System& system;
     Core::Timing::CoreTiming& core_timing;
     Manifest manifest;
+    std::atomic<bool> idle_page{false}; ///< MarkIdlePage / IsIdlePage
     std::shared_ptr<Core::Timing::EventType> event;
 
     VAddr main_region_begin{};
@@ -1431,6 +1492,8 @@ private:
     std::shared_ptr<const Image> canvas_font_ref;
     std::shared_ptr<const Image> canvas_icon_ref;
     size_t current_page{0};
+    /// Runtime 17: the page the built-in "@settings" page returns to ("@back", mod_settings.h).
+    size_t settings_return_page{0};
     u64 tick_count{0};
 
     // Virtual-gamepad presses are held for a few ticks so the guest's 60 Hz sampling sees them.
@@ -1513,6 +1576,8 @@ private:
     StateSnapshot call_snapshot;
     StateSnapshot
         tick_snapshot; ///< reused each tick; clear() keeps capacity, avoids per-frame alloc
+    /// Runtime 17: the Chart widgets' ring buffers (mod_chart.h). Tick thread only.
+    ChartSampler chart_sampler;
     // Per-tick snapshot keys, built once (see PrefixedKeys). Tick thread only.
     PrefixedKeys flag_keys{"@flag:"};
     PrefixedKeys view_custom_keys{"view_custom:"};
@@ -1554,6 +1619,8 @@ private:
         s32 y{};
     };
     std::vector<TrackedFinger> live_fingers;
+    /// Fingers that landed in a Fit bar: dropped until they lift (Eden Duo Companion Ratio).
+    std::vector<u32> ignored_fingers;
     std::string gesture_target; ///< id of the widget this gesture pans, empty if none
     s32 gesture_down_x{};
     s32 gesture_down_y{};
@@ -1645,17 +1712,26 @@ private:
         std::string group;         ///< the dragged widget's select_group (cleared after the drop)
         s32 x{};
         s32 y{};
+        s64 hover{-1}; ///< the drop target's expanded index (runtime 16: "@drag_hover" pre-taps)
     };
     std::vector<PendingDrop> pending_drops;
     std::unordered_map<std::string, s64> selections; ///< select_group -> selected payload
     std::set<std::string> interact_groups;           ///< every group named by the package
+    /// Runtime 16: the "@sel:" / "@last:" keys the pre-tap PublishInteraction wrote for groups
+    /// outside interact_groups (dynamic "{i}" groups); the post-tap pass erases them first, so a
+    /// selection DrainTaps cleared does not linger in this tick's snapshot.
+    std::vector<std::string> early_dynamic_sel_keys;
     bool interact_groups_ready{false};
     size_t interact_page{0};
     /// Drop target (expanded index) under a canvas point for the current drag, or -1.
     s64 DropTargetAt(const StateSnapshot& snapshot, s32 x, s32 y) const;
     void ResetInteraction(const char* why);
     /// Publishes "@sel:<group>", "@drag*" and the drag overlay into the snapshot.
-    void PublishInteraction(StateSnapshot& snapshot);
+    /// `before_taps` (runtime 16): the pass before DrainTaps, for gates; it skips the overlay and
+    /// the page-change reset, and describes a drag released this tick (mod_input_drag.h).
+    void PublishInteraction(StateSnapshot& snapshot, bool before_taps = false);
+    /// Whether DrainTaps has taps or drops to run this tick.
+    bool HasPendingInput() const;
     /// Console "drag x0 y0 x1 y1 ms": a synthetic finger fed through the aux touch path.
     struct CmdDrag {
         bool active{false};
@@ -1667,6 +1743,9 @@ private:
     };
     CmdDrag cmd_drag;
     void DriveCmdDrag(u32 panel_w, u32 panel_h, u32 canvas_w, u32 canvas_h);
+    /// Where the canvas sits on the panel for touch (Companion Ratio, mirror pages full).
+    VideoCore::DSMod::CompanionRect TouchRect(u32 panel_w, u32 panel_h, u32 canvas_w,
+                                              u32 canvas_h) const;
 
     /// Which pannable widget, if any, sits under this canvas point.
     std::string PannableAt(const StateSnapshot& snapshot, s32 x, s32 y) const;
@@ -1699,6 +1778,18 @@ private:
     u32 font_module_attempts{0};
     u64 font_retry_tick{0};
     void LoadFont(); // mod_assets.cpp
+    /// Runtime 18: the module's published "__font_epoch" against the one in effect when
+    /// decode_font last ran (mod_font_epoch.h). A change re-requests the font: font_redecode is
+    /// set until LoadFont has the new one (or the module declined it; the old font stays).
+    FontEpochWatch font_epoch;
+    bool font_redecode{false};
+    void WatchFontEpoch(const StateSnapshot& snapshot); // mod_assets.cpp, after RunGameModule
+    /// Runtime 17: the pages of a paged font (manifest font_page_h + "{p}" in font_atlas), loaded
+    /// on demand into a bounded LRU; null for a one-image atlas. Made by LoadFont, dropped (and
+    /// shut down) with the font; redraw jobs hold copies.
+    std::shared_ptr<FontPages> font_pages;
+    std::shared_ptr<FontPages> MakeFontPages(); // mod_assets.cpp
+    void DropFontPages();                       // mod_assets.cpp
 
     // --- Off-thread redraw worker: renders ordinary page redraws and publishes its output -------
     // The unit of work handed to the worker. Every field is an OWNED value or shared_ptr -- nothing
@@ -1728,6 +1819,7 @@ private:
         bool partial{false};
         ViewState views;
         std::shared_ptr<const Image> font_atlas;
+        std::shared_ptr<FontPages> font_pages; ///< runtime 17 paged font (null = font_atlas)
         /// Shared, immutable metrics (a new copy only when the font actually changes).
         std::shared_ptr<const FontMetrics> font_metrics_copy;
         std::shared_ptr<const Image> icon_atlas;

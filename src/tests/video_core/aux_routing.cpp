@@ -494,3 +494,87 @@ TEST_CASE("Aux DiffTiles marks exactly the tiles that differ", "[dsmod]") {
     REQUIRE(m.bits[1] == 1);
     REQUIRE(m.bits[1 * m.cols + 2] == 1);
 }
+
+TEST_CASE("Companion Fit rect keeps the canvas shape and is the full frame when shapes agree",
+          "[dsmod]") {
+    using VideoCore::DSMod::CompanionRatio;
+    using VideoCore::DSMod::FitCompanion;
+    // AYN Thor bottom panel with a 1240x1080 package: the whole frame, exactly as Stretch.
+    for (const auto ratio : {CompanionRatio::Fit, CompanionRatio::Stretch}) {
+        const auto thor = FitCompanion(1240, 1080, 1240, 1080, ratio);
+        REQUIRE(thor.full);
+        REQUIRE((thor.x == 0 && thor.y == 0 && thor.w == 1240 && thor.h == 1080));
+    }
+    REQUIRE(FitCompanion(2480, 2160, 1240, 1080, CompanionRatio::Fit).full);
+    REQUIRE(FitCompanion(1240, 1080, 0, 0, CompanionRatio::Fit).full);
+    // The companion on the 16:9 main screen (Swap Screens): bars left and right.
+    const auto wide = FitCompanion(1920, 1080, 1240, 1080, CompanionRatio::Fit);
+    REQUIRE(!wide.full);
+    REQUIRE((wide.x == 340 && wide.y == 0 && wide.w == 1240 && wide.h == 1080));
+    // A 16:9 page on the 8:7 panel: bars above and below (697.5 rounds to 698).
+    const auto tall = FitCompanion(1240, 1080, 1920, 1080, CompanionRatio::Fit);
+    REQUIRE(!tall.full);
+    REQUIRE((tall.x == 0 && tall.y == 191 && tall.w == 1240 && tall.h == 698));
+    REQUIRE(FitCompanion(1920, 1080, 1240, 1080, CompanionRatio::Stretch).full);
+}
+
+TEST_CASE("Companion touch mapping follows the Fit rect", "[dsmod]") {
+    using VideoCore::DSMod::CompanionRatio;
+    using VideoCore::DSMod::FitCompanion;
+    using VideoCore::DSMod::PanelToCanvas;
+    // Full rect: the long-standing v * canvas / panel, for every pixel.
+    const auto full = FitCompanion(1240, 1080, 1240, 1080, CompanionRatio::Fit);
+    for (u32 v = 0; v < 1240; ++v) {
+        REQUIRE(PanelToCanvas(v, full.x, full.w, 1240) ==
+                static_cast<s32>(static_cast<u64>(v) * 1240 / 1240));
+    }
+    const auto stretched = FitCompanion(1920, 1080, 1240, 1080, CompanionRatio::Stretch);
+    REQUIRE(PanelToCanvas(1919, stretched.x, stretched.w, 1240) == 1919 * 1240 / 1920);
+    // Fit on 1920x1080: the canvas starts 340 px in; the bars are outside the rect.
+    const auto wide = FitCompanion(1920, 1080, 1240, 1080, CompanionRatio::Fit);
+    REQUIRE(PanelToCanvas(340, wide.x, wide.w, 1240) == 0);
+    REQUIRE(PanelToCanvas(960, wide.x, wide.w, 1240) == 620);
+    REQUIRE(PanelToCanvas(1579, wide.x, wide.w, 1240) == 1239);
+    REQUIRE(!wide.Contains(339, 500));
+    REQUIRE(!wide.Contains(1580, 500));
+    REQUIRE(wide.Contains(340, 0));
+    REQUIRE(wide.Contains(1579, 1079));
+    const auto tall = FitCompanion(1240, 1080, 1920, 1080, CompanionRatio::Fit);
+    REQUIRE(PanelToCanvas(191, tall.y, tall.h, 1080) == 0);
+    REQUIRE(PanelToCanvas(191 + 697, tall.y, tall.h, 1080) == 697 * 1080 / 698);
+    REQUIRE(!tall.Contains(10, 190));
+}
+
+TEST_CASE("Companion Fit treats a frame within 2 px of the canvas shape as full", "[dsmod]") {
+    using VideoCore::DSMod::CompanionRatio;
+    using VideoCore::DSMod::FitCompanion;
+    // A 1240x1079 surface for a 1240x1080 canvas: no 1-px bar, no shifted touches.
+    const auto short_by_one = FitCompanion(1240, 1079, 1240, 1080, CompanionRatio::Fit);
+    REQUIRE(short_by_one.full);
+    REQUIRE((short_by_one.x == 0 && short_by_one.y == 0 && short_by_one.w == 1240 &&
+             short_by_one.h == 1079));
+    REQUIRE(FitCompanion(1238, 1080, 1240, 1080, CompanionRatio::Fit).full);
+    REQUIRE(FitCompanion(1240, 1082, 1240, 1080, CompanionRatio::Fit).full);
+    // Three pixels off is a real bar.
+    REQUIRE(!FitCompanion(1243, 1080, 1240, 1080, CompanionRatio::Fit).full);
+    REQUIRE(!FitCompanion(1240, 1083, 1240, 1080, CompanionRatio::Fit).full);
+}
+
+TEST_CASE("Companion touch rect: mirror pages map as Stretch; scripted touches follow the rect",
+          "[dsmod]") {
+    using VideoCore::DSMod::CompanionTouchRect;
+    // Default options (Fit): a widget page is inset, a mirror page covers the whole panel.
+    REQUIRE(!CompanionTouchRect(1920, 1080, 1240, 1080, false).full);
+    const auto mirror = CompanionTouchRect(1920, 1080, 1240, 1080, true);
+    REQUIRE((mirror.full && mirror.w == 1920 && mirror.h == 1080));
+
+    VideoCore::DSMod::AuxRouting aux;
+    aux.width.store(1920);
+    aux.height.store(1080);
+    // Nothing published yet: the whole panel.
+    REQUIRE(aux.NormalisedToPanel(0.5f, 0.5f) == std::pair<u32, u32>{960, 540});
+    aux.SetCanvasRect(CompanionTouchRect(1920, 1080, 1240, 1080, false));
+    REQUIRE(aux.NormalisedToPanel(0.0f, 0.0f) == std::pair<u32, u32>{340, 0});
+    REQUIRE(aux.NormalisedToPanel(0.5f, 0.5f) == std::pair<u32, u32>{960, 540});
+    REQUIRE(aux.NormalisedToPanel(1.0f, 1.0f) == std::pair<u32, u32>{1580, 1080});
+}

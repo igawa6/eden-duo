@@ -33,6 +33,7 @@
 #include "common/cityhash.h"
 #include "common/fs/path_util.h"
 #include "common/hex_util.h"
+#include "common/dsmod_dev_tools.h"
 #include "common/logging.h"
 #include "common/settings.h"
 #include "common/stb.h"
@@ -2074,7 +2075,7 @@ void ModRuntime::TickAutoMgrFindImpl() {
     // EDEN_DSMOD_AUTO_MGRFIND=<stamina>: periodically fire mgrfind (the BSS-global save-manager
     // finder) so a 60fps streamed session captures the durable route with no console interaction.
     static const s32 auto_mgr_target = [] {
-        const char* const v = std::getenv("EDEN_DSMOD_AUTO_MGRFIND");
+        const char* const v = Common::DSMod::DevEnvironment("EDEN_DSMOD_AUTO_MGRFIND");
         return v != nullptr ? static_cast<s32>(std::strtol(v, nullptr, 0)) : 0;
     }();
     // Delay first fire past the load window (~20s) so the BSS scan never perturbs the delicate
@@ -2100,7 +2101,7 @@ void ModRuntime::DriveAutoChainImpl() {
     };
     static const std::vector<Route> routes = [] {
         std::vector<Route> out;
-        const char* const spec = std::getenv("EDEN_DSMOD_AUTOCHAIN");
+        const char* const spec = Common::DSMod::DevEnvironment("EDEN_DSMOD_AUTOCHAIN");
         if (spec == nullptr)
             return out;
         std::string all{spec};

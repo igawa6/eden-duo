@@ -24,7 +24,11 @@ add_executable(tests
     core/mods/map_room_category.cpp
     core/mods/mod_load_plan.cpp
     core/mods/render_golden.cpp
+    core/mods/runtime14.cpp
+    core/mods/runtime18.cpp
+    core/mods/runtime16_image.cpp
     core/mods/text_markup.cpp
+    core/mods/runtime17_text.cpp
     core/mods/ui_render.cpp
     core/mods/widget_position.cpp
     core/internal_network/network.cpp
@@ -126,6 +130,13 @@ add_executable(dsmod_min_runtime_test
     core/mods/runtime14.cpp
     core/mods/runtime15.cpp
     core/mods/runtime15_persist.cpp
+    core/mods/runtime16_input.cpp
+    core/mods/runtime17_settings.cpp
+    core/mods/runtime17_user.cpp
+    core/mods/runtime17_nav.cpp
+    core/mods/runtime16.cpp
+    core/mods/runtime17.cpp
+    core/mods/runtime18.cpp
 )
 create_target_directory_groups(dsmod_min_runtime_test)
 target_link_libraries(dsmod_min_runtime_test PRIVATE common core input_common frontend_common video_core)

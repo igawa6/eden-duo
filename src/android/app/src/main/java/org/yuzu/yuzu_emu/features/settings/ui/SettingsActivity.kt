@@ -138,15 +138,24 @@ class SettingsActivity : AppCompatActivity() {
     override fun onStop() {
         super.onStop()
         Log.info("[SettingsActivity] Settings activity stopping. Saving settings to INI...")
+        CompanionApp.clearPickerCache() // Eden Duo: list the apps afresh next time
         if (isFinishing) {
             NativeInput.reloadInputDevices()
-            NativeLibrary.applySettings()
+            // Eden Duo: a game's page mid-game has its title's .ini loaded; apply only once the
+            // running game's own values are back (below), not the edited title's.
+            val perGameMidGame = args.game != null && NativeConfig.isPerGameConfigLoaded() &&
+                NativeLibrary.isRunning()
+            if (!perGameMidGame) NativeLibrary.applySettings()
             if (args.game == null) {
                 NativeConfig.saveGlobalConfig()
             } else if (NativeConfig.isPerGameConfigLoaded()) {
                 NativeLibrary.logSettings()
                 NativeConfig.savePerGameConfig()
                 NativeConfig.unloadPerGameConfig()
+                if (perGameMidGame) {
+                    SecondScreenPerGame.restoreRunningGameConfig()
+                    NativeLibrary.applySettings()
+                }
             }
 
             if (settingsViewModel.shouldRecreateForLanguageChange.value) {
@@ -170,8 +179,12 @@ class SettingsActivity : AppCompatActivity() {
                 throw IOException("Failed to delete $settingsFile")
             }
             NativeConfig.initializeGlobalConfig()
+            // Eden Duo: Swap Screens and the No Companion app live outside the .ini.
+            SecondScreenPerGame.clearGlobal(applicationContext)
         } else {
             NativeConfig.unloadPerGameConfig()
+            // Eden Duo: the game's Swap Screens / No Companion values live outside its .ini.
+            SecondScreenPerGame.clearTitle(applicationContext, args.game!!.programId)
             val settingsFile = SettingsFile.getCustomSettingsFile(args.game!!)
             if (!settingsFile.delete()) {
                 throw IOException("Failed to delete $settingsFile")

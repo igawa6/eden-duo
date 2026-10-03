@@ -10,6 +10,8 @@ import android.content.SharedPreferences
 import android.net.Uri
 import android.provider.DocumentsContract
 import androidx.preference.PreferenceManager
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.io.File
@@ -24,6 +26,11 @@ import androidx.core.net.toUri
 object GameHelper {
     private const val KEY_OLD_GAME_PATH = "game_path"
     const val KEY_GAMES = "Games"
+    private const val KEY_GAME_CONTENT_CONTAINERS = "GameContentContainers"
+
+    // FileSys::GetBaseTitleID: updates (+0x800), DLC (+0x1000 + n) and extra programs of a
+    // multi-program title all share their base game's id once the low 13 bits are cleared.
+    private const val BASE_TITLE_ID_MASK = 0x1FFFL.inv()
 
     var cachedGameList = mutableListOf<Game>()
 
@@ -37,9 +44,109 @@ object GameHelper {
     @Volatile
     private var emulationActive = false
 
-    fun onEmulationStarting() {
+    // Whether the external content dirs are mounted, and whether every games folder has been
+    // walked since the provider was last cleared; until then a booting game mounts those itself.
+    @Volatile
+    private var externalContentMounted = false
+
+    @Volatile
+    private var libraryScanCompleted = false
+
+    // Update/DLC containers seen by the last full library scan, keyed by base title id. The scan
+    // registers games-folder containers one by one as it walks, so a game booted mid-scan (cold
+    // start from the cached list, a shortcut or a front-end) re-registers its own from here.
+    @Serializable
+    private data class ContentContainer(val uri: String, val gameFolder: Boolean)
+
+    @Volatile
+    private var contentContainers: Map<Long, List<ContentContainer>>? = null
+
+    /**
+     * Called on the emulation thread right before the native boot reads the filesystem provider.
+     */
+    fun onEmulationStarting(gamePath: String, programId: String) {
+        // Keys may have been added since the app started (the intent path used to reload them).
+        NativeLibrary.reloadKeys()
         synchronized(filesystemProviderLock) {
             emulationActive = true
+            try {
+                registerContentForBoot(gamePath, programId)
+            } catch (e: Exception) {
+                Log.warning("[GameHelper] Failed to register content for boot: ${e.message}")
+            }
+        }
+    }
+
+    private fun registerContentForBoot(gamePath: String, programId: String) {
+        val mountedContainerUris = mutableSetOf<String>()
+        if (!externalContentMounted) {
+            mountExternalContentDirectories(mountedContainerUris)
+        }
+        val externalCount = mountedContainerUris.size
+
+        val baseTitleId = (programId.toLongOrNull() ?: 0L) and BASE_TITLE_ID_MASK
+        val known = if (baseTitleId != 0L) {
+            loadContentContainers()[baseTitleId].orEmpty()
+        } else {
+            emptyList()
+        }
+        val registered = mutableListOf<String>()
+        known.forEach {
+            if (it.uri != gamePath && mountedContainerUris.add(it.uri)) {
+                if (it.gameFolder) {
+                    NativeLibrary.addGameFolderFileToFilesystemProvider(it.uri)
+                } else {
+                    NativeLibrary.addFileToFilesystemProvider(it.uri)
+                }
+                registered.add(it.uri)
+            }
+        }
+        val beforeSiblings = mountedContainerUris.size
+        // Before the first scan, or for a game the scan has no content for (a frontend launch of a
+        // game outside the library folders), its own folder is the only place left to look.
+        if (!libraryScanCompleted || known.isEmpty()) {
+            mountGameFolderContent(Uri.parse(gamePath), mountedContainerUris)
+        }
+
+        Log.info(
+            "[GameHelper] Boot content for ${baseTitleId.toString(16).padStart(16, '0')}: " +
+                "${registered.size} known container(s) $registered, " +
+                "${mountedContainerUris.size - beforeSiblings} folder sibling(s), " +
+                "$externalCount external container(s)"
+        )
+    }
+
+    private fun loadContentContainers(): Map<Long, List<ContentContainer>> {
+        contentContainers?.let { return it }
+        val stored = PreferenceManager.getDefaultSharedPreferences(YuzuApplication.appContext)
+            .getString(KEY_GAME_CONTENT_CONTAINERS, null)
+        val loaded = stored?.let {
+            try {
+                Json.decodeFromString<Map<Long, List<ContentContainer>>>(it)
+            } catch (_: Exception) {
+                null
+            }
+        } ?: emptyMap()
+        contentContainers = loaded
+        return loaded
+    }
+
+    private fun recordContentContainer(
+        index: MutableMap<Long, MutableSet<ContentContainer>>,
+        uri: String,
+        programId: Long,
+        gameFolder: Boolean
+    ) {
+        val baseTitleIds = if (programId != 0L) {
+            longArrayOf(programId and BASE_TITLE_ID_MASK)
+        } else {
+            // DLC-only containers have no program id; read the title ids from the container.
+            NativeLibrary.getContainerBaseTitleIds(uri)
+        }
+        baseTitleIds.forEach {
+            if (it != 0L) {
+                index.getOrPut(it) { linkedSetOf() }.add(ContentContainer(uri, gameFolder))
+            }
         }
     }
 
@@ -70,14 +177,19 @@ object GameHelper {
         GameMetadata.resetMetadata()
 
         val mountedContainerUris = mutableSetOf<String>()
+        val contentIndex = mutableMapOf<Long, MutableSet<ContentContainer>>()
         synchronized(filesystemProviderLock) {
             // Remove previous filesystem provider information so we can get up to date version
             // info, unless a game is booting or running off these entries.
             if (!emulationActive) {
                 NativeLibrary.clearFilesystemProvider()
+                libraryScanCompleted = false
             }
             mountExternalContentDirectories(mountedContainerUris)
+            externalContentMounted = true
         }
+        // Outside the lock: reading the title ids opens every container again.
+        mountedContainerUris.forEach { recordContentContainer(contentIndex, it, 0L, false) }
 
         val badDirs = mutableListOf<Int>()
         gameDirs.forEachIndexed { index: Int, gameDir: GameDir ->
@@ -91,7 +203,8 @@ object GameHelper {
                     gamesByProgramId,
                     FileUtil.listFiles(gameDirUri),
                     scanDepth,
-                    mountedContainerUris
+                    mountedContainerUris,
+                    contentIndex
                 )
             } else {
                 badDirs.add(index)
@@ -113,10 +226,15 @@ object GameHelper {
         games.forEach {
             serializedGames.add(Json.encodeToString(it))
         }
+        val containersByTitle: Map<Long, List<ContentContainer>> =
+            contentIndex.mapValues { it.value.toList() }
         preferences.edit() {
             remove(KEY_GAMES)
                 .putStringSet(KEY_GAMES, serializedGames)
+                .putString(KEY_GAME_CONTENT_CONTAINERS, Json.encodeToString(containersByTitle))
         }
+        contentContainers = containersByTitle
+        libraryScanCompleted = true
 
         cachedGameList = games.toMutableList()
         return games.toList()
@@ -167,7 +285,8 @@ object GameHelper {
         gamesByProgramId: MutableMap<String, Game>,
         files: Array<MinimalDocumentFile>,
         depth: Int,
-        mountedContainerUris: MutableSet<String>
+        mountedContainerUris: MutableSet<String>,
+        contentIndex: MutableMap<Long, MutableSet<ContentContainer>>
     ) {
         if (depth <= 0) {
             return
@@ -180,7 +299,8 @@ object GameHelper {
                     gamesByProgramId,
                     FileUtil.listFiles(it.uri),
                     depth - 1,
-                    mountedContainerUris
+                    mountedContainerUris,
+                    contentIndex
                 )
             } else {
                 val extension = FileUtil.getExtension(it.uri).lowercase()
@@ -200,8 +320,10 @@ object GameHelper {
                             gamesByProgramId[game.programId] = game
                         }
                     } else if (mountedContainer) {
-                        GameMetadata.getProgramId(filePath).toLongOrNull()?.let { programId ->
-                            gamesByProgramId[(programId and 0x800L.inv()).toString()]
+                        val programId = GameMetadata.getProgramId(filePath).toLongOrNull()
+                        recordContentContainer(contentIndex, filePath, programId ?: 0L, true)
+                        programId?.let {
+                            gamesByProgramId[(it and 0x800L.inv()).toString()]
                         }?.let { existingGame ->
                             NativeLibrary.getPatchesForFile(existingGame.path, existingGame.programId)
                             existingGame.version = GameMetadata.getVersion(

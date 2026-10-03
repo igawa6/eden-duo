@@ -31,6 +31,10 @@ import org.yuzu.yuzu_emu.utils.LosslessScalingHelper
 import org.yuzu.yuzu_emu.utils.NativeConfig
 import org.yuzu.yuzu_emu.utils.DirectoryInitialization
 import org.yuzu.yuzu_emu.utils.FullscreenHelper
+import org.yuzu.yuzu_emu.utils.ScreenSwap
+import org.yuzu.yuzu_emu.utils.NoCompanion
+import org.yuzu.yuzu_emu.utils.CompanionApp
+import org.yuzu.yuzu_emu.utils.SecondScreenPerGame
 import androidx.core.content.edit
 import androidx.fragment.app.FragmentActivity
 import org.yuzu.yuzu_emu.fragments.MessageDialogFragment
@@ -361,6 +365,65 @@ class SettingsFragmentPresenter(
             add(IntSetting.RENDERER_ASPECT_RATIO.key)
             add(IntSetting.VERTICAL_ALIGNMENT.key)
             add(BooleanSetting.PICTURE_IN_PICTURE.key)
+
+            addSecondScreenSettings(this)
+        }
+    }
+
+    /**
+     * Eden Duo: the dual-screen options. Per game, Companion Ratio is a native per-game setting;
+     * Swap Screens and No Companion keep the game's value in Eden Duo's own store (read before
+     * the game window opens), so they need a real title id.
+     */
+    private fun addSecondScreenSettings(sl: ArrayList<SettingsItem>) {
+        val gameId = settingsViewModel.game?.let { SecondScreenPerGame.usableProgramId(it) }
+        val perGame = settingsViewModel.game != null
+        if (!NativeConfig.isPerGameConfigLoaded() && !NativeLibrary.isRunning()) {
+            IntSetting.COMPANION_RATIO.global = true
+        }
+        sl.apply {
+            add(HeaderSetting(R.string.second_screen))
+            if (!perGame || gameId != null) {
+                add(
+                    SwitchSetting(
+                        if (gameId != null) {
+                            ScreenSwap.perGameSetting(gameId)
+                        } else {
+                            ScreenSwap.setting
+                        },
+                        titleId = R.string.swap_screens,
+                        descriptionId = R.string.swap_screens_description
+                    )
+                )
+            }
+            add(
+                SingleChoiceSetting(
+                    IntSetting.COMPANION_RATIO,
+                    titleId = R.string.companion_ratio,
+                    descriptionId = R.string.companion_ratio_description,
+                    choicesId = R.array.companionRatioEntries,
+                    valuesId = R.array.companionRatioValues
+                )
+            )
+            if (!perGame || gameId != null) {
+                add(
+                    SingleChoiceSetting(
+                        if (gameId != null) {
+                            NoCompanion.perGameSetting(gameId)
+                        } else {
+                            IntSetting.NO_COMPANION
+                        },
+                        titleId = R.string.no_companion,
+                        descriptionId = R.string.no_companion_description,
+                        choicesId = R.array.noCompanionEntries,
+                        valuesId = R.array.noCompanionValues
+                    )
+                )
+                // No Companion "App": which app (CompanionApp), shown while App is chosen.
+                if (NoCompanion.value(gameId) == NoCompanion.APP) {
+                    add(CompanionApp.pickerItem(context, gameId))
+                }
+            }
         }
     }
 

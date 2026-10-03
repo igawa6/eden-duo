@@ -9,9 +9,12 @@
 // module host's read_romfs), so adding a source is one Register call, not an edit at each site.
 //
 // Two kinds of source:
-//   - directory sources (romfs, file, and later base/aoc): `open_dir` returns the root directory.
-//     It is called at most once per session, from whichever thread asks first, behind a
-//     std::once_flag; the result, null included ("unavailable"), is kept for the session.
+//   - directory sources (romfs, file, base, aoc, user): `open_dir` returns the root directory.
+//     It is called once per session, from whichever thread asks first, behind the slot's
+//     mutex; the result, null included ("unavailable"), is kept for the session -- unless the
+//     source sets `retry_ms` (runtime 16, the game's "romfs"): a null root is opened again on a
+//     later ask, at most once per retry_ms, so a read that came too early (a module's create()
+//     before the game's filesystem is registered) never makes the source unavailable for good.
 //   - byte sources (module): `read_bytes` returns the whole asset for the full source string.
 //
 // Registration happens while the runtime is built, before any reader or worker can run; after
@@ -25,6 +28,7 @@
 
 #pragma once
 
+#include <atomic>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -49,6 +53,15 @@ struct AssetSource {
     /// Module host capability bit(s) advertised while this source is registered (0 = none), so a
     /// module can tell "this host understands aoc:" from "the file is missing".
     u64 capability{0};
+    /// Runtime 17: directory sources only. When set, Open refuses every path (PathOf form) this
+    /// returns false for -- a source over a real folder rejects "..", absolute paths and links
+    /// leading out of it ("user:", mod_user_source.h).
+    std::function<bool(std::string_view path)> accept_path;
+    /// Runtime 17: directory sources only. A file larger than this opens as missing (0 = no cap).
+    u64 max_file_size{0};
+    /// Directory source, runtime 16: when open_dir gave nothing, open again on an ask at least
+    /// this many milliseconds later. Negative: never (the null root is kept for the session).
+    s64 retry_ms{-1};
 };
 
 class AssetSources {
@@ -91,8 +104,11 @@ public:
 private:
     struct Slot {
         AssetSource def;
-        std::once_flag once;
-        FileSys::VirtualDir root;
+        std::mutex mutex;               ///< serialises open_dir; guards the fields below
+        std::atomic<bool> ready{false}; ///< root opened (non-null): read without the mutex
+        bool tried{false};              ///< open_dir has run at least once
+        s64 tried_ms{0};                ///< steady-clock ms of the last open_dir
+        FileSys::VirtualDir root;       ///< never changes once non-null
     };
     [[nodiscard]] Slot* Find(std::string_view prefix) const;
     FileSys::VirtualDir RootOf(Slot& slot);

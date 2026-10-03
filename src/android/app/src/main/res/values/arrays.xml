@@ -529,6 +529,29 @@
         <item>2</item>
     </integer-array>
 
+    <!-- Eden Duo: Graphics -> Second Screen -->
+    <string-array name="companionRatioEntries">
+        <item>@string/companion_ratio_fit</item>
+        <item>@string/companion_ratio_stretch</item>
+    </string-array>
+    <integer-array name="companionRatioValues">
+        <item>0</item>
+        <item>1</item>
+    </integer-array>
+
+    <string-array name="noCompanionEntries">
+        <item>@string/no_companion_icon</item>
+        <item>@string/no_companion_black</item>
+        <item>@string/no_companion_off</item>
+        <item>@string/no_companion_app</item>
+    </string-array>
+    <integer-array name="noCompanionValues">
+        <item>0</item>
+        <item>1</item>
+        <item>2</item>
+        <item>3</item>
+    </integer-array>
+
     <string-array name="optimizeSpirvOutputEntries">
         <item>@string/never</item>
         <item>@string/on_load</item>

@@ -42,6 +42,11 @@ public:
     void AuxSurfaceDestroyed();
     /// Forwards second-screen touch to the running game; false while no game renderer exists.
     bool SetAuxTouch(std::span<const VideoCore::DSMod::AuxTouchPoint> points);
+    // Eden Duo: 1 when the running game shows the idle page (no usable companion package), 0
+    // when it does not, -1 when no game is loaded yet (ask again later).
+    int CompanionIsIdle();
+    // Eden Duo: hands the Second Screen settings to the renderer and the mod runtime.
+    static void ApplySecondScreenOptions();
 
     void InitializeGpuDriver(const std::string& hook_lib_dir, const std::string& custom_driver_dir,
                              const std::string& custom_driver_name,
@@ -84,6 +89,7 @@ private:
     std::unique_ptr<EmuWindow_Android> m_aux_window;
     ANativeWindow* m_aux_native_window{};
     bool m_aux_renderer_ready{}; // the game's renderer and GPU exist
+    bool m_mod_runtime_live{};   // Eden Duo: Load succeeded; the mod runtime (if any) exists
     std::mutex m_aux_mutex;
     void AttachAuxWindowLocked();
     void DetachAuxWindowLocked();

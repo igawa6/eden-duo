@@ -327,4 +327,21 @@ std::unique_ptr<GameModule> GameModule::Load(FileSys::VirtualDir assets, u64 tit
     }
 }
 
+ModuleActionOutcome CallModuleAction(const EdenDsmodModuleExtensions* extensions, void* instance,
+                                     const std::string& name, s64 argument) {
+    if (!extensions || !extensions->on_action || !instance || name.empty() ||
+        name.size() > MaxModuleActionName) {
+        return ModuleActionOutcome::NotRun;
+    }
+    try {
+        if (extensions->on_action(instance, name.c_str(), argument)) {
+            return ModuleActionOutcome::Accepted;
+        }
+        LOG_INFO(Core, "DSMod: module declined action '{}'", name);
+    } catch (...) {
+        LOG_ERROR(Core, "DSMod: module action '{}' threw", name);
+    }
+    return ModuleActionOutcome::Declined;
+}
+
 } // namespace Core::Mods

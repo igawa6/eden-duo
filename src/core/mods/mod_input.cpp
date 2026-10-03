@@ -28,8 +28,10 @@
 
 #include <cstdlib>
 #include <fstream>
+#include "common/dsmod_dev_tools.h"
 #include "common/logging.h"
 #include "core/core.h"
+#include "core/mods/mod_input_drag.h"
 #include "core/mods/mod_runtime.h"
 #include "core/mods/mod_runtime_shared.h"
 #include "core/mods/mod_view_default.h"
@@ -153,27 +155,21 @@ void ModRuntime::UpdateGestures(const StateSnapshot& snapshot,
     // map does not fire whatever is underneath it when lifted.
     constexpr float TapSlop = 12.0f;
 
+    // Eden Duo: with Companion Ratio "Fit" the canvas may sit in a rect of the panel (bars
+    // around it, see FitCompanion); a full rect maps exactly as v * canvas / panel.
+    const auto fit = TouchRect(panel_w, panel_h, canvas_w, canvas_h);
     const auto to_canvas_x = [&](u32 v) {
-        return static_cast<s32>(static_cast<u64>(v) * canvas_w / panel_w);
+        if (!fit.full) {
+            v = std::clamp(v, fit.x, fit.x + fit.w - 1);
+        }
+        return VideoCore::DSMod::PanelToCanvas(v, fit.x, fit.w, canvas_w);
     };
     const auto to_canvas_y = [&](u32 v) {
-        return static_cast<s32>(static_cast<u64>(v) * canvas_h / panel_h);
-    };
-
-    // Fingers still down this frame. A point flagged "end" is already leaving.
-    std::vector<TrackedFinger> now;
-    now.reserve(count);
-    for (size_t i = 0; i < count; ++i) {
-        if ((points[i].attributes & 2u) != 0) {
-            // A leaving finger still reports where it let go: that is where a drag drops.
-            if (drag_state.candidate && points[i].finger_id == drag_state.finger) {
-                drag_state.x = to_canvas_x(points[i].x);
-                drag_state.y = to_canvas_y(points[i].y);
-            }
-            continue;
+        if (!fit.full) {
+            v = std::clamp(v, fit.y, fit.y + fit.h - 1);
         }
-        now.push_back({points[i].finger_id, to_canvas_x(points[i].x), to_canvas_y(points[i].y)});
-    }
+        return VideoCore::DSMod::PanelToCanvas(v, fit.y, fit.h, canvas_h);
+    };
 
     const auto previous = [&](u32 id) -> const TrackedFinger* {
         for (const auto& f : live_fingers) {
@@ -183,6 +179,41 @@ void ModRuntime::UpdateGestures(const StateSnapshot& snapshot,
         }
         return nullptr;
     };
+
+    // Fingers still down this frame. A point flagged "end" is already leaving.
+    std::vector<TrackedFinger> now;
+    now.reserve(count);
+    const auto is_ignored = [&](u32 id) {
+        return std::ranges::find(ignored_fingers, id) != ignored_fingers.end();
+    };
+    for (size_t i = 0; i < count; ++i) {
+        if ((points[i].attributes & 2u) != 0) {
+            if (is_ignored(points[i].finger_id)) {
+                std::erase(ignored_fingers, points[i].finger_id); // a bar finger let go
+                continue;
+            }
+            // A leaving finger still reports where it let go: that is where a drag drops.
+            if (drag_state.candidate && points[i].finger_id == drag_state.finger) {
+                drag_state.x = to_canvas_x(points[i].x);
+                drag_state.y = to_canvas_y(points[i].y);
+            }
+            continue;
+        }
+        // A finger that lands in a Fit bar is ignored until it lifts, even once it slides onto
+        // the canvas; one that slides out from the canvas keeps going along its edge.
+        if (is_ignored(points[i].finger_id)) {
+            continue;
+        }
+        if (!fit.full && !fit.Contains(points[i].x, points[i].y) &&
+            previous(points[i].finger_id) == nullptr) {
+            ignored_fingers.push_back(points[i].finger_id);
+            continue;
+        }
+        now.push_back({points[i].finger_id, to_canvas_x(points[i].x), to_canvas_y(points[i].y)});
+    }
+    if (count == 0) {
+        ignored_fingers.clear();
+    }
 
     if (!now.empty() && live_fingers.empty()) {
         // First finger down: remember where, and find out whether it landed on something that
@@ -260,9 +291,9 @@ void ModRuntime::UpdateGestures(const StateSnapshot& snapshot,
             bool swipe_up = false;
             bool swipe_down = false;
             s32 swipe_px = 0;
-            if (!gesture_ignored && !drag_state.candidate && current_page < manifest.pages.size()) {
+            if (!gesture_ignored && current_page < manifest.pages.size()) {
                 const auto expanded = ExpandWidgets(manifest.pages[current_page], snapshot);
-                if (gesture_target.empty()) {
+                if (gesture_target.empty() && !drag_state.candidate) {
                     const s64 swipe_hit = HitTestIndex(expanded, snapshot, gesture_down_x,
                                                        gesture_down_y, SwipeHitFilter);
                     if (swipe_hit >= 0 && SwipeArms(expanded[static_cast<size_t>(swipe_hit)])) {
@@ -284,7 +315,9 @@ void ModRuntime::UpdateGestures(const StateSnapshot& snapshot,
                 const s64 hold_hit = HitTestIndex(
                     expanded, snapshot, gesture_down_x, gesture_down_y,
                     [](const Widget& w) { return !w.on_hold.empty() || w.input_block; });
-                if (hold_hit >= 0 && !expanded[static_cast<size_t>(hold_hit)].on_hold.empty()) {
+                // Runtime 16: also over a drag candidate (HoldArmsOverDrag, mod_input_hold.h).
+                if (hold_hit >= 0 && !expanded[static_cast<size_t>(hold_hit)].on_hold.empty() &&
+                    HoldArmsOverDrag(hold_hit, drag_state.candidate ? drag_state.source : -1)) {
                     const Widget& hw = expanded[static_cast<size_t>(hold_hit)];
                     hold_action = hw.on_hold;
                     need_ms = hw.hold_ms;
@@ -415,6 +448,11 @@ void ModRuntime::UpdateGestures(const StateSnapshot& snapshot,
                             current_page)) {
         const PendingTap hold{gesture_down_x, gesture_down_y, hold_action};
         LOG_INFO(Core, "DSMod: aux hold at canvas({},{}) -> '{}'", hold.x, hold.y, hold_action);
+        if (drag_state.candidate) {
+            // Runtime 16: the hold fired first, so this touch does not drag.
+            LOG_INFO(Core, "DSMod: drag of {} given up for the hold", drag_state.payload);
+            drag_state = {};
+        }
         std::scoped_lock lk{tap_mutex};
         pending_taps.push_back(hold);
     }
@@ -462,12 +500,12 @@ void ModRuntime::UpdateGestures(const StateSnapshot& snapshot,
                 LOG_INFO(Core, "DSMod: drag of {} dropped at canvas({},{}) -> '{}'",
                          drag_state.payload, drag_state.x, drag_state.y, action);
                 pending_drops.push_back({action, drag_state.payload, target_haptic,
-                                         drag_state.widget.select_group, drag_state.x,
-                                         drag_state.y});
+                                         drag_state.widget.select_group, drag_state.x, drag_state.y,
+                                         target});
             } else {
                 LOG_INFO(Core, "DSMod: drag of {} cancelled (released at canvas({},{}))",
                          drag_state.payload, drag_state.x, drag_state.y);
-                if (const char* const p = std::getenv("EDEN_DSMOD_CMD")) {
+                if (const char* const p = Common::DSMod::DevEnvironment("EDEN_DSMOD_CMD")) {
                     std::ofstream f(std::string(p) + ".out", std::ios::app);
                     if (f) {
                         f << fmt::format("DSMod drag cancelled ({},{}) payload {}\n", drag_state.x,
@@ -786,6 +824,14 @@ void ModRuntime::ApplyViewCorrections() {
     }
 }
 
+bool ModRuntime::HasPendingInput() const {
+    if (!pending_drops.empty()) {
+        return true;
+    }
+    std::scoped_lock lk{tap_mutex};
+    return !pending_taps.empty();
+}
+
 void ModRuntime::DrainTaps(const StateSnapshot& snapshot) {
     std::vector<PendingTap> taps;
     {
@@ -812,7 +858,7 @@ void ModRuntime::DrainTaps(const StateSnapshot& snapshot) {
         }
         const std::string carried = payload ? fmt::format(" payload {}", *payload) : std::string{};
         LOG_INFO(Core, "DSMod: {} ({},{}) -> action '{}'{}", how, x, y, name, carried);
-        if (const char* const p = std::getenv("EDEN_DSMOD_CMD")) {
+        if (const char* const p = Common::DSMod::DevEnvironment("EDEN_DSMOD_CMD")) {
             std::ofstream f(std::string(p) + ".out", std::ios::app);
             if (f) {
                 f << fmt::format("DSMod {} ({},{}) -> action '{}'{}\n", how, x, y, name, carried);
@@ -857,7 +903,7 @@ void ModRuntime::DrainTaps(const StateSnapshot& snapshot) {
         page.widgets, [&](const Widget& w) { return w.input_block || map_tappable(w); });
     const auto out_line = [](const std::string& line) {
         LOG_INFO(Core, "{}", line);
-        if (const char* const p = std::getenv("EDEN_DSMOD_CMD")) {
+        if (const char* const p = Common::DSMod::DevEnvironment("EDEN_DSMOD_CMD")) {
             std::ofstream f(std::string(p) + ".out", std::ios::app);
             if (f) {
                 f << line << '\n';
@@ -1083,7 +1129,7 @@ void ModRuntime::DrainTaps(const StateSnapshot& snapshot) {
                         HapticKind::Select, w.haptic, -1,
                         fmt::format("select {} = {}", w.select_group, clear ? -1 : *carried));
                     LOG_INFO(Core, "{}", line);
-                    if (const char* const p = std::getenv("EDEN_DSMOD_CMD")) {
+                    if (const char* const p = Common::DSMod::DevEnvironment("EDEN_DSMOD_CMD")) {
                         std::ofstream f(std::string(p) + ".out", std::ios::app);
                         if (f) {
                             f << line << '\n';
@@ -1115,7 +1161,7 @@ void ModRuntime::DrainTaps(const StateSnapshot& snapshot) {
         const auto carried = WidgetPayload(tapped, snapshot);
         const std::string suffix = carried ? fmt::format(" payload {}", *carried) : std::string{};
         LOG_INFO(Core, "DSMod: tap ({},{}) -> action '{}'{}", tap.x, tap.y, action_name, suffix);
-        if (const char* const p = std::getenv("EDEN_DSMOD_CMD")) {
+        if (const char* const p = Common::DSMod::DevEnvironment("EDEN_DSMOD_CMD")) {
             std::ofstream f(std::string(p) + ".out", std::ios::app);
             if (f) {
                 f << fmt::format("DSMod tap ({},{}) -> action '{}'{}\n", tap.x, tap.y, action_name,
@@ -1212,7 +1258,7 @@ void ModRuntime::FlushHaptic() {
         "DSMod haptic {} ({}: {})", HapticStrengthNames[static_cast<size_t>(event.strength)],
         HapticKindNames[static_cast<size_t>(event.kind)], event.source);
     LOG_INFO(Core, "{}", line);
-    if (const char* const p = std::getenv("EDEN_DSMOD_CMD")) {
+    if (const char* const p = Common::DSMod::DevEnvironment("EDEN_DSMOD_CMD")) {
         std::ofstream f(std::string(p) + ".out", std::ios::app);
         if (f) {
             f << line << '\n';
@@ -1361,8 +1407,10 @@ void ModRuntime::PublishMapState(StateSnapshot& snapshot, bool with_flags) {
     }
 }
 
-void ModRuntime::PublishInteraction(StateSnapshot& snapshot) {
-    if (current_page != interact_page) {
+void ModRuntime::PublishInteraction(StateSnapshot& snapshot, bool before_taps) {
+    // Before the taps (runtime 16) the page-change reset waits for the pass after them, so a
+    // drop queued on this tick still runs, as it did before that pass existed.
+    if (!before_taps && current_page != interact_page) {
         interact_page = current_page;
         ResetInteraction("page change");
     }
@@ -1379,26 +1427,46 @@ void ModRuntime::PublishInteraction(StateSnapshot& snapshot) {
         }
         interact_groups_ready = true;
     }
+    if (!before_taps) {
+        // Dynamic groups the pre-tap pass published: DrainTaps may have cleared them since.
+        for (const auto& key : early_dynamic_sel_keys) {
+            snapshot.ints.erase(key);
+        }
+    }
+    early_dynamic_sel_keys.clear();
     for (const auto& group : interact_groups) {
         snapshot.ints[sel_keys(group)] = -1;
         snapshot.ints[last_keys(group)] = -1;
     }
     for (const auto& [group, value] : selections) {
         snapshot.ints[sel_keys(group)] = value;
+        if (before_taps && !interact_groups.contains(group)) {
+            early_dynamic_sel_keys.push_back(sel_keys(group));
+        }
     }
     for (const auto& [group, value] : last_selection) {
         snapshot.ints[last_keys(group)] = value;
+        if (before_taps && !interact_groups.contains(group)) {
+            early_dynamic_sel_keys.push_back(last_keys(group));
+        }
     }
     const bool active = drag_state.active && drag_state.page == current_page;
-    snapshot.ints["@drag"] = active ? 1 : 0;
+    std::optional<DragInts> drag;
+    if (active) {
+        drag = DragInts{drag_state.payload, drag_state.x, drag_state.y, drag_state.hover};
+    } else if (before_taps && !pending_drops.empty()) {
+        // Runtime 16: the drag released this tick, until its drop action has run.
+        const PendingDrop& d = pending_drops.back();
+        drag = DragInts{d.payload, d.x, d.y, d.hover};
+    }
+    WriteDragInts(snapshot, drag);
+    if (before_taps) {
+        return; // the drag overlay is the renderer's: published after the taps
+    }
     snapshot.drag.active = active;
     if (!active) {
         return;
     }
-    snapshot.ints["@drag_payload"] = drag_state.payload;
-    snapshot.ints["@drag_x"] = drag_state.x;
-    snapshot.ints["@drag_y"] = drag_state.y;
-    snapshot.ints["@drag_hover"] = drag_state.hover;
     snapshot.drag.widget = drag_state.widget;
     snapshot.drag.x = drag_state.x;
     snapshot.drag.y = drag_state.y;
@@ -1406,6 +1474,14 @@ void ModRuntime::PublishInteraction(StateSnapshot& snapshot) {
     snapshot.drag.grab_dy = drag_state.grab_dy;
     snapshot.drag.source = drag_state.source;
     snapshot.drag.hover = drag_state.hover;
+}
+
+VideoCore::DSMod::CompanionRect ModRuntime::TouchRect(u32 panel_w, u32 panel_h, u32 canvas_w,
+                                                      u32 canvas_h) const {
+    // A mirror page is drawn over the whole panel (renderer mirror path), so it maps as Stretch.
+    return VideoCore::DSMod::CompanionTouchRect(
+        panel_w, panel_h, canvas_w, canvas_h,
+        system.GPU().DSModAux().mirror_enabled.load(std::memory_order_relaxed));
 }
 
 void ModRuntime::DriveCmdDrag([[maybe_unused]] u32 panel_w, [[maybe_unused]] u32 panel_h,
@@ -1431,12 +1507,13 @@ void ModRuntime::DriveCmdDrag([[maybe_unused]] u32 panel_w, [[maybe_unused]] u32
                                        static_cast<float>(std::max<u64>(1, cmd_drag.move_ticks)));
     const float cx = cmd_drag.x0 + (cmd_drag.x1 - cmd_drag.x0) * f;
     const float cy = cmd_drag.y0 + (cmd_drag.y1 - cmd_drag.y0) * f;
-    const float px = cmd_drag.normalised ? cx * static_cast<float>(panel_w)
-                                         : cx * static_cast<float>(panel_w) /
-                                               static_cast<float>(std::max(1u, canvas_w));
-    const float py = cmd_drag.normalised ? cy * static_cast<float>(panel_h)
-                                         : cy * static_cast<float>(panel_h) /
-                                               static_cast<float>(std::max(1u, canvas_h));
+    // Both forms land where the canvas is drawn (Companion Ratio "Fit" may inset it): 0..1 is
+    // normalised to the canvas rect, anything else is canvas pixels. A full rect is the panel.
+    const auto fit = TouchRect(panel_w, panel_h, canvas_w, canvas_h);
+    const float sx = cmd_drag.normalised ? 1.0f : static_cast<float>(std::max(1u, canvas_w));
+    const float sy = cmd_drag.normalised ? 1.0f : static_cast<float>(std::max(1u, canvas_h));
+    const float px = static_cast<float>(fit.x) + cx * static_cast<float>(fit.w) / sx;
+    const float py = static_cast<float>(fit.y) + cy * static_cast<float>(fit.h) / sy;
     const VideoCore::DSMod::AuxTouchPoint point{
         .finger_id = 0x44,
         .x = static_cast<u32>(std::clamp(px, 0.0f, static_cast<float>(panel_w - 1))),

@@ -12,6 +12,7 @@
 #include <array>
 #include <cmath>
 #include <cstring>
+#include <utility>
 #include <vector>
 
 #include "core/mods/mod_ui.h"
@@ -351,6 +352,149 @@ void Canvas::DrawImageFilled(s32 x, s32 y, s32 rw, s32 rh, const Image& image, u
             }
             dst_row[px] = Blend(dst_row[px], ApplyDrawOpacity(texel));
         }
+    }
+}
+
+void Canvas::DrawImageTransformed(s32 x, s32 y, s32 rw, s32 rh, const Image& image, s32 sx, s32 sy,
+                                  s32 sw, s32 sh, u32 tint, float degrees, float scale,
+                                  float pivot_x, float pivot_y, bool flip_x, bool flip_y) {
+    if (!image.Valid() || rw <= 0 || rh <= 0 || sw <= 0 || sh <= 0 || !(scale > 0.0f) ||
+        !std::isfinite(scale) || !std::isfinite(degrees) || !std::isfinite(pivot_x) ||
+        !std::isfinite(pivot_y)) {
+        return;
+    }
+    float deg = std::fmod(degrees, 360.0f);
+    if (deg < 0.0f) {
+        deg += 360.0f;
+    }
+    const float ax = static_cast<float>(x) + pivot_x; // the pivot on the canvas
+    const float ay = static_cast<float>(y) + pivot_y;
+    if (deg == 0.0f) {
+        // Unturned: the scaled rect through the classic blit (same sampling as an unscaled
+        // picture of that size, so a 1x draw is DrawImageRegion itself).
+        const auto edge = [scale](float a, s32 v) {
+            return static_cast<s32>(std::lround(a + (static_cast<float>(v) - a) * scale));
+        };
+        const s32 nx = edge(ax, x), ny = edge(ay, y);
+        const s32 nw = edge(ax, x + rw) - nx, nh = edge(ay, y + rh) - ny;
+        DrawImageRegion(nx, ny, nw, nh, image, sx, sy, sw, sh, tint, flip_x, flip_y);
+        return;
+    }
+    // Inverse mapping, as DrawImageRegionRotated but about the pivot and through the scale: every
+    // canvas pixel centre in the transformed box is turned back by the angle, divided by the scale
+    // and, when it lands inside the unrotated rect, takes the texel the unscaled blit would use.
+    const auto box = TransformedImageBounds(x, y, rw, rh, deg, scale, pivot_x, pivot_y);
+    const s32 x0 = std::max(clip_x0, box[0]), x1 = std::min(clip_x1, box[2]);
+    const s32 y0 = std::max(clip_y0, box[1]), y1 = std::min(clip_y1, box[3]);
+    const float rad = deg * 3.14159265f / 180.0f;
+    const float c = std::cos(rad), s = std::sin(rad);
+    const float inv = 1.0f / scale;
+    const bool plain = tint == 0xFFFFFFFFu;
+    const s32 iw = static_cast<s32>(image.w), ih = static_cast<s32>(image.h);
+    const float fw = static_cast<float>(rw), fh = static_cast<float>(rh);
+    for (s32 py = y0; py < y1; ++py) {
+        u32* const dst = pixels.data() + static_cast<size_t>(py) * w;
+        const float dy = static_cast<float>(py) + 0.5f - ay;
+        for (s32 px = x0; px < x1; ++px) {
+            const float dx = static_cast<float>(px) + 0.5f - ax;
+            const float lx = (dx * c + dy * s) * inv + pivot_x;
+            const float ly = (-dx * s + dy * c) * inv + pivot_y;
+            if (!(lx >= 0.0f && lx < fw && ly >= 0.0f && ly < fh)) {
+                continue;
+            }
+            const s32 off_x = static_cast<s32>(static_cast<s64>(lx) * sw / rw);
+            const s32 off_y = static_cast<s32>(static_cast<s64>(ly) * sh / rh);
+            const s32 src_x = flip_x ? sx + (sw - 1) - off_x : sx + off_x;
+            const s32 src_y = flip_y ? sy + (sh - 1) - off_y : sy + off_y;
+            if (src_x < 0 || src_x >= iw || src_y < 0 || src_y >= ih) {
+                continue;
+            }
+            u32 texel = image.pixels[static_cast<size_t>(src_y) * image.w + src_x];
+            if (!plain) {
+                texel = Tint(texel, tint);
+            }
+            dst[px] = Blend(dst[px], ApplyDrawOpacity(texel));
+        }
+    }
+}
+
+void ComposeImageFill(Image& out, s32 w, s32 h, const Image& src, s32 sx, s32 sy, s32 sw, s32 sh,
+                      ImageFill fill, const std::array<s32, 4>& slice) {
+    w = std::clamp(w, 0, 8192);
+    h = std::clamp(h, 0, 8192);
+    out.w = static_cast<u32>(w);
+    out.h = static_cast<u32>(h);
+    out.pixels.assign(static_cast<size_t>(w) * static_cast<size_t>(h), 0u);
+    if (!src.Valid() || w == 0 || h == 0 || sw <= 0 || sh <= 0) {
+        return;
+    }
+    const s32 iw = static_cast<s32>(src.w), ih = static_cast<s32>(src.h);
+    // Source rect {rx, ry, rsw, rsh} into destination rect {dx, dy, dw, dh}: nearest sampling
+    // with DrawImageRegion's floor formula; texels outside the image are left transparent.
+    const auto blit = [&](s32 dx, s32 dy, s32 dw, s32 dh, s32 rx, s32 ry, s32 rsw, s32 rsh) {
+        if (dw <= 0 || dh <= 0 || rsw <= 0 || rsh <= 0) {
+            return;
+        }
+        for (s32 row = 0; row < dh; ++row) {
+            const s32 src_y = ry + static_cast<s32>(static_cast<s64>(row) * rsh / dh);
+            const s32 oy = dy + row;
+            if (src_y < 0 || src_y >= ih || oy < 0 || oy >= h) {
+                continue;
+            }
+            const u32* const in = src.pixels.data() + static_cast<size_t>(src_y) * src.w;
+            u32* const o = out.pixels.data() + static_cast<size_t>(oy) * out.w;
+            for (s32 col = 0; col < dw; ++col) {
+                const s32 src_x = rx + static_cast<s32>(static_cast<s64>(col) * rsw / dw);
+                const s32 ox = dx + col;
+                if (src_x >= 0 && src_x < iw && ox >= 0 && ox < w) {
+                    o[ox] = in[src_x];
+                }
+            }
+        }
+    };
+    switch (fill) {
+    case ImageFill::Tile:
+        for (s32 ty = 0; ty < h; ty += sh) {
+            for (s32 tx = 0; tx < w; tx += sw) {
+                const s32 tw = std::min(sw, w - tx), th = std::min(sh, h - ty);
+                blit(tx, ty, tw, th, sx, sy, tw, th);
+            }
+        }
+        return;
+    case ImageFill::Slice: {
+        // Insets clamped to the region; corners shrink proportionally when the rect is smaller
+        // than two of them.
+        const s32 l = std::min(slice[0], sw), r = std::min(slice[2], sw - l);
+        const s32 t = std::min(slice[1], sh), b = std::min(slice[3], sh - t);
+        const auto split = [](s32 a, s32 c, s32 size) -> std::pair<s32, s32> {
+            if (a + c <= size) {
+                return {a, c};
+            }
+            const s32 first = static_cast<s32>(static_cast<s64>(a) * size / (a + c));
+            return {first, size - first};
+        };
+        const auto [dl, dr] = split(l, r, w);
+        const auto [dt, db] = split(t, b, h);
+        const std::array<s32, 3> src_x0{sx, sx + l, sx + sw - r};
+        const std::array<s32, 3> src_ws{l, sw - l - r, r};
+        const std::array<s32, 3> dst_x0{0, dl, w - dr};
+        const std::array<s32, 3> dst_ws{dl, w - dl - dr, dr};
+        const std::array<s32, 3> src_y0{sy, sy + t, sy + sh - b};
+        const std::array<s32, 3> src_hs{t, sh - t - b, b};
+        const std::array<s32, 3> dst_y0{0, dt, h - db};
+        const std::array<s32, 3> dst_hs{dt, h - dt - db, db};
+        for (size_t row = 0; row < 3; ++row) {
+            for (size_t col = 0; col < 3; ++col) {
+                blit(dst_x0[col], dst_y0[row], dst_ws[col], dst_hs[row], src_x0[col], src_y0[row],
+                     src_ws[col], src_hs[row]);
+            }
+        }
+        return;
+    }
+    case ImageFill::Stretch:
+    default:
+        blit(0, 0, w, h, sx, sy, sw, sh);
+        return;
     }
 }
 

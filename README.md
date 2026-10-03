@@ -39,6 +39,7 @@ Details, screenshots and downloads for each companion: **[Eden Duo Companions](h
 - **Installable packages.** Add a companion from the game's *Add-ons* menu with its `.dsmod.zip`. Packages are validated (title, build, file layout and module checksums) before they are installed.
 - **Native companion modules.** A package can carry a small native module for games whose data is too complex for a declarative manifest. Modules talk to the emulator through a small, versioned C interface and never ship inside the APK.
 - **Touch that feels native.** Taps, press-and-hold gestures, drag and drop, animated page and layout changes, and haptic feedback on the second screen.
+- **Second screen your way.** Swap the screens, stretch the companion, or open another app on the second screen for games without a companion.
 - **Built for handhelds.** Change-driven partial redraws, tile-based texture uploads and an optional GPU compositor keep the second screen at full frame rate without costing the game frames.
 
 ## What's New
@@ -73,43 +74,26 @@ Eden Duo uses its own app ID (`dev.igawa6.edenduo`), so it installs alongside ot
 
 The ES-DE files are the upstream files from [es-de-android-custom-systems](https://github.com/GlazedBelmont/es-de-android-custom-systems), with only the Eden Duo entries added.
 
-## Making a Companion for Another Game
+## Second Screen
 
-Eden Duo is not limited to the games above. Anyone can write a companion for another game and ship it as a `.dsmod.zip`, without changing or rebuilding the emulator.
+Second-screen options are in **Settings → Graphics → Second Screen**. Each game can also have its own values: long-press the game, open **Settings → Graphics → Second Screen**. A game's own value overrides the global one. Long-press a setting there to reset it to the global value.
 
-**What the runtime gives you (runtime 15, Eden Duo 1.0.2):**
+| Setting | Options | What it does |
+|---------|---------|--------------|
+| **Swap Screens** | On / Off | The game on the second screen, the companion on the main screen. Works from the game list and from frontends. A game with its own Swap Off always opens on the main screen. |
+| **Companion Ratio** | Fit (default) / Stretch | Fit keeps the companion's shape and adds bars if needed. Stretch fills the screen. |
+| **No Companion** | Icon (default) / Black / Off / App | What the second screen does for a game without a companion. Icon shows the game icon dimmed on black. Black leaves it black. Off opens no window, so the second screen is free for other apps. App opens an app you choose on the second screen when the game starts; pick it in the **App** row below, with search. Until you choose one, App works like Off. |
 
-| Layer | What you get |
-|-------|--------------|
-| Package (JSON) | Pages built from 8 widget types: rect, label, value, bar, button, pips, image and map. Widgets support bindings, derived values, flags, page transitions, animations, scroll lists, repeat templates, taps, press-and-hold and swipe gestures with haptic feedback, pan and zoom, coloured words inside text, and outlined game-font text. There are 10 action kinds: write, button (including combinations such as `L+R`), page, call, sequence, flag, view reset, module, slot write and map select. Chosen flags can persist between sessions. Game art is referenced from the player's own files (`romfs:`), so a package never ships game assets. |
-| Memory points | Pointer chains, static fields, pattern scans and per-build address tables, all checked against the game's build ID before loading. |
-| Native module (C ABI) | For data too complex for JSON. Modules get bounded memory reads and writes, the player's romfs (the updated game, and also the base game and installed DLC), and publishing of values and map frames. Five optional extensions add actions and module images, font decoding, save-file reads, atomic write batches, and module-generated data. |
-| Compatibility | `min_runtime` in the package makes an older Eden Duo show an "update" page instead of failing. |
+- No Companion can be changed while a game runs. It applies when you return to the game (Icon and Black from the next start).
+- With Swap Screens on and a game that has no companion, Off (or App with no app chosen) keeps the game on the main screen.
 
-**What helps you reverse engineer a game:**
+## Contribute to Another Game
 
-- **Desktop development build.** `eden-cli` runs a game with its companion headlessly (`--aux-virtual`, or `--aux-window` for a real second window) and captures both screens (`--screenshot-prefix`). It can be scripted with button presses and taps.
-- **Live memory console.** Set `EDEN_DSMOD_CMD` to enable it. Commands:
-  - value search and change tracking: `findi`, `findf`, `sfind`, `snap`, `diff`;
-  - pointer search: `ptrto`;
-  - memory: `watch`, `hexdump`, `readi`, `writeb`;
-  - object and manager finders: `objfind`, `mgrfind`;
-  - companion control: `value`, `tap`, `drag`, `page`;
-  - image dumps: `imgdump`.
-- **GDB stub** for breakpoints and memory watches on the running game.
-- **Guest function calls** (desktop CPU backend) for research, and `EDEN_DSMOD_NO_GUEST_BRIDGE=1` to test under the same conditions as an Android handheld.
-- **`EDEN_DSMOD_PROFILE=1`** for per-stage cost, so a companion stays cheap on handheld hardware.
+Eden Duo is not limited to the games above. Anyone can write a companion for another game and ship it as a `.dsmod.zip`, without changing or rebuilding the emulator. Runtime 18 gives you pages declared in JSON, plus an optional native module for game data that JSON cannot reach. AI assistance is welcome: let an assistant do the repetitive reverse engineering, then check every value against the game's own screens.
 
-**Start here:** the step-by-step method, from dumping the game and finding its state through validating against the game's own screens to packaging, is in [**Porting a Game**](https://github.com/igawa6/eden-duo-companions/blob/main/docs/PORTING_A_GAME.md). Also useful:
-
-- [Package Format](https://github.com/igawa6/eden-duo-companions/blob/main/docs/PACKAGE_FORMAT.md)
-- [Module Guide](https://github.com/igawa6/eden-duo-companions/blob/main/docs/MODULE_GUIDE.md)
-- [Architecture](https://github.com/igawa6/eden-duo-companions/blob/main/docs/ARCHITECTURE.md)
-- The [five published packages](https://github.com/igawa6/eden-duo-companions/tree/main/packages), as working examples.
+Start here: [Contribute to Another Game](https://github.com/igawa6/eden-duo-companions/blob/main/docs/CONTRIBUTE.md)
 
 Module sources live in this repository under [`src/core/mods/modules/`](src/core/mods/modules/).
-
-**AI assistance is welcome.** Building a companion is mostly careful reverse engineering and repetitive verification, and AI coding assistants are good at both. Give your assistant the docs above and an existing package as a template. Let it drive the headless desktop build, the memory console and the screenshots. Then verify every value it finds against the game's own screens before you trust it. Companions made with AI help are welcome here.
 
 ## Build
 
@@ -151,7 +135,7 @@ Eden Duo and its companions ship **no game assets**. Companion art and text are 
 
 ## AI Assistance
 
-Eden Duo was developed with AI assistance. The dual-screen runtime, the companion modules and the reverse engineering of each game were written with an AI coding assistant (Claude, by Anthropic), then reviewed, tested and verified on real hardware.
+Eden Duo was developed with AI assistance. The dual-screen runtime, the companion modules and the reverse engineering of each game were written with an AI coding assistant, then reviewed, tested and verified on real hardware.
 
 If anything is wrong with Eden Duo, report issues here rather than to upstream Eden.
 

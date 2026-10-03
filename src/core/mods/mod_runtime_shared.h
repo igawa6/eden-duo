@@ -26,6 +26,7 @@
 #include <string>
 
 #include "common/common_types.h"
+#include "common/dsmod_dev_tools.h"
 #include "common/logging.h"
 #include "core/mods/mod_types.h"
 #include "input_common/drivers/virtual_gamepad.h"
@@ -40,7 +41,7 @@ constexpr u64 ModTickHz = 60;
 // per five seconds make Android slowdown reports useful without per-frame log traffic.
 struct RuntimeStageStats {
     using Clock = std::chrono::steady_clock;
-    Clock::time_point window = Clock::now();
+    Clock::time_point window = Common::DSMod::DevToolsEnabled ? Clock::now() : Clock::time_point{};
     double total_ms{}, max_ms{};
     u64 calls{}, over_budget{};
 };
@@ -48,13 +49,15 @@ struct RuntimeStageStats {
 /// EDEN_DSMOD_PROFILE: the periodic CPU stage summaries (on unless set to 0/false).
 inline bool RuntimeProfileEnabled() {
     static const bool enabled = [] {
-        const char* value = std::getenv("EDEN_DSMOD_PROFILE");
-        return !value || (std::strcmp(value, "0") != 0 && std::strcmp(value, "false") != 0 &&
-                          std::strcmp(value, "FALSE") != 0);
+        const char* value = Common::DSMod::DevEnvironment("EDEN_DSMOD_PROFILE");
+        return Common::DSMod::DevToolsEnabled &&
+               (!value || (std::strcmp(value, "0") != 0 && std::strcmp(value, "false") != 0 &&
+                           std::strcmp(value, "FALSE") != 0));
     }();
     return enabled;
 }
 
+#if EDEN_DSMOD_BUILD_DEV_TOOLS
 class RuntimeStageTimer {
 public:
     RuntimeStageTimer(RuntimeStageStats& stats_, const char* stage_)
@@ -88,6 +91,13 @@ private:
     RuntimeStageStats::Clock::time_point start;
     bool active{};
 };
+
+#else
+class RuntimeStageTimer {
+public:
+    RuntimeStageTimer(RuntimeStageStats&, const char*) {}
+};
+#endif
 
 /// A guest float as an integer, defined for every input: NaN -> 0, out of range -> the nearest
 /// s64 (what arm64's fcvtzs does). A plain cast is UB there, and x86 and arm64 disagree on it, so

@@ -62,6 +62,8 @@ import org.yuzu.yuzu_emu.utils.Log
 import org.yuzu.yuzu_emu.utils.MemoryUtil
 import org.yuzu.yuzu_emu.utils.NativeConfig
 import org.yuzu.yuzu_emu.utils.NfcReader
+import org.yuzu.yuzu_emu.utils.ScreenSwap
+import org.yuzu.yuzu_emu.utils.CompanionApp
 import org.yuzu.yuzu_emu.utils.ParamPackage
 import org.yuzu.yuzu_emu.utils.ThemeHelper
 import java.text.NumberFormat
@@ -99,6 +101,7 @@ class EmulationActivity : AppCompatActivity(), SensorEventListener, InputManager
     private var romSwapThreadStopped = false
     private var romSwapGeneration = 0
     private var hasEmulationSession = processHasEmulationSession
+    private var launchRedirected = false
     private val romSwapStopTimeoutRunnable = Runnable { onRomSwapStopTimeout() }
 
     private fun onRomSwapStopTimeout() {
@@ -124,6 +127,12 @@ class EmulationActivity : AppCompatActivity(), SensorEventListener, InputManager
         ThemeHelper.setTheme(this)
 
         super.onCreate(savedInstanceState)
+
+        // Eden Duo: "Swap screens" / a game already running on the second display.
+        if (savedInstanceState == null && ScreenSwap.redirectLaunch(this, hasEmulationSession)) {
+            launchRedirected = true
+            return
+        }
 
         NativeConfig.reloadGlobalConfig()
 
@@ -262,9 +271,17 @@ class EmulationActivity : AppCompatActivity(), SensorEventListener, InputManager
     override fun onDestroy() {
         mainHandler.removeCallbacks(romSwapStopTimeoutRunnable)
         super.onDestroy()
+        if (launchRedirected) return // nothing was set up (see ScreenSwap)
+        if (isFinishing) CompanionApp.endSession() // Eden Duo: No Companion App
         inputManager.unregisterInputDeviceListener(this)
         stopForegroundService(this)
         NativeLibrary.playTimeManagerStop()
+    }
+
+    // Eden Duo: No Companion App gives the controller back to the game (CompanionApp).
+    override fun onTopResumedActivityChanged(isTopResumedActivity: Boolean) {
+        super.onTopResumedActivityChanged(isTopResumedActivity)
+        CompanionApp.onGameTopResumedChanged(this, isTopResumedActivity)
     }
 
     override fun onUserLeaveHint() {
@@ -379,6 +396,9 @@ class EmulationActivity : AppCompatActivity(), SensorEventListener, InputManager
         processHasEmulationSession = true
         emulationViewModel.setIsEmulationStopping(false)
         emulationViewModel.setEmulationStopped(false)
+        // A forced swap can arrive before the old game reported its stop: the new game's start
+        // must be an edge again, or the started collectors (No Companion check) never run for it.
+        emulationViewModel.setEmulationStarted(false)
         setIntent(Intent(intent))
         val navHostFragment =
             supportFragmentManager.findFragmentById(R.id.fragment_container) as NavHostFragment

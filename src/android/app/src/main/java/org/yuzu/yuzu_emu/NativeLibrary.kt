@@ -22,7 +22,7 @@ import org.yuzu.yuzu_emu.fragments.CoreErrorDialogFragment
 import org.yuzu.yuzu_emu.utils.DocumentsTree
 import org.yuzu.yuzu_emu.utils.FileUtil
 import org.yuzu.yuzu_emu.utils.Log
-import org.yuzu.yuzu_emu.views.AuxPresentation
+import org.yuzu.yuzu_emu.views.AuxScreenHost
 import org.yuzu.yuzu_emu.model.InstallResult
 import org.yuzu.yuzu_emu.model.Patch
 import org.yuzu.yuzu_emu.model.GameVerificationResult
@@ -175,6 +175,18 @@ object NativeLibrary {
     external fun auxSurfaceChanged(surf: Surface)
 
     external fun auxSurfaceDestroyed()
+
+    /**
+     * Eden Duo: 1 when the running game shows the idle page (no usable companion package), 0
+     * when it does not, -1 when no game is loaded yet (ask again).
+     */
+    external fun isCompanionIdle(): Int
+
+    /**
+     * Eden Duo: the No Companion value (0 Icon, 1 Black, 2 Off) the next game boots with, in
+     * place of the global setting; -1 uses the global setting. Set before each boot.
+     */
+    external fun setNoCompanionOverride(value: Int)
 
     external fun getAppletCaptureBuffer(): ByteArray
     external fun getAppletCaptureWidth(): Int
@@ -471,7 +483,7 @@ object NativeLibrary {
     @Keep
     @JvmStatic
     fun onAuxHaptic(strength: Int, kind: Int, flags: Int) {
-        AuxPresentation.playHaptic(strength, kind, flags)
+        AuxScreenHost.playHaptic(strength, kind, flags)
     }
 
     /**
@@ -605,6 +617,13 @@ object NativeLibrary {
     external fun getPatchesForFile(path: String, programId: String): Array<Patch>?
 
     /**
+     * The add-on directory the native scanner reads for [programId] (load/<TITLEID>), so
+     * installers write where the Add-ons list and the dual-screen runtime look. Empty when the
+     * title has no mod directory.
+     */
+    external fun getModLoadDirectory(programId: String): String
+
+    /**
      * Removes an update for a given [programId]
      * @param programId String representation of a game's program ID
      */
@@ -673,6 +692,12 @@ object NativeLibrary {
      * game-folder external-content mounting.
      */
     external fun addGameFolderFileToFilesystemProvider(path: String)
+
+    /**
+     * Eden Duo: base title ids of the content (update, DLC) inside an NSP/XCI container.
+     * Empty when the file can't be opened or parsed.
+     */
+    external fun getContainerBaseTitleIds(path: String): LongArray
 
     /**
      * Clears all files added to the manual filesystem provider in our EmulationSession instance

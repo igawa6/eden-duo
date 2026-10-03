@@ -36,9 +36,11 @@
 #include <cstdlib>
 #include <fstream>
 #include "common/cityhash.h"
+#include "common/dsmod_dev_tools.h"
 #include "common/logging.h"
 #include "common/thread.h"
 #include "core/core.h"
+#include "core/mods/mod_font_pages.h"
 #include "core/mods/mod_runtime.h"
 #include "core/mods/mod_runtime_shared.h"
 #include "video_core/dsmod/aux_routing.h"
@@ -223,7 +225,8 @@ u64 UncoveredDrawInputsHash(const StateSnapshot& s) {
                        (static_cast<u64>(s.drag.source) << 32));
     }
     const auto uncovered_key = [](const std::string& k) {
-        return k.starts_with("@drag") || k.starts_with("@scroll_on:");
+        // "@nav.": the controller focus frame (runtime 17) is a highlight, not a widget.
+        return k.starts_with("@drag") || k.starts_with("@scroll_on:") || k.starts_with("@nav.");
     };
     for (const auto& [k, v] : s.ints) {
         if (uncovered_key(k)) {
@@ -307,7 +310,7 @@ u64 ModRuntime::WidgetDependencyHash(const Widget& w, const StateSnapshot& s,
     // mod_ui_widget_state.cpp) plus the select-group highlight (RenderPage's highlight pass,
     // mod_ui.cpp; a drag's own hover highlight is not tracked here -- snapshot.drag.active forces
     // the full-page path instead, enforced explicitly in PublishUi's own `partial` condition). ---
-    add(w.need_bind);
+    add(w.need_bind.starts_with("!") ? w.need_bind.substr(1) : w.need_bind);
     add(w.hide_bind);
     if (w.anim) {
         add(w.anim->gate.point);
@@ -374,6 +377,18 @@ u64 ModRuntime::WidgetDependencyHash(const Widget& w, const StateSnapshot& s,
     }
     // Image: which picture to draw (DrawImage, mod_ui.cpp).
     add(w.src_bind);
+    // Runtime 16: a bound angle, scale and tint (Image / Pips / Bar image).
+    add(w.rotate_bind);
+    add(w.scale_bind);
+    add(w.tint_bind);
+    // Runtime 17: a chart redraws when its ring buffer takes a sample (ChartSampler publishes the
+    // sample count as "@chart:<key>").
+    if (w.chart) {
+        static thread_local std::string chart_key; // no allocation per widget per scan
+        chart_key.assign("@chart:");
+        chart_key += w.chart->key;
+        add(chart_key);
+    }
     // A widget whose content changes purely with the clock -- a non-picture Map, a breathing Rect
     // outline (`pulse`), a spinning/trembling Image (`spin`/`shake`) -- needs a tick epoch folded
     // in here, or it would report "unchanged" on every tick that doesn't ALSO move a bound value,
@@ -673,6 +688,12 @@ std::array<s32, 4> ModRuntime::RepeatElementsRect(const StateSnapshot& s, u32 cw
 
 void ModRuntime::PublishUi(const StateSnapshot& snapshot) {
     PumpNxAssets(snapshot); // land decoded game art, drive composites (never blocks)
+    if (font_pages != nullptr && font_pages->TakeLanded()) {
+        // Runtime 17: a font page landed -- text on it drew blank until now: repaint all, as for
+        // a landed module image.
+        ui_signature_valid = false;
+        module_images_landed = true;
+    }
     auto& aux = system.GPU().DSModAux();
     if (aux.rt_capture.load()) {
         ui_signature_valid = false;   // force a full redraw when we next draw widgets
@@ -683,6 +704,7 @@ void ModRuntime::PublishUi(const StateSnapshot& snapshot) {
     if (manifest.pages.empty()) {
         return; // a hot-reload could leave no pages; indexing below would be out of bounds
     }
+    aux.ui_bg.store(manifest.background, std::memory_order_relaxed); // Fit bars
     const auto& active = manifest.pages[std::min(current_page, manifest.pages.size() - 1)];
     if (active.mirror) {
         // The page asks for the game's own pixels rather than drawn widgets: hand the renderer a
@@ -819,13 +841,18 @@ void ModRuntime::PublishUi(const StateSnapshot& snapshot) {
         // long as this function runs, exactly today's lifetime guarantee, unchanged.
         // dispatch_font_atlas (an owned copy of the same shared_ptr) is the separate, job-safe
         // handle DispatchRedraw uses instead.
-        dispatch_font_atlas = GetImage(manifest.font_atlas_src);
+        // Runtime 17: a paged font has no one atlas image -- its pages come from font_pages.
+        if (!(font_pages && font_metrics.page_h > 0)) {
+            dispatch_font_atlas = GetImage(manifest.font_atlas_src);
+        }
         dispatch_font_metrics = &font_metrics; // shared below (SharedFontMetrics): an owned,
                                                // immutable copy made only when it changed --
                                                // PumpNxAssets reassigns font_metrics wholesale.
         canvas.SetFont(dispatch_font_atlas.get(), &font_metrics);
+        canvas.SetFontPages(font_metrics.page_h > 0 ? font_pages.get() : nullptr);
     } else {
         canvas.SetFont(nullptr, nullptr);
+        canvas.SetFontPages(nullptr);
     }
     // `canvas` keeps the raw pointers past this call: hold what they point at until the next one.
     canvas_font_ref = dispatch_font_atlas;
@@ -1049,6 +1076,7 @@ void ModRuntime::PublishUi(const StateSnapshot& snapshot) {
         job.gpu_composite = dl != nullptr;
         job.views = GetViewState();
         job.font_atlas = dispatch_font_atlas;
+        job.font_pages = font_metrics.Valid() && font_metrics.page_h > 0 ? font_pages : nullptr;
         job.font_metrics_copy = SharedFontMetrics(shared_font_metrics, *dispatch_font_metrics);
         job.icon_atlas = dispatch_icon_atlas;
         job.icon_metrics_copy = SharedFontMetrics(shared_icon_metrics, dispatch_icon_metrics_copy);
@@ -1147,7 +1175,7 @@ void ModRuntime::PublishUi(const StateSnapshot& snapshot) {
                                 g->second.frame_ms / std::max<u32>(1, g->second.frames),
                                 g->second.frame_max_ms, rg.box[2], rg.box[3]);
                 LOG_INFO(Core, "{}", line);
-                if (const char* const p = std::getenv("EDEN_DSMOD_CMD")) {
+                if (const char* const p = Common::DSMod::DevEnvironment("EDEN_DSMOD_CMD")) {
                     std::ofstream f(std::string(p) + ".out", std::ios::app);
                     if (f) {
                         f << line << '\n';
@@ -1424,11 +1452,13 @@ const MapDrawRecord* FindRecord(const MapDrawRecords& records, size_t index) {
 }
 
 /// Counters of the worker's marker-only redraw and of EDEN_DSMOD_VERIFY_REDRAW, logged every 5 s.
+#if EDEN_DSMOD_BUILD_DEV_TOOLS
 struct NarrowStats {
     std::chrono::steady_clock::time_point window = std::chrono::steady_clock::now();
     u64 jobs{}, full_jobs{}, narrowed_maps{}, fallback_maps{}, failed_maps{};
     u64 verified{}, mismatched{};
 };
+#endif
 } // namespace
 
 void ModRuntime::RunRedrawJob(RedrawJob& job) {
@@ -1438,9 +1468,15 @@ void ModRuntime::RunRedrawJob(RedrawJob& job) {
     const bool marker_redraw = MarkerRedrawEnabled();
     // Set again only by this job's own GPU-composite publish (see its use below).
     const bool hud_synced = std::exchange(worker_hud_synced, false);
+#if EDEN_DSMOD_BUILD_DEV_TOOLS
     static const bool verify_redraw =
         VideoCore::DSMod::DsmodEnvFlag("EDEN_DSMOD_VERIFY_REDRAW", false);
+#else
+    static constexpr bool verify_redraw = false;
+#endif
+#if EDEN_DSMOD_BUILD_DEV_TOOLS
     static thread_local NarrowStats nstats;
+#endif
     static thread_local RuntimeStageStats worker_stats;
     static thread_local RuntimeStageStats marker_stats;
     static thread_local RuntimeStageStats map_stats;
@@ -1453,6 +1489,7 @@ void ModRuntime::RunRedrawJob(RedrawJob& job) {
         worker_canvas.Resize(job.target_w, job.target_h);
     }
     worker_canvas.SetFont(job.font_atlas.get(), job.font_metrics_copy.get());
+    worker_canvas.SetFontPages(job.font_pages.get());
     worker_canvas.SetIconFont(job.icon_atlas.get(), job.icon_metrics_copy.get(), job.icon_pending);
     const ImageProvider images = [this](const std::string& src) { return GetImage(src); };
     // The memo describes worker_canvas only for this page at this size.
@@ -1530,7 +1567,9 @@ void ModRuntime::RunRedrawJob(RedrawJob& job) {
             }
             if (!ok) {
                 clips.push_back(cand.rect);
+#if EDEN_DSMOD_BUILD_DEV_TOOLS
                 ++nstats.fallback_maps;
+#endif
             }
         }
         if (!narrowed.empty()) {
@@ -1541,7 +1580,9 @@ void ModRuntime::RunRedrawJob(RedrawJob& job) {
             } else {
                 job.extras.clips = std::move(clips);
                 job.extras.clip = RectsBox(job.extras.clips);
+#if EDEN_DSMOD_BUILD_DEV_TOOLS
                 nstats.narrowed_maps += narrowed.size();
+#endif
             }
         }
     }
@@ -1629,7 +1670,9 @@ void ModRuntime::RunRedrawJob(RedrawJob& job) {
         if (good) {
             continue;
         }
+#if EDEN_DSMOD_BUILD_DEV_TOOLS
         ++nstats.failed_maps;
+#endif
         const auto rect = std::ranges::find_if(job.extras.maps, [&n](const RenderMapCandidate& m) {
                               return m.index == n.index;
                           })->rect;
@@ -1712,15 +1755,20 @@ void ModRuntime::RunRedrawJob(RedrawJob& job) {
         }
     }
     if (!job.partial) {
+#if EDEN_DSMOD_BUILD_DEV_TOOLS
         ++nstats.full_jobs;
+#endif
     }
+#if EDEN_DSMOD_BUILD_DEV_TOOLS
     ++nstats.jobs;
+#endif
     // Not on the GPU-composite path: its canvas is only the HUD overlay over the map quads.
     if (verify_redraw && job.partial && ok && !job.gpu_composite && job.page_copy != nullptr) {
         // The same state drawn whole, from the follow state this job started from.
         static thread_local Canvas full;
         full.Resize(job.target_w, job.target_h);
         full.SetFont(job.font_atlas.get(), job.font_metrics_copy.get());
+        full.SetFontPages(job.font_pages.get());
         full.SetIconFont(job.icon_atlas.get(), job.icon_metrics_copy.get(), job.icon_pending);
         MapFollowState follow = follow_before;
         MapDrawRecords records;
@@ -1732,7 +1780,9 @@ void ModRuntime::RunRedrawJob(RedrawJob& job) {
             nullptr, nullptr, [this](const std::string& ref) { return GetMsbtText(ref); }, &records,
             nullptr, nullptr, &map_state_mutex);
         render_snapshot = nullptr;
+#if EDEN_DSMOD_BUILD_DEV_TOOLS
         ++nstats.verified;
+#endif
         size_t diff = 0;
         s32 bx0 = std::numeric_limits<s32>::max(), by0 = bx0, bx1 = -1, by1 = -1;
         const auto a = worker_canvas.Pixels();
@@ -1749,7 +1799,9 @@ void ModRuntime::RunRedrawJob(RedrawJob& job) {
             }
         }
         if (diff != 0) {
+#if EDEN_DSMOD_BUILD_DEV_TOOLS
             ++nstats.mismatched;
+#endif
             LOG_WARNING(Core,
                         "DSMod verify-redraw: partial job ({} narrowed map(s), {} repainted) "
                         "differs from a full redraw in {} px within [{},{} {}x{}]",
@@ -1757,6 +1809,7 @@ void ModRuntime::RunRedrawJob(RedrawJob& job) {
                         by1 - by0 + 1);
         }
     }
+#if EDEN_DSMOD_BUILD_DEV_TOOLS
     if (const auto now = std::chrono::steady_clock::now();
         now - nstats.window >= std::chrono::seconds{5}) {
         if ((RuntimeProfileEnabled() || verify_redraw) &&
@@ -1770,6 +1823,7 @@ void ModRuntime::RunRedrawJob(RedrawJob& job) {
         nstats = NarrowStats{};
         nstats.window = now;
     }
+#endif
     redraw_completed_generation.store(job.generation, std::memory_order_release);
     if (!ok) {
         // Matches RenderPageTo's own precedent (mod_runtime.h's map_draw_records_published
@@ -1935,7 +1989,7 @@ std::array<s32, 4> WidgetEffectiveRect(const Widget& w, u32 canvas_w, u32 canvas
         const s32 cw = static_cast<s32>(canvas_w), ch = static_cast<s32>(canvas_h);
         if (w.type == WidgetType::Image) {
             const s32 side = std::max(64, std::min(cw, ch) / 3);
-            const s32 pad = WidgetDrawOverhang(w, side, side);
+            const s32 pad = WidgetDrawOverhang(w, side, side, &snapshot);
             return {(cw - side) / 2 - pad, (ch - side) / 2 - pad, side + 2 * pad, side + 2 * pad};
         }
         return {0, 0, cw, ch};
@@ -1977,7 +2031,7 @@ std::array<s32, 4> WidgetEffectiveRect(const Widget& w, u32 canvas_w, u32 canvas
     }
     // A spinning or trembling picture paints outside its own rect (the rotated corners, the shake
     // offset): its dirty box must cover that too, or its edge pixels go stale.
-    if (const s32 pad = WidgetDrawOverhang(w, r[2], r[3]); pad > 0) {
+    if (const s32 pad = WidgetDrawOverhang(w, r[2], r[3], &snapshot); pad > 0) {
         r = {r[0] - pad, r[1] - pad, r[2] + 2 * pad, r[3] + 2 * pad};
     }
     // Text can run past the fixed box above (a longer string than ~16 glyphs, a font taller than

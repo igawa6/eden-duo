@@ -13,6 +13,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include "common/dsmod_dev_tools.h"
 #include "common/logging.h"
 #include "core/core.h"
 #include "core/file_sys/vfs/vfs.h"
@@ -28,9 +29,10 @@ constexpr size_t MaxMapObjects = 65536;
 
 bool DsmodProfilingEnabled() {
     static const bool enabled = [] {
-        const char* value = std::getenv("EDEN_DSMOD_PROFILE");
-        return !value || (std::strcmp(value, "0") != 0 && std::strcmp(value, "false") != 0 &&
-                          std::strcmp(value, "FALSE") != 0);
+        const char* value = Common::DSMod::DevEnvironment("EDEN_DSMOD_PROFILE");
+        return Common::DSMod::DevToolsEnabled &&
+               (!value || (std::strcmp(value, "0") != 0 && std::strcmp(value, "false") != 0 &&
+                           std::strcmp(value, "FALSE") != 0));
     }();
     return enabled;
 }
@@ -176,7 +178,8 @@ void ModRuntime::InitializeGameModule() {
     module_host.abi_hash = EDEN_DSMOD_MODULE_ABI_HASH;
     module_host.capabilities = EDEN_DSMOD_CAP_ROMFS_READ | EDEN_DSMOD_CAP_MAP_OUTPUT |
                                EDEN_DSMOD_CAP_EXTENSIONS | EDEN_DSMOD_CAP_TICK_WHEN_HIDDEN |
-                               EDEN_DSMOD_CAP_NO_TICK_WHEN_HIDDEN;
+                               EDEN_DSMOD_CAP_NO_TICK_WHEN_HIDDEN |
+                               EDEN_DSMOD_CAP_FONT_EPOCH; // runtime 18
     module_host.userdata = this;
     module_host.title_id = manifest.title_id;
     module_host.main_base = main_region_begin;

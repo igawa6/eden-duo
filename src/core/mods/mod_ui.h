@@ -9,6 +9,7 @@
 #pragma once
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <functional>
 #include <list>
@@ -17,6 +18,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
@@ -25,6 +27,8 @@
 #include "video_core/dsmod/aux_routing.h"
 
 namespace Core::Mods {
+
+class FontPages;
 
 /// A decoded picture, in the canvas' own pixel order.
 struct Image {
@@ -105,6 +109,9 @@ public:
     void SetColorMarkup(bool on) {
         color_markup = on;
     }
+    [[nodiscard]] bool ColorMarkup() const {
+        return color_markup;
+    }
     /// An outline / shadow copy of a label: colour tags are still read (same layout as the main
     /// copy) but every span draws in the draw colour.
     void SetOutlineCopy(bool on) {
@@ -125,8 +132,20 @@ public:
         text_outline_px = outline_px;
         text_rise = rise;
     }
+    /// Runtime 17: the pages of a paged font (FontMetrics::page_h > 0), loaded on demand; a
+    /// glyph whose page is not resident yet draws blank (TakeGlyphsPending turns true).
+    void SetFontPages(FontPages* pages) {
+        font_pages = pages;
+    }
+    /// Whether a glyph was skipped since the last call because its font page was still loading.
+    bool TakeGlyphsPending() {
+        const bool pending = glyphs_pending;
+        glyphs_pending = false;
+        return pending;
+    }
     [[nodiscard]] bool HasFont() const {
-        return font_atlas != nullptr && font_metrics != nullptr;
+        return font_metrics != nullptr &&
+               (font_atlas != nullptr || (font_pages != nullptr && font_metrics->page_h > 0));
     }
     /// The font DrawText uses (nullptr = the built-in one).
     [[nodiscard]] const FontMetrics* ActiveFont() const {
@@ -152,6 +171,12 @@ public:
     /// sampling, clockwise for positive angles on the panel's y-down axes.
     void DrawImageRegionRotated(s32 x, s32 y, s32 w, s32 h, const Image& image, s32 sx, s32 sy,
                                 s32 sw, s32 sh, u32 tint, float angle_rad);
+    /// Runtime 16: the region drawn into {x, y, w, h}, then scaled by `scale` and turned by
+    /// `degrees` (+ = clockwise) about (x + pivot_x, y + pivot_y). Nearest sampling; an unturned
+    /// draw is DrawImageRegion of the scaled rect. Stays inside TransformedImageBounds.
+    void DrawImageTransformed(s32 x, s32 y, s32 w, s32 h, const Image& image, s32 sx, s32 sy, s32 sw,
+                              s32 sh, u32 tint, float degrees, float scale, float pivot_x,
+                              float pivot_y, bool flip_x = false, bool flip_y = false);
     /// Draws only the bottom `fraction` of the image (or of one atlas cell), so a sprite can act
     /// as a gauge. The tint's alpha multiplies the image like DrawImageRegion.
     void DrawImageFilled(s32 x, s32 y, s32 w, s32 h, const Image& image, u32 tint, float fraction,
@@ -162,6 +187,7 @@ public:
     }
     const Image* font_atlas{nullptr};
     const FontMetrics* font_metrics{nullptr};
+    FontPages* font_pages{nullptr};
     u32 text_outline{0};
     s32 text_outline_px{0};
     float text_rise{0.0f};
@@ -210,6 +236,7 @@ private:
     bool icon_silhouette{false};
     bool color_markup{false};
     bool outline_copy{false};
+    bool glyphs_pending{false};
     /// Text layout cache (LayoutLines): least-recently-used, keyed by a hash of the text, the
     /// layout parameters and the fonts' content (not their addresses: a font can be reassigned
     /// in place, and a freed one's address reused). The key is kept whole to rule out collisions.
@@ -546,8 +573,35 @@ s32 ResolveBindOffset(s32 base, const std::string& bind, float scale,
 /// the "anim" gate).
 bool WidgetHidden(const Widget& widget, const StateSnapshot& snapshot);
 /// How far a widget can paint outside its rect of `rw` x `rh`: a spinning picture's rotated
-/// corners, a trembling one's shake offset (0 for everything else). Dirty boxes are widened by it.
-s32 WidgetDrawOverhang(const Widget& widget, s32 rw, s32 rh);
+/// corners, a trembling one's shake offset, a rotated / scaled picture's box (runtime 16; read from
+/// `snapshot` when it has rotate_bind / scale_bind -- without one, a bound rotation counts as any
+/// angle and a bound scale as 1x). 0 for everything else. Dirty boxes are widened by it.
+s32 WidgetDrawOverhang(const Widget& widget, s32 rw, s32 rh,
+                       const StateSnapshot* snapshot = nullptr);
+/// Runtime 16: an Image widget's resolved rotate / rotate_bind / scale_bind / pivot.
+struct ImageTransform {
+    bool active{false};  ///< a runtime 16 transform key is set (else the classic draw path)
+    float degrees{0.0f}; ///< rotate + rotate_bind (+ = clockwise; spin not included)
+    float scale{1.0f};   ///< scale_bind / 1000, clamped to 0..16
+    float pivot_x{0.0f}; ///< px from the rect's top-left
+    float pivot_y{0.0f};
+};
+ImageTransform WidgetImageTransform(const Widget& widget, s32 rw, s32 rh,
+                                    const StateSnapshot* snapshot);
+/// Runtime 16: {x0, y0, x1, y1} (half-open) covering every pixel of the rect {x, y, rw, rh}
+/// scaled by `scale` and turned by `degrees` about (x + pivot_x, y + pivot_y), with a 1 px margin.
+/// Canvas::DrawImageTransformed never paints outside it.
+std::array<s32, 4> TransformedImageBounds(s32 x, s32 y, s32 rw, s32 rh, float degrees, float scale,
+                                          float pivot_x, float pivot_y);
+/// Runtime 16: the colour that tints an Image / Pips / Bar image: tint_colors[tint_bind value]
+/// when that is in range, else `tint` when set, else `fallback` (the widget's classic colour).
+u32 WidgetTint(const Widget& widget, const StateSnapshot& snapshot, u32 fallback);
+/// Runtime 16: `out` becomes a w x h picture of the source region {sx, sy, sw, sh} of `src`, tiled
+/// at its own size (ImageFill::Tile) or 9-sliced by `slice` {l, t, r, b} source px
+/// (ImageFill::Slice); texels are copied, not blended (nearest sampling, the DrawImageRegion
+/// formula). Stretch scales the region over the whole picture.
+void ComposeImageFill(Image& out, s32 w, s32 h, const Image& src, s32 sx, s32 sy, s32 sw, s32 sh,
+                      ImageFill fill, const std::array<s32, 4>& slice);
 /// Conservative box of every pixel a Label/Value widget's text can paint for this snapshot, drawn
 /// at (x, y) with resolved size rw x rh: the font's real ascent/descent (whichever of `font` and
 /// the built-in font is used) and a width bound from the shown text's byte length. {0,0,0,0} for
@@ -568,6 +622,43 @@ bool WidgetHiddenHolding(const Widget& widget, const StateSnapshot& snapshot,
 char32_t TextFallbackCodepoint(char32_t c);
 /// Bytes of `text` taken by colour tags (Canvas::SetColorMarkup): they draw nothing.
 size_t TextMarkupBytes(std::string_view text);
+/// Runtime 17 "group": `value` with `sep` between groups of three digits ("-1,234,567"), first
+/// zero-padded to `pad` characters like printf's %0*lld (the sign counts).
+std::string FormatGroupedNumber(s64 value, s32 pad, std::string_view sep);
+/// The text a Label shows for this snapshot: picked by value (text_bind + text_map), by key
+/// (text_src), a string point (bind_text, "-" while missing) or the literal; nullptr = nothing
+/// (an unmapped value, or an msbt key the provider cannot answer yet). `owner` keeps a resolved
+/// msbt string alive while the pointer is in use.
+const std::string* LabelShownText(const Widget& widget, const StateSnapshot& snapshot,
+                                  const TextProvider& texts,
+                                  std::shared_ptr<const std::string>& owner);
+/// Runtime 17 auto_w: while one of these is alive on a thread, ExpandWidgets on that thread sizes
+/// auto_w Label/Button widgets by their text, measured on `canvas` (its fonts, colour markup set
+/// per widget) with Label text resolved through `texts`. Without one, auto_w widgets keep their
+/// declared rect. Scopes nest (the previous one is restored).
+class TextMeasureScope {
+public:
+    TextMeasureScope(Canvas& canvas, const TextProvider* texts);
+    ~TextMeasureScope();
+    TextMeasureScope(const TextMeasureScope&) = delete;
+    TextMeasureScope& operator=(const TextMeasureScope&) = delete;
+
+private:
+    Canvas* prev_canvas;
+    const TextProvider* prev_texts;
+};
+/// Runtime 17 auto_w: the box of an auto_w widget declared at rect {x, y, w, h} whose text is
+/// text_w px wide and (Label) text_h px tall from its cap top. Button: the width grows to fit
+/// (align 1 about the declared centre, else from the left edge). Label: the box around the text
+/// at its anchor, `pad` px on every side, at least the declared w wide.
+std::array<s32, 4> AutoWidthBox(const Widget& widget, const std::array<s32, 4>& rect, s32 text_w,
+                                s32 text_h);
+/// Where a Label whose rect is its auto_w box (auto_box) anchors its text: {x, y} for DrawLabel's
+/// align (left edge + pad, centre, right edge - pad; cap top = box top + pad).
+std::array<s32, 2> AutoBoxTextAnchor(const Widget& widget, s32 x, s32 y, s32 rw);
+/// Sizes one expanded auto_w widget by its text (see TextMeasureScope); a no-op for any other
+/// widget, or with no scope on this thread. Call once, on a rect that is still the declared one.
+void ApplyAutoWidth(Widget& widget, const StateSnapshot& snapshot);
 /// Hit-tests a tap in canvas pixels; returns the action name of the widget hit, or "".
 std::string HitTest(const Page& page, const StateSnapshot& snapshot, s32 x, s32 y);
 /// Index of the topmost visible expanded widget under (x, y) that `accept` admits, or -1.

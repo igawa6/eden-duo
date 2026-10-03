@@ -570,8 +570,6 @@ static void ServiceButtonRequests(SdlState* state) {
     const auto now = std::chrono::steady_clock::now();
     if (g_gesture_kind != 0) {
         auto& aux = state->system.GPU().DSModAux();
-        const float width = static_cast<float>(aux.width.load());
-        const float height = static_cast<float>(aux.height.load());
         const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now -
                                                                                   g_gesture_start);
         // Rest on the landing spot and again over the end point before lifting, so a consumer
@@ -589,10 +587,12 @@ static void ServiceButtonRequests(SdlState* state) {
         if (g_gesture_kind == 1) {
             const float fx = g_gesture_step.x + (g_gesture_step.x2 - g_gesture_step.x) * t;
             const float fy = g_gesture_step.y + (g_gesture_step.y2 - g_gesture_step.y) * t;
+            // 0..1 of the companion canvas as drawn (Companion Ratio "Fit" may inset it).
+            const auto [px, py] = aux.NormalisedToPanel(fx, fy);
             const VideoCore::DSMod::AuxTouchPoint point{
                 .finger_id = 0,
-                .x = static_cast<u32>(fx * width),
-                .y = static_cast<u32>(fy * height),
+                .x = px,
+                .y = py,
                 .attributes = attr,
                 .delta_ns = 0,
             };
@@ -600,11 +600,13 @@ static void ServiceButtonRequests(SdlState* state) {
         } else {
             // Two fingers either side of the centre, separating or closing along x.
             const float span = g_gesture_step.x2 + (g_gesture_step.y2 - g_gesture_step.x2) * t;
+            const auto [ax, ay] =
+                aux.NormalisedToPanel(g_gesture_step.x - span * 0.5f, g_gesture_step.y);
+            const auto [bx, by] =
+                aux.NormalisedToPanel(g_gesture_step.x + span * 0.5f, g_gesture_step.y);
             const std::array<VideoCore::DSMod::AuxTouchPoint, 2> pair{{
-                {0, static_cast<u32>((g_gesture_step.x - span * 0.5f) * width),
-                 static_cast<u32>(g_gesture_step.y * height), attr, 0},
-                {1, static_cast<u32>((g_gesture_step.x + span * 0.5f) * width),
-                 static_cast<u32>(g_gesture_step.y * height), attr, 0},
+                {0, ax, ay, attr, 0},
+                {1, bx, by, attr, 0},
             }};
             aux.SetTouch(std::span{pair});
         }
@@ -662,10 +664,11 @@ static void ServiceButtonRequests(SdlState* state) {
         }
         if (step.name == "tap") {
             auto& aux = state->system.GPU().DSModAux();
+            const auto [px, py] = aux.NormalisedToPanel(step.x, step.y);
             const VideoCore::DSMod::AuxTouchPoint point{
                 .finger_id = 0,
-                .x = static_cast<u32>(step.x * static_cast<float>(aux.width.load())),
-                .y = static_cast<u32>(step.y * static_cast<float>(aux.height.load())),
+                .x = px,
+                .y = py,
                 .attributes = 1u,  // start of a new touch
                 .delta_ns = 0,
             };

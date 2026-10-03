@@ -100,7 +100,11 @@ import org.yuzu.yuzu_emu.utils.ViewUtils
 import org.yuzu.yuzu_emu.utils.ViewUtils.setVisible
 import org.yuzu.yuzu_emu.utils.collect
 import org.yuzu.yuzu_emu.utils.CustomSettingsHandler
+import org.yuzu.yuzu_emu.activities.AuxCompanionActivity
 import org.yuzu.yuzu_emu.views.AuxPresentation
+import org.yuzu.yuzu_emu.utils.NoCompanion
+import org.yuzu.yuzu_emu.utils.CompanionApp
+import org.yuzu.yuzu_emu.utils.SecondScreenPerGame
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.nio.ByteBuffer
@@ -140,6 +144,25 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
     // dialog on top), and a DisplayListener brings it back when a panel appears or turns on.
     private var auxPresentation: AuxPresentation? = null
     private var auxWanted = false
+    // Eden Duo "No Companion: Off": this game gets no second-screen window (see NoCompanion).
+    // Icon and Black need nothing here: the runtime builds the idle page when the game boots.
+    // A change made in the in-game settings applies on return (reapplyNoCompanion), except
+    // Icon <-> Black, which shows from the next game start. Known limitation: a ROM swap inside a
+    // swapped session (game on the second display) into a game without a companion, with Off,
+    // closes the companion window and may leave the main display showing the Eden UI.
+    private var auxOff = false
+    private var auxOffChecked = false
+    // Eden Duo "No Companion: App": this boot already tried the chosen app (CompanionApp).
+    private var companionAppTried = false
+    // No Companion and its app as this game session last applied them (null before boot).
+    private var noCompanionApplied: Pair<Int, String?>? = null
+    // The title whose per-game Second Screen values apply; null for global (a "launch with
+    // global settings", as for the per-game .ini in finishGameSetup).
+    private val secondScreenTitle: String?
+        get() = game?.programId?.takeIf { !(game == args.game && !args.custom) }
+    // dropIdleCompanion asked before the game finished loading: ask again a little later.
+    private var idleRecheckLeft = 0
+    private val idleRecheck = Runnable { dropIdleCompanion() }
     private val auxHandler = Handler(Looper.getMainLooper())
     private val auxRetry = Runnable { if (auxWanted) showAuxPresentation() }
     private val auxDisplayStates = HashMap<Int, Int>()
@@ -154,6 +177,9 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
             if (auxPresentation?.displayId == displayId) {
                 Log.info("[EmulationFragment] DSMod: second-screen display $displayId removed")
                 dismissAuxPresentation()
+                scheduleAuxRetry()
+            } else if (AuxCompanionActivity.isUpOrPending()) {
+                // The game's own display may be the one gone, moving it under the companion.
                 scheduleAuxRetry()
             }
         }
@@ -324,18 +350,16 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
             return
         }
 
+        // Eden Duo: Companion Ratio is per-game; drop a previous game's override first (the
+        // per-game load below sets it again when this game has one).
+        IntSetting.COMPANION_RATIO.global = true
         try {
             when {
                 // Game launched via intent (check for existing custom config)
                 intentGame != null -> {
                     game?.let { gameInstance ->
-                        runCatching { GameHelper.restoreContentForGame(gameInstance) }
-                            .onFailure {
-                                Log.warning(
-                                    "[EmulationFragment] Failed to restore content for intent launch: ${it.message}"
-                                )
-                            }
-
+                        // Update/DLC are registered on the emulation thread right before boot
+                        // (GameHelper.onEmulationStarting), not here on the UI thread.
                         val customConfigFile = SettingsFile.getCustomSettingsFile(gameInstance)
                         if (customConfigFile.exists()) {
                             shouldUseCustom = true
@@ -383,6 +407,7 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
                 throw fallbackException
             }
         }
+        SecondScreenPerGame.runningConfigGame = game.takeIf { shouldUseCustom }
         try {
             if (GpuDriverHelper.isAdrenoGpu()) {
                 val programIdHex = game!!.programIdHex
@@ -396,7 +421,10 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
             Log.warning("[EmulationFragment] Failed to load Freedreno config: ${e.message}")
         }
 
-        emulationState = EmulationState(game!!.path) {
+        // Eden Duo: this game's No Companion for the idle page the runtime builds at boot.
+        NativeLibrary.setNoCompanionOverride(NoCompanion.perGameValue(secondScreenTitle) ?: -1)
+
+        emulationState = EmulationState(game!!.path, game!!.programId) {
             return@EmulationState driverViewModel.isInteractionAllowed.value &&
                 !isStoppingForRomSwap
         }
@@ -995,6 +1023,9 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
                 ViewUtils.hideView(binding.loadingIndicator)
 
                 emulationState.updateSurface()
+                idleRecheckLeft = IDLE_RECHECK_ATTEMPTS
+                noCompanionApplied = noCompanionNow()
+                dropIdleCompanion()
 
                 updateShowStatsOverlay()
                 updateSocOverlay()
@@ -1043,6 +1074,12 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
         }
         emulationViewModel.programChanged.collect(viewLifecycleOwner) {
             if (it != 0) {
+                // A multi-program title's next program decides No Companion afresh.
+                auxOff = false
+                auxOffChecked = false
+                companionAppTried = false
+                // A second screen the previous program dropped comes back if this one wants it.
+                scheduleAuxRetry()
                 emulationViewModel.setEmulationStarted(false)
                 binding.drawerLayout.close()
                 binding.drawerLayout
@@ -1470,8 +1507,10 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
     override fun onStop() {
         auxWanted = false
         auxHandler.removeCallbacks(auxRetry)
+        auxHandler.removeCallbacks(idleRecheck)
         displayManager()?.unregisterDisplayListener(auxDisplayListener)
         dismissAuxPresentation()
+        AuxCompanionActivity.dismiss(this)
         super.onStop()
     }
 
@@ -1490,7 +1529,9 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
         super.onDestroyView()
         auxWanted = false
         auxHandler.removeCallbacks(auxRetry)
+        auxHandler.removeCallbacks(idleRecheck)
         dismissAuxPresentation()
+        AuxCompanionActivity.dismiss(this)
         amiiboLoadJob?.cancel()
         amiiboLoadJob = null
         perfStatsRunnable?.let { perfStatsUpdateHandler.removeCallbacks(it) }
@@ -1529,6 +1570,7 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
         initializeOverlayAutoHide()
 
         addQuickSettings()
+        reapplyNoCompanion()
     }
 
     private fun displayManager(): DisplayManager? =
@@ -1543,10 +1585,101 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
         auxHandler.postDelayed(auxRetry, AUX_RETRY_DELAY_MS)
     }
 
+    /** True when No Companion is Off and this game has no companion: decided once per game. */
+    private fun isAuxOff(): Boolean {
+        if (!auxOffChecked) {
+            val programId = game?.programId ?: return false
+            auxOffChecked = true
+            auxOff = !NoCompanion.wantsWindow(programId, secondScreenTitle)
+        }
+        return auxOff
+    }
+
+    /**
+     * After boot: with No Companion Off, a game whose package the runtime did not take (it is on
+     * the idle page) gives its second screen back as well. With App, the chosen app opens there.
+     */
+    private fun dropIdleCompanion() {
+        auxHandler.removeCallbacks(idleRecheck)
+        if (!emulationViewModel.emulationStarted.value) return
+        if (auxOff) {
+            launchCompanionApp()
+            return
+        }
+        // App that fell back to the Icon page keeps it for this boot.
+        if (companionAppTried || !NoCompanion.hidesWindow(secondScreenTitle)) return
+        when (NativeLibrary.isCompanionIdle()) {
+            1 -> Unit
+            0 -> return
+            else -> {
+                // No game loaded yet (inconclusive): ask again shortly, a bounded number of times.
+                if (idleRecheckLeft-- > 0) {
+                    auxHandler.postDelayed(idleRecheck, AUX_RETRY_DELAY_MS)
+                }
+                return
+            }
+        }
+        Log.info("[EmulationFragment] DSMod: no companion in use; closing the second screen")
+        auxOff = true
+        auxOffChecked = true
+        dismissAuxPresentation()
+        AuxCompanionActivity.dismiss(this)
+        launchCompanionApp()
+    }
+
+    private fun noCompanionNow(): Pair<Int, String?> =
+        NoCompanion.value(secondScreenTitle) to CompanionApp.flattened(secondScreenTitle)
+
+    /**
+     * No Companion or its app changed in the in-game settings: decided again without a restart.
+     * Off / App close the second-screen window (App opens the newly chosen app), Icon / Black
+     * bring it back.
+     */
+    private fun reapplyNoCompanion() {
+        val before = noCompanionApplied ?: return
+        if (!emulationViewModel.emulationStarted.value) return
+        val now = noCompanionNow()
+        if (now == before) return
+        noCompanionApplied = now
+        Log.info("[EmulationFragment] No Companion changed in game: ${now.first} ${now.second ?: ""}")
+        NativeLibrary.setNoCompanionOverride(NoCompanion.perGameValue(secondScreenTitle) ?: -1)
+        auxOff = false
+        auxOffChecked = false
+        companionAppTried = false
+        if (NoCompanion.hidesWindow(secondScreenTitle)) {
+            idleRecheckLeft = IDLE_RECHECK_ATTEMPTS
+            dropIdleCompanion()
+        } else {
+            scheduleAuxRetry()
+        }
+    }
+
+    /** No Companion App: opens the chosen app, once per boot; on failure, the Icon page. */
+    private fun launchCompanionApp() {
+        if (companionAppTried) return
+        val game = emulationActivity ?: return
+        companionAppTried = true
+        if (CompanionApp.launchForBoot(game, secondScreenTitle) != CompanionApp.Result.FAILED) {
+            return
+        }
+        auxOff = false
+        auxOffChecked = true
+        if (auxWanted) showAuxPresentation()
+    }
+
     private fun showAuxPresentation() {
+        if (isAuxOff()) return
+        // Eden Duo: with the game on a secondary display the second screen is the default one,
+        // where a Presentation cannot go; AuxCompanionActivity hosts it there instead.
+        val game = emulationActivity ?: activity ?: return
+        if (AuxCompanionActivity.isWantedFor(game)) {
+            dismissAuxPresentation()
+            AuxCompanionActivity.launch(game, this)
+            return
+        }
+        AuxCompanionActivity.dismiss(this) // the game is back on the default display
         if (auxPresentation != null) return
-        val activity = emulationActivity ?: activity ?: return
-        val presentation = AuxPresentation.showOnBestDisplay(activity) ?: return
+        val presentation = AuxPresentation.showOnBestDisplay(game) ?: return
         auxPresentation = presentation
         // Presentation cancels itself when its display goes away; drop it and look again.
         presentation.setOnDismissListener {
@@ -2328,6 +2461,7 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
 
     private class EmulationState(
         private val gamePath: String,
+        private val programId: String,
         private val emulationCanStart: () -> Boolean
     ) {
         private var state: State
@@ -2473,7 +2607,7 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
         }
 
         private fun runEmulation(programIndex: Int, frontendInitiated: Boolean) {
-            GameHelper.onEmulationStarting()
+            GameHelper.onEmulationStarting(gamePath, programId)
             try {
                 NativeLibrary.run(gamePath, programIndex, frontendInitiated)
             } finally {
@@ -2549,6 +2683,7 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
         private val perfStatsUpdateHandler = Handler(Looper.myLooper()!!)
         private val socUpdateHandler = Handler(Looper.myLooper()!!)
         private const val AUX_RETRY_DELAY_MS = 300L
+        private const val IDLE_RECHECK_ATTEMPTS = 20 // x AUX_RETRY_DELAY_MS
     }
 
     private fun startOverlayAutoHideTimer(seconds: Int) {

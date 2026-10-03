@@ -25,6 +25,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include "common/dsmod_dev_tools.h"
 #include "common/logging.h"
 #include "common/settings.h"
 #include "common/stb.h"
@@ -418,11 +419,14 @@ Image MakePackedImage(const CompositeDef& def, std::span<const u8> premul) {
     return out;
 }
 
+#if EDEN_DSMOD_BUILD_DEV_TOOLS
 struct PendingDump {
     std::string src;
     std::string out;
     NxClock::time_point requested{};
 };
+
+#endif
 
 struct Located {
     FileSys::VirtualFile file;
@@ -444,7 +448,7 @@ NX::ReadAt FileReader(const FileSys::VirtualFile& file, u64 base) {
 
 void EmitConsole(const std::string& line) {
     LOG_INFO(Core, "{}", line);
-    if (const char* const p = std::getenv("EDEN_DSMOD_CMD")) {
+    if (const char* const p = Common::DSMod::DevEnvironment("EDEN_DSMOD_CMD")) {
         std::ofstream f(std::string(p) + ".out", std::ios::app);
         if (f) {
             f << line << '\n';
@@ -531,15 +535,19 @@ struct NxAssetState {
     std::unordered_set<std::string> missing_composites;
     std::unordered_map<std::string, CompositeLive> live;
     std::unordered_map<std::string, CompositeFadeState> fades;
+#if EDEN_DSMOD_BUILD_DEV_TOOLS
     std::vector<PendingDump> dumps;
+#endif
     std::string font_key;
     MsbtState msbt;
+#if EDEN_DSMOD_BUILD_DEV_TOOLS
     // tick-side cost of PumpNxAssets, summarised like the runtime's other stage timers
     u64 pump_calls{};
     double pump_total_ms{};
     double pump_max_ms{};
     u64 posts{};
     NxClock::time_point pump_window{NxClock::now()};
+#endif
 
     ModRuntime*
         rt{}; ///< serves "module:" layer sources (asset-free packages); set once at creation
@@ -1715,7 +1723,9 @@ void ModRuntime::ResetNxAssets() {
     s.live.clear();
     s.fades.clear();
     s.font_key.clear();
+#if EDEN_DSMOD_BUILD_DEV_TOOLS
     s.dumps.clear();
+#endif
     s.msbt = {};
     std::scoped_lock lock{s.io_mutex};
     s.files.clear();
@@ -1730,6 +1740,7 @@ void ModRuntime::PumpNxAssets(const StateSnapshot& snapshot) {
     // this lock does -- locals destruct in reverse declaration order), covering every touch of
     // the state_mutex bucket this function makes.
     std::scoped_lock state_lock{s.state_mutex};
+#if EDEN_DSMOD_BUILD_DEV_TOOLS
     const auto pump_started = NxClock::now();
     struct PumpTimer {
         NxAssetState& s;
@@ -1756,6 +1767,7 @@ void ModRuntime::PumpNxAssets(const StateSnapshot& snapshot) {
             }
         }
     } pump_timer{s, pump_started};
+#endif
     std::deque<Result> results;
     {
         std::scoped_lock lock{s.queue_mutex};
@@ -1948,7 +1960,9 @@ void ModRuntime::PumpNxAssets(const StateSnapshot& snapshot) {
         }
         live.posted = alpha;
         ++live.serial;
+#if EDEN_DSMOD_BUILD_DEV_TOOLS
         ++s.posts;
+#endif
         {
             std::scoped_lock lock{s.queue_mutex};
             auto& request = s.requests[name];
@@ -1963,6 +1977,7 @@ void ModRuntime::PumpNxAssets(const StateSnapshot& snapshot) {
         s.cv.notify_one();
     }
 
+#if EDEN_DSMOD_BUILD_DEV_TOOLS
     // Console image dumps waiting for their picture.
     for (auto it = s.dumps.begin(); it != s.dumps.end();) {
         const auto cached = CacheFindImage(it->src);
@@ -1990,6 +2005,7 @@ void ModRuntime::PumpNxAssets(const StateSnapshot& snapshot) {
         }
         it = s.dumps.erase(it);
     }
+#endif
 }
 
 float ModRuntime::CompositeFade(const std::string& name) {

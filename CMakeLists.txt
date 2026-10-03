@@ -78,6 +78,7 @@ cmake_dependent_option(YUZU_USE_QT_WEB_ENGINE "Use QtWebEngine for web applet im
 set(YUZU_QT_MIRROR "" CACHE STRING "What mirror to use for downloading the bundled Qt libraries")
 cmake_dependent_option(YUZU_USE_BUNDLED_QT "Download bundled Qt binaries" "${MSVC}" "ENABLE_QT" OFF)
 
+option(EDEN_DSMOD_BUILD_DEV_TOOLS "Build the DSMod RE/heap-analysis developer toolkit" ON)
 option(ENABLE_DEBUG_TOOLS "Enable debugging tools (maxwell disassembler, SPIRV translator, etc)" OFF)
 option(ENABLE_WERROR "Enable -Werror diagnostics" ON)
 

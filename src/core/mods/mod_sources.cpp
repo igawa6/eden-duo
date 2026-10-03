@@ -8,6 +8,7 @@
 #include "core/mods/mod_sources.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cstring>
 
 #include "core/file_sys/vfs/vfs.h"
@@ -61,7 +62,23 @@ FileSys::VirtualDir AssetSources::RootOf(Slot& slot) {
     if (!slot.def.open_dir || slot.def.read_bytes) {
         return nullptr;
     }
-    std::call_once(slot.once, [&slot] { slot.root = slot.def.open_dir(); });
+    if (slot.ready.load(std::memory_order_acquire)) {
+        return slot.root; // opened: never changes again
+    }
+    std::scoped_lock lock{slot.mutex};
+    const s64 now = std::chrono::duration_cast<std::chrono::milliseconds>(
+                        std::chrono::steady_clock::now().time_since_epoch())
+                        .count();
+    if (slot.tried &&
+        (slot.root || slot.def.retry_ms < 0 || now - slot.tried_ms < slot.def.retry_ms)) {
+        return slot.root;
+    }
+    slot.tried = true;
+    slot.tried_ms = now;
+    slot.root = slot.def.open_dir();
+    if (slot.root) {
+        slot.ready.store(true, std::memory_order_release);
+    }
     return slot.root;
 }
 
@@ -99,7 +116,14 @@ FileSys::VirtualFile AssetSources::Open(std::string_view src) {
     if (!root || path.empty()) {
         return nullptr;
     }
-    return root->GetFileRelative(path);
+    if (slot->def.accept_path && !slot->def.accept_path(path)) {
+        return nullptr;
+    }
+    auto file = root->GetFileRelative(path);
+    if (file && slot->def.max_file_size != 0 && file->GetSize() > slot->def.max_file_size) {
+        return nullptr;
+    }
+    return file;
 }
 
 std::vector<u8> AssetSources::ReadAll(const std::string& src) {

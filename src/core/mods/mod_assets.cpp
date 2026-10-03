@@ -24,11 +24,13 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstring>
 #include <span>
 
 #include "bc_decoder.h"
 #include "common/logging.h"
+#include "common/stb.h"
 #include "core/file_sys/content_archive.h"
 #include "core/file_sys/patch_manager.h"
 #include "core/file_sys/registered_cache.h"
@@ -40,9 +42,12 @@
 #include "core/hle/service/filesystem/filesystem.h"
 #include "core/hle/service/filesystem/romfs_controller.h"
 #include "core/loader/loader.h"
+#include "core/mods/mod_font_epoch.h"
+#include "core/mods/mod_font_pages.h"
 #include "core/mods/mod_nx_assets.h"
 #include "core/mods/mod_romfs_sources.h"
 #include "core/mods/mod_runtime.h"
+#include "core/mods/mod_user_source.h"
 
 namespace Core::Mods {
 
@@ -174,8 +179,10 @@ void ModRuntime::RegisterAssetSources() {
     asset_sources->Register({.prefix = "file", .open_dir = [this] { return manifest.asset_dir; }});
     // The game's own filesystem. Reading art from here means a package can use the game's assets
     // without redistributing any of them: the copy on disk is the user's own. Opened once, by
-    // whichever thread reads first; a failed open (no process yet) stays failed for the session.
-    asset_sources->Register({.prefix = "romfs", .open_dir = [this] { return OpenGameRomFS(); }});
+    // whichever thread reads first. Runtime 16: a failed open (no process yet) is retried at most
+    // once a second, so an early read (a module's create()) cannot disable it for the session.
+    asset_sources->Register(
+        {.prefix = "romfs", .open_dir = [this] { return OpenGameRomFS(); }, .retry_ms = 1000});
     // Runtime 12: data the package's module generates (asset-free packages).
     asset_sources->Register(
         {.prefix = "module",
@@ -188,6 +195,9 @@ void ModRuntime::RegisterAssetSources() {
     asset_sources->Register({.prefix = "aoc",
                              .open_dir = [this] { return OpenAocRomfs(system); },
                              .capability = EDEN_DSMOD_CAP_SOURCE_AOC});
+    // Runtime 17: files the player supplies, <EdenDir>/dualscreen/user/<TITLEID>/
+    // (mod_user_source.h).
+    asset_sources->Register(MakeUserSource(UserSourceDir(UserSourceRoot(), manifest.title_id)));
 }
 
 FileSys::VirtualDir ModRuntime::OpenGameRomFS() {
@@ -212,7 +222,11 @@ FileSys::VirtualDir ModRuntime::OpenGameRomFS() {
             }
         }
     }
-    LOG_INFO(Core, "DSMod: game romfs {}", root ? "opened" : "unavailable");
+    // An unavailable romfs is asked again (retry_ms): say so the first few times only.
+    static std::atomic<u32> unavailable_logged{0};
+    if (root || unavailable_logged.fetch_add(1, std::memory_order_relaxed) < 3) {
+        LOG_INFO(Core, "DSMod: game romfs {}", root ? "opened" : "unavailable");
+    }
     return root;
 }
 
@@ -302,6 +316,7 @@ bool ModRuntime::ModuleDecodeFont(std::span<const u8> bytes, FontMetrics& out) {
         FontMetrics* out;
         bool filled{false};
     } receiver{&out};
+    std::scoped_lock loader_lock{module_loader_mutex};
     const auto accepted =
         font_ext->decode_font(game_module_instance, bytes.data(), bytes.size(), &receiver,
                               [](void* r, u32 line_height, u32 first_codepoint,
@@ -331,9 +346,13 @@ void ModRuntime::LoadFont() {
     }
     font_ready = true; // one attempt: a missing font should not be retried every frame, except
                        // for a module decoder that may not see the game yet (see below)
-    if (RequestNxFont()) {
+    // Runtime 18: the module asked for this decode ("__font_epoch", mod_font_epoch.h).
+    // The font in use stays until the new one is decoded; a module that declines keeps it.
+    const bool redecode = font_redecode;
+    if (!redecode && RequestNxFont()) {
         return; // a BFFNT: built on the asset worker, installed by PumpNxAssets
     }
+    font_epoch.Decoding(); // acknowledge even unreadable input: no per-tick retry storm
     const auto bytes = ReadAssetBytes(manifest.font_metrics_src);
     // A module's own font extension (if the loaded module exports one) always wins first. MFNT
     // (Dread) and Story of Seasons' own layout are both proprietary formats parsed in core as
@@ -343,15 +362,19 @@ void ModRuntime::LoadFont() {
     const char* font_source = "module";
     if (bytes.empty()) {
         LOG_WARNING(Core, "DSMod: could not read font metrics '{}'", manifest.font_metrics_src);
+        if (redecode) {
+            font_redecode = false;
+            return;
+        }
         font_metrics.glyphs.clear();
         return;
     }
-    if (!ModuleDecodeFont(bytes, font_metrics)) {
+    FontMetrics decoded;
+    if (!ModuleDecodeFont(bytes, decoded)) {
         font_source = "core MFNT fallback";
-        if (!ParseMfnt(bytes, font_metrics)) {
+        if (redecode || !ParseMfnt(bytes, decoded)) {
             font_source = "core SoS fallback";
-            if (!ParseSosFont(bytes, font_metrics)) {
-                font_metrics.glyphs.clear();
+            if (redecode || !ParseSosFont(bytes, decoded)) {
                 // A module that declares a font decoder may need the running game for it: try
                 // again about once a second, at most 30 times, instead of giving up for good.
                 constexpr u32 MaxModuleFontAttempts = 30;
@@ -368,15 +391,128 @@ void ModRuntime::LoadFont() {
                     }
                     return;
                 }
+                if (redecode) {
+                    font_redecode = false; // the font in use stays
+                    LOG_WARNING(Core,
+                                "DSMod: module font '{}' was not decoded again; keeping {} "
+                                "glyph(s)",
+                                manifest.font_metrics_src, font_metrics.glyphs.size());
+                    return;
+                }
+                font_metrics.glyphs.clear();
                 LOG_WARNING(Core, "DSMod: could not read font metrics '{}'",
                             manifest.font_metrics_src);
                 return;
             }
         }
     }
-    LOG_INFO(Core, "DSMod: font '{}' has {} glyph(s), line height {} (via {})",
+    font_metrics = std::move(decoded);
+    LOG_INFO(Core, "DSMod: font '{}' has {} glyph(s), line height {} (via {}{})",
              manifest.font_metrics_src, font_metrics.glyphs.size(), font_metrics.line_height,
-             font_source);
+             font_source, redecode ? fmt::format(", font epoch {}", font_epoch.decoded) : "");
+    if (redecode) {
+        // The atlas goes with the metrics: drop the cached picture so the next draw asks the
+        // module again (text is blank until it lands, then the landed image repaints the page),
+        // and repaint the whole page (text layouts are keyed by the font's content hash).
+        font_redecode = false;
+        const std::string& atlas = manifest.font_atlas_src;
+        canvas.SetFont(nullptr, nullptr);
+        canvas.SetFontPages(nullptr);
+        canvas_font_ref.reset();
+        CacheEraseImagesIf(
+            [&atlas](const std::string& key) { return FontAtlasKeyMatches(atlas, key); });
+        {
+            std::scoped_lock lock{module_asset_mutex};
+            ++module_asset_generation; // reject images decoded against the previous font
+            for (const auto& [key, image] : module_asset_completed) {
+                module_asset_pending.erase(key);
+                module_asset_times.erase(key);
+            }
+            module_asset_completed.clear();
+            std::erase_if(module_asset_failed, [&atlas](const auto& entry) {
+                return FontAtlasKeyMatches(atlas, entry.first);
+            });
+        }
+        module_asset_cv.notify_all();
+        std::erase_if(image_failed,
+                      [&atlas](const auto& key) { return FontAtlasKeyMatches(atlas, key); });
+        ui_signature_valid = false;
+        widget_sig_page = ~size_t{0};
+    }
+    // Runtime 17: a paged atlas ("{p}" in font_atlas, font_page_h rows per page).
+    DropFontPages();
+    if (manifest.font_page_h > 0 && manifest.font_atlas_src.find("{p}") != std::string::npos) {
+        font_metrics.page_h = manifest.font_page_h;
+        font_pages = MakeFontPages();
+        LOG_INFO(Core, "DSMod: font atlas '{}' is paged ({} rows per page, {} MiB budget)",
+                 manifest.font_atlas_src, manifest.font_page_h, font_pages->Budget() >> 20);
+    }
+}
+
+void ModRuntime::WatchFontEpoch(const StateSnapshot& snapshot) {
+    static const std::string key{FontEpochKey};
+    const auto it = snapshot.ints.find(key);
+    font_epoch.Observe(it != snapshot.ints.end() ? std::optional<s64>(it->second) : std::nullopt);
+    if (!font_epoch.Due(font_ready && !font_redecode) || manifest.font_metrics_src.empty() ||
+        manifest.font_atlas_src.empty()) {
+        return;
+    }
+    const auto* font_ext =
+        game_module && game_module_instance ? game_module->FontExtensions() : nullptr;
+    if (!font_ext || !font_ext->decode_font) {
+        font_epoch.Decoding(); // nobody to ask: nothing is due for this epoch
+        return;
+    }
+    LOG_INFO(Core, "DSMod: module font epoch {} -> {}: decoding '{}' again", font_epoch.decoded,
+             font_epoch.latest, manifest.font_metrics_src);
+    font_redecode = true;
+    font_ready = false;
+    font_module_attempts = 0;
+    font_retry_tick = 0;
+    ui_signature_valid = false; // PublishUi runs LoadFont on a changed page only
+}
+
+std::shared_ptr<FontPages> ModRuntime::MakeFontPages() {
+    const std::string pattern = manifest.font_atlas_src;
+    return std::make_shared<FontPages>([this, pattern](u32 page, Image& out) {
+        std::string key = pattern;
+        const std::string number = std::to_string(page);
+        for (size_t at = key.find("{p}"); at != std::string::npos; at = key.find("{p}", at)) {
+            key.replace(at, 3, number);
+            at += number.size();
+        }
+        if (key.starts_with("module:")) {
+            return LoadModuleImageSync(key, out); // the module's asset decoder, uncached
+        }
+        // A package or romfs picture (PNG and the other stb formats), uncached: the pages' own
+        // LRU is the only copy.
+        const auto bytes = ReadAssetBytes(key);
+        int width{}, height{}, channels{};
+        stbi_uc* const decoded =
+            bytes.empty() ? nullptr
+                          : stbi_load_from_memory(bytes.data(), static_cast<int>(bytes.size()),
+                                                  &width, &height, &channels, 4);
+        if (decoded == nullptr || width <= 0 || height <= 0) {
+            stbi_image_free(decoded);
+            return false;
+        }
+        out.w = static_cast<u32>(width);
+        out.h = static_cast<u32>(height);
+        out.pixels.resize(static_cast<size_t>(width) * static_cast<size_t>(height));
+        for (size_t i = 0; i < out.pixels.size(); ++i) {
+            const stbi_uc* const px = decoded + i * 4;
+            out.pixels[i] = (u32{px[3]} << 24) | (u32{px[0]} << 16) | (u32{px[1]} << 8) | px[2];
+        }
+        stbi_image_free(decoded);
+        return true;
+    });
+}
+
+void ModRuntime::DropFontPages() {
+    if (font_pages) {
+        font_pages->Shutdown(); // a redraw job may still hold a copy: no load after this
+        font_pages.reset();
+    }
 }
 
 // The only sanctioned ways to touch image_cache: the redraw worker and the tick thread both read
@@ -397,7 +533,15 @@ std::shared_ptr<const Image> ModRuntime::CachePutImage(const std::string& key, I
 void ModRuntime::CacheEraseImagesIf(const std::function<bool(const std::string&)>& should_erase) {
     std::scoped_lock lk{asset_cache_mutex};
     for (auto it = image_cache.begin(); it != image_cache.end();) {
-        it = should_erase(it->first) ? image_cache.erase(it) : std::next(it);
+        if (!should_erase(it->first)) {
+            ++it;
+            continue;
+        }
+        if (module_asset_used.erase(it->first) != 0) {
+            const size_t bytes = (it->second ? it->second->pixels.size() : 0) * sizeof(u32);
+            module_asset_bytes -= std::min(module_asset_bytes, bytes);
+        }
+        it = image_cache.erase(it);
     }
 }
 

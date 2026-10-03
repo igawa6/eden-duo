@@ -151,6 +151,7 @@ private:
     bool aux_ui_presented{};  ///< the current UI has been blitted+presented at least once
     u32 aux_ui_last_w{};
     u32 aux_ui_last_h{};
+    bool aux_ui_last_full{true}; ///< Eden Duo: the last present filled the frame (no Fit bars)
     // Reused compact scratch buffer for a partial (dirty-sub-rect) upload: RenderAuxModUi extracts
     // just the dirty rows out of the full canvas into here (mirrors AuxRouting::PublishUiPartial's
     // own row-bounded copy), so UploadImageAsync's staging copy is proportional to the dirty area,
@@ -202,6 +203,7 @@ private:
     bool aux_c_presented{false};
     u32 aux_c_last_w{};           ///< panel size at the last present
     u32 aux_c_last_h{};
+    bool aux_c_last_full{true};   ///< Eden Duo: the last present filled the frame (no Fit bars)
     u64 aux_c_present_count{};
     std::array<u64, NumAuxTex> aux_c_upload_count{};
     vk::Buffer aux_c_readback_buf;

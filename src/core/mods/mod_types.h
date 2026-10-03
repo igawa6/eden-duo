@@ -15,6 +15,7 @@
 //   mod_types_action.h     actions
 //   mod_types_guest.h      guest call sequences, patches, enforce rules, IL2CPP layout
 //   mod_types_composite.h  composite images
+//   mod_types_nav.h        controller navigation ("nav", runtime 17)
 // Include this header, not the themed ones, unless a file needs only one theme.
 
 #pragma once
@@ -36,6 +37,7 @@
 #include "core/mods/mod_types_composite.h"
 #include "core/mods/mod_types_guest.h"
 #include "core/mods/mod_types_map.h"
+#include "core/mods/mod_types_nav.h"
 #include "core/mods/mod_types_page.h"
 #include "core/mods/mod_types_points.h"
 #include "core/mods/mod_types_text.h"
@@ -126,12 +128,18 @@ struct Manifest {
     /// Set both and every label on the page is drawn in the game's lettering.
     std::string font_metrics_src;
     std::string font_atlas_src;
+    /// Runtime 17 "font_page_h": with "{p}" in font_atlas, the atlas is paged -- glyph y runs
+    /// through pages of this many rows stacked top to bottom, page p loaded from font_atlas with
+    /// "{p}" replaced by p, on demand (FontPages). 0 = one atlas image.
+    u32 font_page_h{0};
     /// name -> composite image definition (shared with the asset worker as an immutable copy).
     std::map<std::string, std::shared_ptr<const CompositeDef>> composites;
     /// Message files of the running game ("msbt", "msbt_lang", "msbt_lang_fallback", "msbt_icons").
     MsbtConfig msbt;
     /// Haptic feedback on the second screen ("haptics"; disabled when absent).
     HapticsConfig haptics;
+    /// Controller navigation of the second screen ("nav"; runtime 17, mod_types_nav.h).
+    NavConfig nav;
     /// Republish rate while an animation runs ("anim_hz": 60 = every tick, else the idle 30 Hz).
     u32 anim_hz{60};
     /// Value search, for a device where no environment variable can reach the runtime.
@@ -139,6 +147,9 @@ struct Manifest {
     /// A published address to derive a shippable pointer chain for.
     std::string trace_target;
     bool dump_registry{false};
+    /// Runtime 16/17: the manifest or its data file names a "@clock." / "@game." key (or has a
+    /// derived "countdown"): only then are those keys published each tick (ClockPublisher).
+    bool uses_clock_keys{false};
     /// "module_tick_hidden": tick the native module while the second screen is hidden (true) or
     /// not (false). Unset: the module's own flag decides, else whether it has actions.
     std::optional<bool> module_tick_hidden;
@@ -181,6 +192,8 @@ struct StateSnapshot {
     /// Resolved guest address per point (0 when the pointer chain broke). Drives the debug page.
     SnapshotMap<u64> addresses;
     u64 tick{0};
+    /// Runtime 17: every Chart widget's samples (ChartSampler, mod_chart.h); null = none yet.
+    std::shared_ptr<const ChartSeriesMap> charts;
 
     [[nodiscard]] s64 GetInt(const std::string& key, s64 fallback = 0) const {
         const auto it = ints.find(key);

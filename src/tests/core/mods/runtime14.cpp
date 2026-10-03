@@ -625,6 +625,12 @@ TEST_CASE("DSMod battle map: per-slot pictures, world size, bar, dim and frame",
     REQUIRE(Px(c, 66, 60) == White);
     REQUIRE(Px(c, 60, 53) == White);
     REQUIRE(Px(c, 47, 60) == Red); // just outside the 20 px box, on the base picture
+    // A cap preserves normal-size pins in a zoomed room while allowing zoom-out scaling.
+    BattleMap capped;
+    capped.manifest.map_areas.at("b").dynamic_markers[0].size_max = 10.0f;
+    c = capped.Draw(z, 2.0f);
+    REQUIRE(Px(c, 60, 60) == White);
+    REQUIRE(Px(c, 53, 60) == Red);
     // Without size_world the pixel size stays as before (map.style.item_icon, zoom-independent).
     BattleMap px_map;
     px_map.manifest.map_areas.at("b").dynamic_markers[0].size_world = 0.0f;
