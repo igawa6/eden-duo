@@ -321,3 +321,100 @@ if(BUILD_TESTING AND NOT ANDROID)
         set_tests_properties(dsmod-mk8d-assets PROPERTIES ENVIRONMENT "${mk8d_test_env}")
     endif()
 endif()
+
+# Separate installable companions; these targets are excluded from the APK build.
+file(GLOB ACNH_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_LIST_DIR}/acnh_*.cpp")
+list(FILTER ACNH_SOURCES EXCLUDE REGEX "_test\\.cpp$")
+set(ACNH_THIRD_PARTY_SOURCES
+    third_party/stb_truetype.h
+    "${EDEN_SOURCE_ROOT}/externals/bc_decoder/bc_decoder.cpp"
+    ${WONDER_ZSTD_SOURCES})
+set(ACNH_INCLUDE_DIRECTORIES
+    "${EDEN_SOURCE_ROOT}/externals/bc_decoder" "${EDEN_SOURCE_ROOT}/externals/stb" "${WONDER_ZSTD_LIB}")
+# The art recipes reproduce the research composer's float32 arithmetic exactly (tests compare
+# pixels): no fused multiply-add contraction on AArch64.
+set_source_files_properties(acnh_draw.cpp acnh_lyt.cpp acnh_ui_bg.cpp acnh_ui_pages.cpp
+    PROPERTIES COMPILE_OPTIONS -ffp-contract=off)
+option(EDEN_ACNH_BUILD_DIAGNOSTICS "Include ACNH local diagnostics and profiling" OFF)
+dsmod_add_module(dsmod-acnh EXCLUDE_FROM_ALL
+    TITLE 01006F8002326000
+    SOURCES 01006F8002326000.cpp ${ACNH_SOURCES} ${ACNH_THIRD_PARTY_SOURCES}
+    EXPORTS eden_dsmod_get_module eden_dsmod_get_extensions eden_dsmod_get_font_extensions
+        eden_dsmod_get_data_extensions eden_dsmod_get_write_extensions
+    INCLUDE_DIRECTORIES ${ACNH_INCLUDE_DIRECTORIES}
+    COMPILE_DEFINITIONS EDEN_ACNH_DIAGNOSTICS=$<BOOL:${EDEN_ACNH_BUILD_DIAGNOSTICS}>)
+# Keep private checkout locations out of released binaries and reproducible diagnostics.
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(dsmod-acnh PRIVATE "-ffile-prefix-map=${EDEN_SOURCE_ROOT}=.")
+endif()
+
+
+set(FE3H_ASSET_SOURCES
+    fe3h_romfs.cpp
+    fe3h_romfs.h
+    fe3h_g1t.cpp
+    fe3h_g1t.h
+    fe3h_assets.cpp
+    fe3h_assets.h
+    fe3h_font.cpp
+    fe3h_font.h
+    fe3h_text.cpp
+    fe3h_text.h
+    fe3h_ui2d.cpp
+    fe3h_ui2d.h
+    dread_mapgen_util.cpp
+    dread_mapgen_util.h
+    "${EDEN_SOURCE_ROOT}/externals/bc_decoder/bc_decoder.cpp")
+set(FE3H_READER_SOURCES
+    fe3h_reader.cpp
+    fe3h_reader.h
+    fe3h_reader_internal.h
+    fe3h_reader_academy.cpp
+    fe3h_reader_battle.cpp
+    fe3h_reader_calendar.cpp
+    fe3h_reader_details.cpp
+    fe3h_reader_header.cpp
+    fe3h_reader_monastery.cpp
+    fe3h_reader_quests.cpp
+    fe3h_reader_resolve.cpp
+    fe3h_reader_rules.cpp
+    fe3h_pins.inc)
+set(FE3H_MODULE_SOURCES
+    010055D009F78000.cpp
+    ${FE3H_READER_SOURCES}
+    ${FE3H_ASSET_SOURCES})
+dsmod_add_module(dsmod-fe3h EXCLUDE_FROM_ALL
+    TITLE 010055D009F78000
+    SOURCES ${FE3H_MODULE_SOURCES}
+    EXPORTS eden_dsmod_get_module eden_dsmod_get_extensions eden_dsmod_get_font_extensions
+    INCLUDE_DIRECTORIES "${EDEN_SOURCE_ROOT}/externals/bc_decoder")
+
+
+set(ISAAC_ASSET_SOURCES
+    isaac_text.cpp
+    isaac_text.h
+    isaac_assets.cpp
+    isaac_assets.h
+    isaac_assets_xml.h
+    isaac_romfs.cpp
+    isaac_romfs.h
+    isaac_pcx.cpp
+    isaac_pcx.h
+    isaac_anm2.cpp
+    isaac_anm2.h
+    isaac_font.cpp
+    isaac_font.h
+    isaac_map.cpp
+    isaac_map.h)
+set(ISAAC_MODULE_SOURCES
+    010021C000B6A000.cpp
+    isaac_reader.cpp
+    isaac_reader.h
+    isaac_pins.inc
+    isaac_afterbirth.inc
+    isaac_mapreg.h
+    ${ISAAC_ASSET_SOURCES})
+dsmod_add_module(dsmod-isaac EXCLUDE_FROM_ALL
+    TITLE 010021C000B6A000
+    SOURCES ${ISAAC_MODULE_SOURCES}
+    EXPORTS eden_dsmod_get_module eden_dsmod_get_extensions eden_dsmod_get_font_extensions)

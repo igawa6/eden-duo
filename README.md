@@ -16,6 +16,8 @@ Companions are separate, installable **`.dsmod.zip` packages**, one per game, so
 
 ## Supported Games
 
+The Animal Crossing: New Horizons, Fire Emblem: Three Houses and The Binding of Isaac companions require Eden Duo 1.1.0 or newer.
+
 | No | Game | Title ID | Patch Version | Contributor/Supporter |
 |---:|------|----------|---------------|:---------:|
 | 1 | [Persona 5 Royal](https://github.com/igawa6/eden-duo-companions#persona-5-royal) | `01005CA01580E000` | 1.0.2 | 🥇<sup>1</sup> |
@@ -23,10 +25,17 @@ Companions are separate, installable **`.dsmod.zip` packages**, one per game, so
 | 3 | [The Legend of Zelda: Link's Awakening](https://github.com/igawa6/eden-duo-companions#the-legend-of-zelda-links-awakening) | `01006BB00C6F0000` | 1.0.1 | |
 | 4 | [Mario Kart 8 Deluxe](https://github.com/igawa6/eden-duo-companions#mario-kart-8-deluxe) | `0100152000022000` | 4.0.0, 3.0.3 (also with CTGP-DX v1.1.1) | |
 | 5 | [Super Mario Bros. Wonder](https://github.com/igawa6/eden-duo-companions#super-mario-bros-wonder) | `010015100B514000` | 1.2.1 | ⭐<sup>1</sup> |
+| 6 | [Animal Crossing: New Horizons](https://github.com/igawa6/eden-duo-companions#animal-crossing-new-horizons) | `01006F8002326000` | 3.0.3 | 🥇<sup>2</sup> |
+| 7 | [Fire Emblem: Three Houses](https://github.com/igawa6/eden-duo-companions#fire-emblem-three-houses) | `010055D009F78000` | 1.2.0 |  |
+| 8 | [The Binding of Isaac: Afterbirth+ and Repentance DLC](https://github.com/igawa6/eden-duo-companions#the-binding-of-isaac-afterbirth-and-repentance-dlc) | `010021C000B6A000` | 1.7.9b | 🥇<sup>3</sup> |
 
 <sup>1</sup> 🥇 Thanks to [u/gymgooner123](https://www.reddit.com/user/gymgooner123), who commissioned the Persona 5 Royal companion.
 
 <sup>1</sup> ⭐ Credit to [u/Far_Entrepreneur_246](https://www.reddit.com/user/Far_Entrepreneur_246), creator of Super Mario Wonders companion. Support him on [Patreon](https://www.patreon.com/cw/KalebPowell).
+
+<sup>2</sup> 🥇 Thanks to [MsMeriBerry](https://ko-fi.com/W5J3253HW9), who commissioned the Animal Crossing: New Horizons companion.
+
+<sup>3</sup> 🥇 Thanks to [Armando Chacon](https://ko-fi.com/U3I527XBIL), who commissioned The Binding of Isaac: Afterbirth+ and Repentance DLC companion.
 
 Compatibility is intentionally strict. Each companion is written for exact game builds and checks the running build before it loads. On any other version it does not load and shows a notice, instead of reading memory it does not understand.
 
@@ -80,12 +89,37 @@ Second-screen options are in **Settings → Graphics → Second Screen**. Each g
 
 | Setting | Options | What it does |
 |---------|---------|--------------|
-| **Swap Screens** | On / Off | The game on the second screen, the companion on the main screen. Works from the game list and from frontends. A game with its own Swap Off always opens on the main screen. |
+| **Swap Screens** | On / Off | Switch which display runs the game and which shows the companion. Choose the layout that suits your dual-screen handheld, including Retroid or AYANEO Android devices with an extra display. Works from the game list and from frontends. |
 | **Companion Ratio** | Fit (default) / Stretch | Fit keeps the companion's shape and adds bars if needed. Stretch fills the screen. |
-| **No Companion** | Icon (default) / Black / Off / App | What the second screen does for a game without a companion. Icon shows the game icon dimmed on black. Black leaves it black. Off opens no window, so the second screen is free for other apps. App opens an app you choose on the second screen when the game starts; pick it in the **App** row below, with search. Until you choose one, App works like Off. |
+| **No Companion** | Icon (default) / Black / Off / App | What the second screen does for a game without a companion. Icon shows the game icon dimmed on black. Black leaves it black. Off opens no window, so the second screen is free for other apps. App launches your chosen guide app, browser, media player or another installed app on the second/bottom screen when the game starts; pick it in the **App** row below, with search. Until you choose one, App works like Off. |
 
 - No Companion can be changed while a game runs. It applies when you return to the game (Icon and Black from the next start).
 - With Swap Screens on and a game that has no companion, Off (or App with no app chosen) keeps the game on the main screen.
+
+### Set Swap Screens for a Game
+
+Put gameplay on the display you prefer and keep the companion within easy reach on the other. This is especially useful when a Retroid or AYANEO Android handheld's extra display gives you a different layout from a built-in dual-screen device.
+
+1. In the game list, **long-press the game** and open **Settings**.
+2. Open **Graphics → Second Screen**.
+3. Set **Swap Screens** to **On** to put the game on the second display and the companion on the main display. Set it to **Off** to keep the game on the main display.
+4. Start the game from Eden Duo or your frontend. It uses that game's saved screen layout.
+
+This choice is **per game**. To use one layout as the default, change **Settings → Graphics → Second Screen → Swap Screens** from Eden Duo's main settings. Long-press the per-game setting to restore the global default.
+
+### Open Another App on the Bottom Screen for a Game
+
+A game without a companion can still make good use of both screens. Keep a walkthrough in a guide app or browser, play media, or open another installed app on the second/bottom screen alongside the game.
+
+1. In the game list, **long-press the game** and open **Settings**.
+2. Open **Graphics → Second Screen**.
+3. Set **No Companion** to **App**.
+4. Open the **App** row and search for the installed guide app, browser, media player or other app you want to launch.
+5. Start the game. Eden Duo launches the chosen app on the second/bottom display for games without a companion. In a browser, open the guide you want to use.
+
+The app choice is **per game**: choose a guide app for one game and a media player for another. You can also set a default from Eden Duo's main **Settings → Graphics → Second Screen** settings. Long-press a per-game setting to inherit the global choice.
+
+For a quiet screen, choose **Icon** or **Black**; choose **Off** to leave it available for apps you open yourself. Icon/Black changes during play take full effect on the next game start.
 
 ## Contribute to Another Game
 
