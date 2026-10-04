@@ -130,7 +130,7 @@ Eden Duo is not limited to the games above. Anyone can write a companion for ano
 
 Start here: [Contribute to Another Game](https://github.com/igawa6/eden-duo-companions/blob/main/docs/CONTRIBUTE.md)
 
-Module sources live in this repository under [`src/core/mods/modules/`](src/core/mods/modules/).
+Game-specific module sources, tests and build targets live in [eden-duo-companions/native](https://github.com/igawa6/eden-duo-companions/tree/main/native). This repository provides the generic runtime and shared ABI/SDK.
 
 ## Build
 

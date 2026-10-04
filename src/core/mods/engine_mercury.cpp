@@ -199,7 +199,7 @@ bool ModRuntime::ParseMfnt(std::span<const u8> param, FontMetrics& out) {
     // first_codepoint 0x20). In-core fallback for when no module is loaded or the loaded module
     // declares no font extension -- see ModuleDecodeFont, which is tried first and wins when it
     // succeeds. Field-for-field the same algorithm the module's own DecodeFont (Dread's DSMod
-    // module, modules/010093801237C000.cpp) carries across the ABI boundary, so the two agree on
+    // module, eden-duo-companions/native/modules/010093801237C000.cpp) carries across the ABI boundary, so the two agree on
     // any well-formed asset.
     if (param.size() < 0x60 || std::memcmp(param.data(), "MFNT", 4) != 0) {
         return false;

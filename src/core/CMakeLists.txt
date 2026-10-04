@@ -1282,8 +1282,8 @@ endif()
 # Title-specific DSMod code is an optional, separately distributable shared object.  It is kept
 # outside the core archive so Eden APKs contain only the generic host and a package can provide a
 # module matching one title/build.  The module links no Eden target and receives all emulator
-# services through dsmod_module_abi.h.  The title modules are built from their own CMake source
-# tree: cmake -S src/core/mods/modules (see mods/modules/CMakeLists.txt).
+# services through dsmod_module_abi.h.  The title modules are built from eden-duo-companions/native/modules.
+# This repository retains only the generic runtime, ABI headers and shared module SDK.
 
 # The RE memory-analysis toolkit (mods/mod_re_tools.cpp: heap scan/diff/class-dump, plus
 # mods/mod_console.cpp: the EDEN_DSMOD_CMD live console dispatch -- both split physically out of
