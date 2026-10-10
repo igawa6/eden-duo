@@ -108,7 +108,7 @@ void ModRuntime::DumpOneWatchImpl([[maybe_unused]] const std::string& spec) {
     if (found == sequence_addresses.end() || found->second == 0) {
         return;
     }
-    auto& memory = system.ApplicationMemory();
+    auto& memory = OwnerMemory();
     // "a>b>c": add a and dereference, add b and dereference, then add c. An object the game hands
     // us is rarely the object we want -- it is usually a handle holding a pointer to it.
     VAddr base = static_cast<VAddr>(found->second);
@@ -163,7 +163,7 @@ void ModRuntime::ScanForMovingFloatsImpl() {
     if (found == sequence_addresses.end() || found->second == 0) {
         return;
     }
-    auto& memory = system.ApplicationMemory();
+    auto& memory = OwnerMemory();
     if (dev.scan_end == 0) {
         if (tick_count < 9000) { // ~150 s: past the menus, into gameplay
             return;
@@ -311,7 +311,7 @@ void ModRuntime::DumpHeapSnapshotImpl() {
     // finds dies with the boot, so the two have to come from the same run.
     LOG_INFO(Core, "DSMod: snapshotting for target {}", dev.scan_best);
     dev.heapdump_done = true;
-    auto& memory = system.ApplicationMemory();
+    auto& memory = OwnerMemory();
     FILE* const out = std::fopen(dev.heapdump_path.c_str(), "wb");
     if (out == nullptr) {
         LOG_ERROR(Core, "DSMod: cannot write heap snapshot to {}", dev.heapdump_path);
@@ -368,7 +368,7 @@ void ModRuntime::DumpHeapSnapshotImpl() {
 /// checked it for a direct pointer, which finds nothing whenever the game keeps its objects one
 /// container away from the static, as most engines do.
 void ModRuntime::TraceChainToImpl([[maybe_unused]] VAddr target) {
-    auto& memory = system.ApplicationMemory();
+    auto& memory = OwnerMemory();
     constexpr u64 ModuleImageMax = 0x4000000;
     const VAddr module_end = main_region_begin + std::min<u64>(main_region_size, ModuleImageMax);
 
@@ -442,7 +442,7 @@ void ModRuntime::RecheckRoutesImpl() {
     if (dev.path_routes.empty() || (tick_count % 120) != 0) {
         return;
     }
-    auto& memory = system.ApplicationMemory();
+    auto& memory = OwnerMemory();
     ++dev.path_checks;
     std::string report;
     for (auto& route : dev.path_routes) {
@@ -481,7 +481,7 @@ void ModRuntime::RecheckRoutesImpl() {
 
 void ModRuntime::PathFromStaticsImpl([[maybe_unused]] VAddr target, [[maybe_unused]] int depth,
                                      [[maybe_unused]] s64 slack) const {
-    auto& memory = system.ApplicationMemory();
+    auto& memory = OwnerMemory();
     constexpr u64 ModuleImageMax = 0x4000000;
     const VAddr module_end = main_region_begin + std::min<u64>(main_region_size, ModuleImageMax);
     const VAddr low = target > static_cast<VAddr>(slack) ? target - static_cast<VAddr>(slack) : 0;
@@ -553,7 +553,7 @@ void ModRuntime::PathFromStaticsImpl([[maybe_unused]] VAddr target, [[maybe_unus
 
 void ModRuntime::TraceToStaticImpl([[maybe_unused]] VAddr target, [[maybe_unused]] int depth,
                                    [[maybe_unused]] s64 slack) const {
-    auto& memory = system.ApplicationMemory();
+    auto& memory = OwnerMemory();
     constexpr u64 ModuleImageMax = 0x4000000;
     const VAddr module_end = main_region_begin + std::min<u64>(main_region_size, ModuleImageMax);
 
@@ -615,7 +615,7 @@ void ModRuntime::TraceToStaticImpl([[maybe_unused]] VAddr target, [[maybe_unused
 
 void ModRuntime::TraceWithSlackImpl([[maybe_unused]] VAddr object,
                                     [[maybe_unused]] s64 slack) const {
-    auto& memory = system.ApplicationMemory();
+    auto& memory = OwnerMemory();
     constexpr u64 ModuleImageMax = 0x4000000;
     const VAddr module_end = main_region_begin + std::min<u64>(main_region_size, ModuleImageMax);
 
@@ -664,7 +664,7 @@ void ModRuntime::MotionScanImpl() {
     if (dev.motion_spec.empty() || !InGameplay() || (tick_count % 5) != 0) {
         return;
     }
-    auto& memory = system.ApplicationMemory();
+    auto& memory = OwnerMemory();
     constexpr u64 LegTicks = 240; // ~4 s of holding one direction
 
     if (dev.motion_phase == 0) {
@@ -935,7 +935,7 @@ void ModRuntime::ArrayDumpImpl() {
         return;
     }
     dev.arraydump_done = true;
-    auto& memory = system.ApplicationMemory();
+    auto& memory = OwnerMemory();
     constexpr s64 Stride = 0x18;
     constexpr int MinRun = 8;
     const s64 vtable_offset = std::strtoll(
@@ -1018,7 +1018,7 @@ void ModRuntime::ClassDumpImpl() {
         return;
     }
     dev.classdump_done = true;
-    auto& memory = system.ApplicationMemory();
+    auto& memory = OwnerMemory();
     // "main+0x...@15" narrows to instances holding exactly that amount. Missile capacity is not
     // in the array the other five came from, so it has to be looked for by the number itself.
     std::string spec = dev.classdump_spec;
@@ -1100,7 +1100,7 @@ void ModRuntime::RangeWatchImpl() {
     if (dev.range_spec.empty() || !InGameplay() || (tick_count % 30) != 0) {
         return;
     }
-    auto& memory = system.ApplicationMemory();
+    auto& memory = OwnerMemory();
     const auto comma = dev.range_spec.find(':');
     const f32 low = std::strtof(dev.range_spec.c_str(), nullptr);
     const f32 high =
@@ -1316,7 +1316,7 @@ void ModRuntime::FieldProbeImpl() {
         return;
     }
     dev.field_done = true;
-    auto& memory = system.ApplicationMemory();
+    auto& memory = OwnerMemory();
 
     const auto at_sign = dev.field_spec.find('@');
     if (at_sign == std::string::npos) {
@@ -1390,7 +1390,7 @@ void ModRuntime::HeapFindImpl() {
         return;
     }
     dev.heapfind_done = true;
-    auto& memory = system.ApplicationMemory();
+    auto& memory = OwnerMemory();
 
     // "aabb..,ccdd.." -- one or more literal byte strings, hex, comma separated.
     std::vector<std::vector<u8>> wanted;
@@ -1470,7 +1470,7 @@ void ModRuntime::DiffScanImpl() {
     if (dev.diff_spec.empty() || (tick_count % 30) != 0) {
         return;
     }
-    auto& memory = system.ApplicationMemory();
+    auto& memory = OwnerMemory();
     constexpr u64 FirePhaseTicks = 420; // ~7 s of firing
     constexpr u64 RestPhaseTicks = 240; // ~4 s of standing still
 
@@ -1644,7 +1644,7 @@ void ModRuntime::FindValueClusterImpl() {
     if (dev.find_spec.empty() || (tick_count % 60) != 0) {
         return;
     }
-    auto& memory = system.ApplicationMemory();
+    auto& memory = OwnerMemory();
     if (dev.find_round == 0) {
         // Which published reading to track. Take the value to collect from the game itself
         // rather than from the command line: by the time the search starts the player has been
@@ -1910,7 +1910,7 @@ void ModRuntime::DumpLuaRegistryImpl() {
         return;
     }
     dev.registry_done = true;
-    auto& memory = system.ApplicationMemory();
+    auto& memory = OwnerMemory();
     constexpr u64 ModuleImageMax = 0x4000000;
     const VAddr module_end = main_region_begin + std::min<u64>(main_region_size, ModuleImageMax);
     int reported = 0;
@@ -1958,7 +1958,7 @@ void ModRuntime::DumpLuaRegistryImpl() {
 /// every place in the module that points at the string, and print the words around each: the
 /// layout becomes obvious from three or four examples, and the code pointer with it.
 void ModRuntime::DescribeStringUsesImpl([[maybe_unused]] const std::string& text) {
-    auto& memory = system.ApplicationMemory();
+    auto& memory = OwnerMemory();
     constexpr u64 ModuleImageMax = 0x4000000;
     const VAddr module_end = main_region_begin + std::min<u64>(main_region_size, ModuleImageMax);
 
@@ -2036,7 +2036,7 @@ void ModRuntime::ApplyEnforceRulesDevToolsImpl(const StateSnapshot& snapshot) {
             dev.trace_done = true;
             VAddr address = static_cast<VAddr>(seed);
             if (colon != std::string::npos) {
-                auto& memory = system.ApplicationMemory();
+                auto& memory = OwnerMemory();
                 const auto path = dev.trace_target.substr(colon + 1);
                 for (size_t start = 0; start <= path.size();) {
                     const auto arrow = path.find('>', start);
@@ -2136,7 +2136,7 @@ void ModRuntime::DriveAutoChainImpl() {
     if (routes.empty() || (tick_count % 30) != 0)
         return;
 
-    auto& memory = system.ApplicationMemory();
+    auto& memory = OwnerMemory();
 
     for (const auto& r : routes) {
         VAddr addr = main_region_begin + r.mainoff;

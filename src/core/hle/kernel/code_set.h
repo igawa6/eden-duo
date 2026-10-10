@@ -78,6 +78,9 @@ struct CodeSet final {
         return segments[2];
     }
 
+    Segment& CompanionCodeSegment() { return companion_code_segment; }
+    const Segment& CompanionCodeSegment() const { return companion_code_segment; }
+
 #ifdef HAS_NCE
     Segment& PatchSegment() {
         return patch_segment;
@@ -100,6 +103,8 @@ struct CodeSet final {
     std::vector<u8> memory;
     /// The segments that comprise this code set.
     std::array<Segment, 3> segments;
+    /// Optional loader-owned RX pages, separate from native NSO data and NCE trampolines.
+    Segment companion_code_segment;
 
 #ifdef HAS_NCE
     Segment patch_segment;

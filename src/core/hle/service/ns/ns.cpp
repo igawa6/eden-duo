@@ -10,7 +10,9 @@
 #include "core/hle/service/ns/query_service.h"
 #include "core/hle/service/ns/service_getter_interface.h"
 #include "core/hle/service/ns/system_update_interface.h"
-#include "core/hle/service/ns/vulnerability_manager_interface.h"
+#include "core/hle/service/ipc_helpers.h"
+#include "core/hle/service/cmif_serialization.h"
+#include "core/hle/service/cmif_types.h"
 #include "core/hle/service/server_manager.h"
 
 namespace Service::NS {
@@ -39,19 +41,56 @@ public:
     }
 };
 
+class IVulnerabilityManagerInterface final
+    : public ServiceFramework<IVulnerabilityManagerInterface> {
+public:
+    explicit IVulnerabilityManagerInterface(Core::System& system_)
+        : ServiceFramework{system_, "ns:vm"} {
+        // clang-format off
+        static const FunctionInfo functions[] = {
+            {1200, D<&IVulnerabilityManagerInterface::NeedsUpdateVulnerability>, "NeedsUpdateVulnerability"},
+            {1201, nullptr, "UpdateSafeSystemVersionForDebug"},
+            {1202, nullptr, "GetSafeSystemVersion"},
+            {3100, D<&IVulnerabilityManagerInterface::GetSafeSystemVersionCheckInfo>, "GetSafeSystemVersionCheckInfo"},
+            {3101, nullptr, "RequestUpdateSafeSystemVersionCheckInfo"},
+            {3102, D<&IVulnerabilityManagerInterface::ResetSafeSystemVersionCheckInfo>, "ResetSafeSystemVersionCheckInfo"},
+        };
+        // clang-format on
+        RegisterHandlers(functions);
+    }
+    ~IVulnerabilityManagerInterface() override = default;
+
+    Result NeedsUpdateVulnerability(Out<bool> out_needs_update_vulnerability) {
+        LOG_WARNING(Service_NS, "(STUBBED)");
+        *out_needs_update_vulnerability = false;
+        R_SUCCEED();
+    }
+
+    Result GetSafeSystemVersionCheckInfo(Out<std::array<u8, 0x20>> out_system_version_check_info) {
+        LOG_WARNING(Service_NS, "(STUBBED)");
+        *out_system_version_check_info = {};
+        R_SUCCEED();
+    }
+
+    Result ResetSafeSystemVersionCheckInfo() {
+        LOG_WARNING(Service_NS, "(STUBBED)");
+        R_SUCCEED();
+    }
+};
+
 void LoopProcess(Core::System& system) {
     auto server_manager = std::make_unique<ServerManager>(system);
 
-    server_manager->RegisterNamedService("ns:am2", std::make_shared<IServiceGetterInterface>(system, "ns:am2"));
-    server_manager->RegisterNamedService("ns:ec", std::make_shared<IServiceGetterInterface>(system, "ns:ec"));
-    server_manager->RegisterNamedService("ns:rid", std::make_shared<IServiceGetterInterface>(system, "ns:rid"));
-    server_manager->RegisterNamedService("ns:rt", std::make_shared<IServiceGetterInterface>(system, "ns:rt"));
-    server_manager->RegisterNamedService("ns:web", std::make_shared<IServiceGetterInterface>(system, "ns:web"));
-    server_manager->RegisterNamedService("ns:ro", std::make_shared<IServiceGetterInterface>(system, "ns:ro"));
+    server_manager->RegisterNamedService("ns:am2", std::make_shared<IServiceGetterInterface>(system, "ns:am2"), 5);
+    server_manager->RegisterNamedService("ns:ec", std::make_shared<IServiceGetterInterface>(system, "ns:ec"), 5);
+    server_manager->RegisterNamedService("ns:rid", std::make_shared<IServiceGetterInterface>(system, "ns:rid"), 5);
+    server_manager->RegisterNamedService("ns:rt", std::make_shared<IServiceGetterInterface>(system, "ns:rt"), 5);
+    server_manager->RegisterNamedService("ns:web", std::make_shared<IServiceGetterInterface>(system, "ns:web"), 5);
+    server_manager->RegisterNamedService("ns:ro", std::make_shared<IServiceGetterInterface>(system, "ns:ro"), 5);
 
-    server_manager->RegisterNamedService("ns:dev", std::make_shared<IDevelopInterface>(system));
-    server_manager->RegisterNamedService("ns:su", std::make_shared<ISystemUpdateInterface>(system));
-    server_manager->RegisterNamedService("ns:vm", std::make_shared<IVulnerabilityManagerInterface>(system));
+    server_manager->RegisterNamedService("ns:dev", std::make_shared<IDevelopInterface>(system), 5);
+    server_manager->RegisterNamedService("ns:su", std::make_shared<ISystemUpdateInterface>(system), 5);
+    server_manager->RegisterNamedService("ns:vm", std::make_shared<IVulnerabilityManagerInterface>(system), 5);
     server_manager->RegisterNamedService("pdm:ntfy", std::make_shared<INotifyService>(system));
     server_manager->RegisterNamedService("pdm:qry", std::make_shared<IQueryService>(system));
 

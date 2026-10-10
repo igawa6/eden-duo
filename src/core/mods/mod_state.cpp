@@ -37,6 +37,7 @@
 #include "core/mods/mod_runtime.h"
 #include "core/mods/mod_runtime_shared.h"
 #include "hid_core/frontend/emulated_controller.h"
+#include "hid_core/hid_core.h"
 
 namespace Core::Mods {
 
@@ -49,10 +50,10 @@ constexpr s64 Il2CppStringChars = 0x14;
 } // namespace
 
 bool ModRuntime::AddressIsSane(VAddr address, u64 size) const {
-    if (address == 0 || size == 0) {
+    if (!IsOwnerContext() || address == 0 || size == 0) {
         return false;
     }
-    return system.ApplicationMemory().IsValidVirtualAddressRange(address, size);
+    return OwnerMemory().IsValidVirtualAddressRange(address, size);
 }
 
 /// The heap region as the running process actually laid it out. The old fixed window
@@ -67,7 +68,7 @@ VAddr ModRuntime::HeapLow() const {
     if (heap_low.load(std::memory_order_acquire) == 0) {
         std::scoped_lock lock{heap_bounds_mutex};
         if (heap_low.load(std::memory_order_relaxed) == 0) {
-            if (auto* const process = system.ApplicationProcess(); process != nullptr) {
+            if (auto* const process = OwnerProcess(); process != nullptr) {
                 const u64 start = GetInteger(process->GetPageTable().GetHeapRegionStart());
                 // The *region* is a 128 GB reservation, almost all unmapped. Sweeping it whole
                 // means 33M page probes that never finish in time -- which is exactly why energy
@@ -128,7 +129,7 @@ std::string ModRuntime::DescribeGuestValue(u64 value) const {
     if (!AddressIsSane(value, sizeof(u64))) {
         return label; // not a pointer we can follow
     }
-    auto& memory = system.ApplicationMemory();
+    auto& memory = OwnerMemory();
     // A readable NUL-terminated ASCII run is the strongest signal there is.
     std::string text;
     for (u64 i = 0; i < 40 && AddressIsSane(value + i, 1); ++i) {
@@ -172,7 +173,7 @@ bool ModRuntime::WalkList(VAddr list, const ChainHop& hop, s64 index, VAddr& out
     if (index < 0 || index >= MaxListWalk) {
         return false;
     }
-    auto& memory = system.ApplicationMemory();
+    auto& memory = OwnerMemory();
     if (!AddressIsSane(list + static_cast<VAddr>(hop.list_next), sizeof(u64))) {
         return false;
     }
@@ -207,7 +208,7 @@ bool ModRuntime::WalkList(VAddr list, const ChainHop& hop, s64 index, VAddr& out
 
 VAddr ModRuntime::ScanForU32Text(const TextScan& spec) const {
     // One codepoint per 32-bit word. Walks the game heap once; the caller caches the result.
-    auto& memory = system.ApplicationMemory();
+    auto& memory = OwnerMemory();
     const VAddr Begin = HeapLow(), End = HeapLow() + 0x10000000ULL;
     for (VAddr at = Begin; at < End; at += 4) {
         if (!AddressIsSane(at, 4))
@@ -317,7 +318,7 @@ bool ModRuntime::ResolvePoint(const DataPoint& point, VAddr& address_out, s64 ar
             if (!AddressIsSane(address, sizeof(u64))) {
                 return false;
             }
-            address = system.ApplicationMemory().Read64(address);
+            address = OwnerMemory().Read64(address);
             if (hop.static_fields) {
                 const auto methods_offset = DetectMethodsOffset(address);
                 if (!methods_offset) {
@@ -348,7 +349,7 @@ bool ModRuntime::ResolvePoint(const DataPoint& point, VAddr& address_out, s64 ar
         if (!AddressIsSane(address, sizeof(u64))) {
             return false;
         }
-        address = system.ApplicationMemory().Read64(address);
+        address = OwnerMemory().Read64(address);
         if (point.chain[i] == StaticFieldsToken) {
             // "static_fields": the class' static block. In every IL2CPP layout so far it follows
             // the method table by four pointers, so detecting one gives the other.
@@ -433,7 +434,7 @@ bool ModRuntime::ReadPoint(const DataPoint& point, s64& value_out, s64 array_ind
         value_out = static_cast<s64>(address);
         return true;
     }
-    auto& memory = system.ApplicationMemory();
+    auto& memory = OwnerMemory();
     const auto read = [&](u64 size) { return AddressIsSane(address, size); };
     if (const u32 width = IntegerWidth(point.type); width != 0 && point.HasModifiers()) {
         if (!read(width)) {
@@ -509,7 +510,7 @@ std::optional<std::string> ModRuntime::ReadPointText(const DataPoint& point,
     if (!ResolvePoint(point, address, array_index) || !AddressIsSane(address, sizeof(u64))) {
         return std::nullopt;
     }
-    auto& memory = system.ApplicationMemory();
+    auto& memory = OwnerMemory();
     if (point.type == ValueType::Utf32String) {
         // The game keeps some UI labels as one codepoint per 32-bit word, inline at the address
         // rather than behind a handle -- read straight through until the terminator.
@@ -606,7 +607,7 @@ void ModRuntime::SampleState(StateSnapshot& out) {
                 // A float point keeps its fraction. Truncating a position held in metres to whole
                 // metres quantises a map marker to visible steps.
                 if (point.type == ValueType::F32 && AddressIsSane(address, 4)) {
-                    const u32 raw = system.ApplicationMemory().Read32(address);
+                    const u32 raw = OwnerMemory().Read32(address);
                     f32 exact{};
                     std::memcpy(&exact, &raw, sizeof(exact));
                     out.floats[key] = exact;
@@ -976,7 +977,7 @@ std::optional<ModRuntime::GuestExpect> ModRuntime::ExpectUnchanged(const DataPoi
         !AddressIsSane(address, width)) {
         return std::nullopt;
     }
-    auto& memory = system.ApplicationMemory();
+    auto& memory = OwnerMemory();
     const u64 now = width == 1   ? memory.Read8(address)
                     : width == 2 ? memory.Read16(address)
                     : width == 4 ? memory.Read32(address)
@@ -996,7 +997,7 @@ bool ModRuntime::RunWithGuestStopped(const std::function<void()>& fn) {
 
 bool ModRuntime::ApplyGuestStores(std::span<const GuestExpect> expects,
                                   std::span<const GuestStore> stores) {
-    auto& memory = system.ApplicationMemory();
+    auto& memory = OwnerMemory();
     const auto width_mask = [](u32 width) {
         return width >= 8 ? ~u64{0} : (u64{1} << (width * 8)) - 1;
     };
@@ -1117,7 +1118,7 @@ std::optional<s64> ModRuntime::FindEntryArray(const ArrayFind& spec, s64 value_o
         cursor = HeapBegin;
     }
     const VAddr slice_end = std::min<VAddr>(HeapEnd, cursor + PagesPerTick * 0x1000);
-    auto& memory = system.ApplicationMemory();
+    auto& memory = OwnerMemory();
     // Under NCE the module's data segment (where vtables live) is mapped at a different offset
     // from the text base than under Dynarmic, so the precomputed `main + vtable` is wrong by a
     // constant that is the same for every class. Discovered once from the inventory array's shape
@@ -1270,7 +1271,7 @@ std::optional<s64> ModRuntime::FindEntryArray(const ArrayFind& spec, s64 value_o
 /// read current==max forever. Confirmed once, then re-verified cheaply; a full re-scan only runs
 /// while unconfirmed or after the chosen array is freed.
 std::optional<s64> ModRuntime::SelectLiveInventory(const ArrayFind& spec, s64 value_off) const {
-    auto& memory = system.ApplicationMemory();
+    auto& memory = OwnerMemory();
     const u64 vtable =
         main_region_begin + static_cast<u64>(spec.vtable) + static_cast<u64>(nce_vtable_delta);
     // Hash a candidate's value column so a change between scans is detectable.

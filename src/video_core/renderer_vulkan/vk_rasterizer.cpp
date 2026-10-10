@@ -272,7 +272,7 @@ void RasterizerVulkan::DSModCaptureRenderTarget(VideoCommon::ImageViewId view_id
     scheduler.Finish();
     std::vector<u32> pixels(static_cast<size_t>(w) * h);
     std::memcpy(pixels.data(), staging.mapped_span.data(), bytes);
-    gpu.DSModAux().PublishUi(w, h, pixels);
+    gpu.DSModAux().PublishUi(w, h, pixels, /*require_context=*/true);
     static bool first = true;
     if (first) {
         first = false;
@@ -307,7 +307,8 @@ void RasterizerVulkan::PrepareDraw(bool is_indexed, Func&& draw_func) {
     // one place it exists separately from the scene.
     // EDEN_DSMOD_RT_PICK=<w>x<h>[:k] -- the k-th pass at that size.
     static const char* const pick_env = Common::DSMod::DevEnvironment("EDEN_DSMOD_RT_PICK");
-    if (pick_env != nullptr) {
+    if (pick_env != nullptr &&
+        gpu.DSModAux().companion_context_active.load(std::memory_order_acquire)) {
         static u32 want_w = 0, want_h = 0, want_k = 0;
         static bool parsed = false;
         if (!parsed) {
@@ -947,6 +948,7 @@ void RasterizerVulkan::ModifyGPUMemory(size_t as_id, GPUVAddr addr, u64 size) {
         std::scoped_lock lock{texture_cache.mutex};
         texture_cache.UnmapGPUMemory(as_id, addr, size);
     }
+    buffer_cache.UnmapGPUMemory(as_id, addr, size);
 }
 
 void RasterizerVulkan::SignalFence(std::function<void()>&& func) {

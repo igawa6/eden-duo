@@ -82,6 +82,7 @@ extern "C" {
 #include "core/frontend/applets/software_keyboard.h"
 #include "core/frontend/applets/web_browser.h"
 #include "common/android/applets/web_browser.h"
+#include "core/file_sys/common_funcs.h"
 #include "core/hle/service/am/applet_manager.h"
 #include "core/hle/service/am/frontend/applets.h"
 #include "core/hle/service/filesystem/filesystem.h"
@@ -491,6 +492,8 @@ Core::SystemResultStatus EmulationSession::InitializeEmulation(const std::string
                                                                const bool frontend_initiated) {
     std::scoped_lock lock(m_mutex);
 
+    m_pending_shader_cache_title.reset();
+
     // Create the render window.
     m_window = std::make_unique<EmuWindow_Android>(m_native_window, m_vulkan_library);
 
@@ -520,11 +523,23 @@ Core::SystemResultStatus EmulationSession::InitializeEmulation(const std::string
     ConfigureFilesystemProvider(filepath);
 
     // Load the ROM.
+    const u64 previous_program_id =
+        program_index != 0 && m_next_program_id.load() >
+                                  static_cast<u64>(Service::AM::AppletProgramId::MaxProgramId)
+            ? m_next_program_id.load()
+            : 0;
+
     Service::AM::FrontendAppletParameters params{
+        .program_id = previous_program_id,
         .applet_id = static_cast<Service::AM::AppletId>(m_applet_id),
         .launch_type = frontend_initiated ? Service::AM::LaunchType::FrontendInitiated
                                           : Service::AM::LaunchType::ApplicationInitiated,
         .program_index = static_cast<s32>(program_index),
+        .previous_program_index =
+            previous_program_id != 0
+                ? static_cast<s32>(previous_program_id -
+                                   FileSys::GetBaseTitleID(previous_program_id))
+                : -1,
     };
 
     m_load_result = m_system.Load(EmulationSession::GetInstance().Window(), filepath, params);
@@ -547,9 +562,12 @@ Core::SystemResultStatus EmulationSession::InitializeEmulation(const std::string
         m_aux_renderer_ready = true;
         AttachAuxWindowLocked();
     }
+    m_system.RegisterApplicationChangedCallback(
+        [&](u64 changed_program_id) { RequestDiskShaderCacheReload(changed_program_id); });
 
     // Register an ExecuteProgram callback such that Core can execute a sub-program
     m_system.RegisterExecuteProgramCallback([&](std::size_t program_index_) {
+        m_next_program_id = m_system.GetApplicationProcessProgramID();
         m_next_program_index = program_index_;
         EmulationSession::GetInstance().HaltEmulation();
     });
@@ -560,6 +578,8 @@ Core::SystemResultStatus EmulationSession::InitializeEmulation(const std::string
 
 void EmulationSession::ShutdownEmulation() {
     std::scoped_lock lock(m_mutex);
+
+    m_pending_shader_cache_title.reset();
 
     if (m_next_program_index != -1) {
         ChangeProgram(m_next_program_index);
@@ -619,6 +639,7 @@ void EmulationSession::UnPauseEmulation() {
 void EmulationSession::HaltEmulation() {
     std::scoped_lock lock(m_mutex);
     m_is_running = false;
+    m_pending_shader_cache_title.reset();
     m_cv.notify_one();
 }
 
@@ -643,18 +664,64 @@ void EmulationSession::RunEmulation() {
     }
 
     while (true) {
+        std::optional<u64> reload_title;
         {
             [[maybe_unused]] std::unique_lock lock(m_mutex);
-            if (m_cv.wait_for(lock, std::chrono::milliseconds(800),
-                              [&]() { return !m_is_running; })) {
-                // Emulation halted.
-                break;
+            if (m_cv.wait_for(lock, std::chrono::milliseconds(800), [&]() {
+                    return !m_is_running || m_pending_shader_cache_title.has_value();
+                })) {
+                if (!m_is_running) {
+                    break;
+                }
+                reload_title = std::exchange(m_pending_shader_cache_title, std::nullopt);
             }
         }
+
+        if (reload_title.has_value())
+            ReloadDiskShaderCache(*reload_title);
     }
 
     // Reset current applet ID.
     m_applet_id = static_cast<int>(Service::AM::AppletId::Application);
+}
+
+void EmulationSession::RequestDiskShaderCacheReload(u64 program_id) {
+    // Loading a later session may notify through the previous callback while
+    // InitializeEmulation already holds m_mutex. Initial loading handles that title.
+    if (!m_is_running) {
+        return;
+    }
+    {
+        std::scoped_lock lock(m_mutex);
+        if (!m_is_running) {
+            return;
+        }
+        m_pending_shader_cache_title = program_id;
+    }
+    m_cv.notify_one();
+}
+
+void EmulationSession::ReloadDiskShaderCache(u64 program_id) {
+    if (!Settings::values.use_disk_shader_cache.GetValue())
+        return;
+
+    LOG_INFO(Frontend, "Reloading disk shader cache for {:016X}", program_id);
+
+    const bool was_paused = m_is_paused;
+
+    m_system.Pause();
+    m_system.GPU().WaitForIdle();
+    m_system.GPU().ObtainContext();
+
+    LoadDiskCacheProgress(VideoCore::LoadCallbackStage::Prepare, 0, 0);
+    m_system.Renderer().ReadRasterizer()->LoadDiskResources(program_id, std::stop_token{},
+                                                            LoadDiskCacheProgress);
+    LoadDiskCacheProgress(VideoCore::LoadCallbackStage::Complete, 0, 0);
+
+    m_system.GPU().ReleaseContext();
+
+    if (!was_paused)
+        m_system.Run();
 }
 
 Common::Android::SoftwareKeyboard::AndroidKeyboard* EmulationSession::SoftwareKeyboard() {
@@ -676,6 +743,7 @@ void EmulationSession::OnEmulationStarted() {
 }
 
 void EmulationSession::OnEmulationStopped(Core::SystemResultStatus result) {
+    LOG_INFO(Frontend, "Emulation stopped with status {}", static_cast<int>(result));
     JNIEnv* env = Common::Android::GetEnvForThread();
     env->CallStaticVoidMethod(Common::Android::GetNativeLibraryClass(),
                               Common::Android::GetOnEmulationStopped(), static_cast<jint>(result));
@@ -1006,7 +1074,7 @@ int Java_org_yuzu_yuzu_1emu_NativeLibrary_installFileToNand(JNIEnv* env, jobject
 jboolean Java_org_yuzu_yuzu_1emu_NativeLibrary_doesUpdateMatchProgram(JNIEnv* env, jobject jobj,
                                                                       jstring jprogramId,
                                                                       jstring jupdatePath) {
-    u64 program_id = EmulationSession::GetProgramId(env, jprogramId);
+    const u64 program_id = FileSys::GetBaseTitleID(EmulationSession::GetProgramId(env, jprogramId));
     std::string updatePath = Common::Android::GetJString(env, jupdatePath);
     std::shared_ptr<FileSys::NSP> nsp = std::make_shared<FileSys::NSP>(
         EmulationSession::GetInstance().System().GetFilesystem()->OpenFile(
@@ -1014,7 +1082,7 @@ jboolean Java_org_yuzu_yuzu_1emu_NativeLibrary_doesUpdateMatchProgram(JNIEnv* en
     for (const auto& item : nsp->GetNCAs()) {
         for (const auto& nca_details : item.second) {
             if (nca_details.second->GetName().ends_with(".cnmt.nca")) {
-                auto update_id = nca_details.second->GetTitleId() & ~0xFFFULL;
+                const auto update_id = FileSys::GetBaseTitleID(nca_details.second->GetTitleId());
                 if (update_id == program_id) {
                     return true;
                 }
@@ -1414,7 +1482,7 @@ VkPhysicalDeviceProperties GetVulkanDeviceProperties() {
     return physical_device.GetProperties();
 }
 
-bool GetVulkanMemoryModelSupport() {
+bool GetFrameGenerationSupport() {
     Common::DynamicLibrary library;
     if (!library.Open("libvulkan.so")) {
         return false;
@@ -1429,9 +1497,13 @@ bool GetVulkanMemoryModelSupport() {
 
     const Vulkan::vk::PhysicalDevice physical_device(physical_devices[0], dld);
 
+    VkPhysicalDeviceShaderFloat16Int8Features float16_int8{
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_FLOAT16_INT8_FEATURES,
+        .pNext = nullptr,
+    };
     VkPhysicalDeviceVulkanMemoryModelFeatures memory_model{
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_MEMORY_MODEL_FEATURES,
-        .pNext = nullptr,
+        .pNext = &float16_int8,
     };
     VkPhysicalDeviceFeatures2 features{
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
@@ -1439,7 +1511,7 @@ bool GetVulkanMemoryModelSupport() {
     };
     physical_device.GetFeatures2(features);
 
-    return memory_model.vulkanMemoryModel == VK_TRUE;
+    return memory_model.vulkanMemoryModel == VK_TRUE && float16_int8.shaderFloat16 == VK_TRUE;
 }
 } // namespace
 
@@ -1518,7 +1590,7 @@ jstring Java_org_yuzu_yuzu_1emu_NativeLibrary_getVulkanApiVersion(JNIEnv* env, j
 
 jboolean Java_org_yuzu_yuzu_1emu_NativeLibrary_supportsFrameGeneration(JNIEnv* env, jobject jobj) {
     try {
-        return static_cast<jboolean>(GetVulkanMemoryModelSupport());
+        return static_cast<jboolean>(GetFrameGenerationSupport());
     } catch (...) {
         return static_cast<jboolean>(false);
     }
@@ -1547,8 +1619,8 @@ void Java_org_yuzu_yuzu_1emu_NativeLibrary_refreshThreadPolicies(JNIEnv* env, jo
     Common::RefreshThreadPolicies();
 }
 
-jboolean Java_org_yuzu_yuzu_1emu_NativeLibrary_getDebugKnobAt(JNIEnv* env, jobject jobj, jint index) {
-    return static_cast<jboolean>(Settings::getDebugKnobAt(static_cast<u8>(index)));
+jboolean Java_org_yuzu_yuzu_1emu_NativeLibrary_GetDebugKnobAt(JNIEnv* env, jobject jobj, jint index) {
+    return static_cast<jboolean>(Settings::GetDebugKnobAt(static_cast<u8>(index)));
 }
 
 void Java_org_yuzu_yuzu_1emu_NativeLibrary_setTurboSpeedLimit(JNIEnv *env, jobject jobj, jboolean enabled) {
@@ -1987,6 +2059,15 @@ jint Java_org_yuzu_yuzu_1emu_NativeLibrary_loadAmiibo(JNIEnv* env, jobject jobj,
     const auto info =
         virtual_amiibo->LoadAmiibo(std::span<u8>(bytes.data(), bytes.size()));
     return static_cast<jint>(info);
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_org_yuzu_yuzu_1emu_NativeLibrary_initJvm(JNIEnv *env, jclass clazz) {
+    JavaVM *vm;
+    if (env->GetJavaVM(&vm) != JNI_OK)
+        return;
+
+    Common::Android::Initialize(vm, env);
 }
 
 JNIEXPORT void JNICALL

@@ -15,6 +15,7 @@
 #pragma once
 
 #include "core/file_sys/vfs/vfs_types.h"
+#include "common/common_types.h"
 
 namespace Core {
 class System;
@@ -23,10 +24,10 @@ class System;
 namespace Core::Mods {
 
 /// Root of the running title's unpatched program romfs, or null.
-FileSys::VirtualDir OpenBaseRomfs(Core::System& system);
+FileSys::VirtualDir OpenBaseRomfs(Core::System& system, u64 program_id);
 
 /// Root of the running title's add-on content data romfs, or null (no DLC, DLC disabled).
-FileSys::VirtualDir OpenAocRomfs(Core::System& system);
+FileSys::VirtualDir OpenAocRomfs(Core::System& system, u64 program_id);
 
 /// Drops both cached roots (and their open files); the next call reopens them.
 void ReleaseRomfsSources();

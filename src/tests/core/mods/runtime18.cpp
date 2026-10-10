@@ -6,13 +6,41 @@
 #include <map>
 #include <optional>
 #include <string>
+#include <thread>
 #include <catch2/catch_test_macros.hpp>
 
 #include "core/mods/dsmod_module_abi.h"
 #include "core/mods/mod_expr.h"
 #include "core/mods/mod_font_epoch.h"
+#include "core/mods/mod_process_guard.h"
 
 using namespace Core::Mods;
+
+TEST_CASE("DSMod process context cannot reactivate a stale companion", "[dsmod][process]") {
+    ProcessOwnerGuard guard;
+    REQUIRE(guard.Allow(true));
+    REQUIRE(guard.Allow(true));
+    REQUIRE_FALSE(guard.Allow(false)); // a different process or owner epoch
+    REQUIRE_FALSE(guard.Allow(true)); // original title/process returned; caches are still stale
+    REQUIRE_FALSE(guard.Allow(false));
+}
+
+TEST_CASE("DSMod missing process refuses before the first sample", "[dsmod][process]") {
+    ProcessOwnerGuard guard;
+    REQUIRE_FALSE(guard.Allow(false));
+    REQUIRE_FALSE(guard.Allow(true));
+}
+
+TEST_CASE("DSMod worker revocation is visible to action dispatch", "[dsmod][process]") {
+    ProcessOwnerGuard guard;
+    REQUIRE(guard.Allow(true));
+    std::thread worker{[&] { (void)guard.Allow(false); }};
+    worker.join();
+    REQUIRE_FALSE(guard.Allow(true));
+    std::thread later_decoder{[&] { (void)guard.Allow(true); }};
+    later_decoder.join();
+    REQUIRE_FALSE(guard.Allow(true));
+}
 
 TEST_CASE("DSMod font epoch: a module that never publishes it is never asked again",
           "[dsmod][runtime18][font]") {

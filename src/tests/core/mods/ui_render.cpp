@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Canvas and RenderPage edge cases: image blits at the edge of their source, and the renderer's
 // widget skips (dirty-rect pre-reject, occlusion under an opaque map).
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <memory>
@@ -270,4 +271,115 @@ TEST_CASE("DSMod map.style marker conventions default to Dread's", "[dsmod][ui]"
     REQUIRE(c.item_blink_period == 30);
     REQUIRE(c.player_blink_period == 2); // clamped: a ping-pong needs two ticks
     REQUIRE(c.PinReach() == 15);         // the core square reaches past both diamonds
+}
+
+TEST_CASE("DSMod map label overlap is opt-in and respects visible fine labels",
+          "[dsmod][ui][map-label-overlap]") {
+    constexpr u32 Red = 0xFFFF0000u, Green = 0xFF00FF00u;
+    Manifest manifest;
+    MapArea area;
+    area.max_x = area.max_y = 100.0f;
+    MapLabel major;
+    major.text = "888";
+    major.x = major.y = 50.0f;
+    major.text_scale = 1;
+    major.outline = 0;
+    major.color = Red;
+    major.group = "major";
+    MapLabel fine = major;
+    fine.text = "1";
+    fine.color = Green;
+    fine.group = "fine";
+    area.labels = {major, fine};
+    manifest.map_areas.emplace("a", area);
+    Widget widget;
+    widget.type = WidgetType::Map;
+    widget.area = "a";
+    widget.rect = {0, 0, 100, 100};
+    widget.area_label = false;
+    auto extras = std::make_shared<MapWidgetExtras>();
+    widget.map_extras = extras;
+    Page page;
+    page.widgets.push_back(widget);
+    StateSnapshot snapshot;
+    Canvas canvas;
+    canvas.Resize(100, 100);
+    auto backdrop = std::make_shared<const Image>(Solid(100, 100, 0xFF000000u));
+    const ImageProvider images = [backdrop](const std::string&) { return backdrop; };
+    auto count = [&](u32 color) {
+        return std::count(canvas.Pixels().begin(), canvas.Pixels().end(), color);
+    };
+    auto draw = [&] { REQUIRE(RenderPage(canvas, manifest, page, snapshot, images)); };
+    SECTION("default preserves both overlapping labels") {
+        REQUIRE_FALSE(extras->label_style.avoid_overlap);
+        draw();
+        REQUIRE(count(Red) > 0);
+        REQUIRE(count(Green) > 0);
+    }
+    extras->label_style.avoid_overlap = true;
+    SECTION("equal priority preserves first label") {
+        draw();
+        REQUIRE(count(Red) > 0);
+        REQUIRE(count(Green) == 0);
+    }
+    SECTION("disjoint labels both draw") {
+        manifest.map_areas.at("a").labels[1].x = 80.0f;
+        draw();
+        REQUIRE(count(Red) > 0);
+        REQUIRE(count(Green) > 0);
+    }
+    // Both groups are visible at zoom1, but the finer group has higher priority.
+    extras->groups["major"].min_zoom = 0.0f;
+    extras->groups["fine"].min_zoom = 1.0f;
+    SECTION("finer group wins even when it follows the major label") {
+        draw();
+        REQUIRE(count(Red) == 0);
+        REQUIRE(count(Green) > 0);
+    }
+    SECTION("hidden fine label does not suppress the major label") {
+        manifest.map_areas.at("a").labels[1].opacity = 0.0f;
+        draw();
+        REQUIRE(count(Red) > 0);
+        REQUIRE(count(Green) == 0);
+    }
+    SECTION("fine group with a closed gate does not reserve space") {
+        extras->groups["fine"].show.point = "found";
+        snapshot.ints["found"] = 0;
+        draw();
+        REQUIRE(count(Red) > 0);
+        REQUIRE(count(Green) == 0);
+    }
+    SECTION("opaque outline remains visible with transparent text") {
+        auto& label = manifest.map_areas.at("a").labels[1];
+        label.color = 0;
+        label.outline_color = Green;
+        label.outline = 1;
+        draw();
+        REQUIRE(count(Red) == 0);
+        REQUIRE(count(Green) > 0);
+    }
+    SECTION("fine group below minimum zoom does not reserve space") {
+        extras->groups["fine"].min_zoom = 2.0f;
+        draw();
+        REQUIRE(count(Red) > 0);
+        REQUIRE(count(Green) == 0);
+    }
+    SECTION("four pixel breathing space rejects neighbouring labels") {
+        manifest.map_areas.at("a").labels[1].x = 59.0f;
+        extras->groups["fine"].min_zoom = 0.0f;
+        draw();
+        REQUIRE(count(Red) > 0);
+        REQUIRE(count(Green) == 0);
+    }
+    SECTION("empty fine label does not suppress the major label") {
+        manifest.map_areas.at("a").labels[1].text.clear();
+        draw();
+        REQUIRE(count(Red) > 0);
+    }
+    SECTION("offscreen fine label does not suppress the major label") {
+        manifest.map_areas.at("a").labels[1].x = 1000.0f;
+        draw();
+        REQUIRE(count(Red) > 0);
+        REQUIRE(count(Green) == 0);
+    }
 }

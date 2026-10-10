@@ -116,6 +116,7 @@ u32 HardwareComposer::ComposeLocked(f32* out_speed_scale, Display& display,
                 .crop_rect = item.crop,
                 .acquire_fence = item.fence,
                 .layer_id = layer->layer_id,
+                .layer_stack_mask = layer->layer_stack_mask,
             });
         }
 

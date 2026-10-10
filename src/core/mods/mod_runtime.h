@@ -55,6 +55,7 @@
 #include <nlohmann/json_fwd.hpp>
 
 #include "common/common_types.h"
+#include "core/hle/kernel/k_auto_object.h"
 #include "core/hle/kernel/svc_types.h"
 #include "core/mods/dsmod_module_abi.h"
 #include "core/mods/dsmod_module_extensions.h"
@@ -63,6 +64,7 @@
 #include "core/mods/mod_font_epoch.h"
 #include "core/mods/mod_input_hold.h"
 #include "core/mods/mod_input_swipe.h"
+#include "core/mods/mod_process_guard.h"
 #include "core/mods/mod_module.h"
 #include "core/mods/mod_nav.h"
 #include "core/mods/mod_persist.h"
@@ -78,6 +80,11 @@ class ArmInterface;
 
 namespace Kernel {
 class KThread;
+class KProcess;
+}
+
+namespace Core::Memory {
+class Memory;
 }
 
 namespace Core::Timing {
@@ -92,6 +99,11 @@ namespace Core::Mods {
 [[nodiscard]] bool IsUsableDualScreenManifest(const nlohmann::json& json) noexcept;
 /// The runtime's manifest parser for tools (offline checks, benchmarks); false on a parse error.
 [[nodiscard]] bool ParseDualScreenManifest(const nlohmann::json& json, Manifest& out) noexcept;
+/// Prepare a reload without mutating the current manifest or output on invalid metadata.
+/// Preserves session-owned fields and rejects unsupported formats and unusable pages.
+[[nodiscard]] bool PrepareDualScreenManifestReload(const nlohmann::json& json,
+                                                  const Manifest& current,
+                                                  Manifest& out) noexcept;
 /// The manifest's per-area map parser on its own: one "map.areas" JSON object -> MapArea entries
 /// (added with emplace). Used for inline areas and for a module's "map.areas_src" data. False when
 /// `areas` is not an object or a value has the wrong type.
@@ -154,7 +166,11 @@ namespace Core::Mods {
 ///          text_center_h; game-art scroll bar_src / bar_track_src; world marker size_max.
 ///          Also fixes null label text, decimal coordinates, negated need gates and src_format-only
 ///          images.
-inline constexpr u32 DualScreenRuntimeVersion = 18;
+///   19     format-2 guest helpers (separate RX code, main/code relocations and mailbox epoch),
+///          Ready/page/auxiliary helper lifecycle; exact bounded package metadata and transactional
+///          reload validation. Metadata is 4 MiB, plans 1 MiB, native modules 64 MiB; ABI 1 stays.
+///          This boundary does not implement a controller binding router or guest viewport API.
+inline constexpr u32 DualScreenRuntimeVersion = 19;
 
 /// Regions a redraw-worker job painted into its canvas but did not publish because it went stale
 /// (runtime 13). Before runtime 13 a job already running when the next was dispatched finished
@@ -293,6 +309,13 @@ public:
     }
 
 private:
+    /// Pin every guest read/write to the original process, including off-thread decoders.
+    /// The retained reference outlives all workers; a switch never redirects a queued operation
+    /// into the new application's address space.
+    [[nodiscard]] Kernel::KProcess* OwnerProcess() const;
+    [[nodiscard]] Core::Memory::Memory& OwnerMemory() const;
+    [[nodiscard]] bool IsOwnerContext() const;
+    void RefuseChangedProcess(); // timing thread only; shows a built-in, action-free notice
     void Tick(); // mod_runtime.cpp
     /// EDEN_DSMOD_AUTO_MGRFIND tail of Tick(), split into mod_re_tools.cpp.
     void TickAutoMgrFindImpl();                            // mod_re_tools.cpp
@@ -1479,6 +1502,14 @@ private:
 
     System& system;
     Core::Timing::CoreTiming& core_timing;
+    // Before every worker/cache member: released only after their destructors have joined.
+    u64 owner_epoch{};
+    Kernel::KScopedAutoObject<Kernel::KProcess> owner_process;
+    std::atomic<Kernel::KProcess*> owner_pointer;
+    Kernel::KScopedAutoObject<Kernel::KThread> borrowed_thread;
+    ProcessOwnerGuard owner_guard;
+    bool process_workers_stopped{false};
+    bool process_notice_published{false};
     Manifest manifest;
     std::atomic<bool> idle_page{false}; ///< MarkIdlePage / IsIdlePage
     std::shared_ptr<Core::Timing::EventType> event;

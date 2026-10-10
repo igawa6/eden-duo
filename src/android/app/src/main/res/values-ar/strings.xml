@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources xmlns:tools="http://schemas.android.com/tools" tools:ignore="MissingTranslation">
 
-    <string name="app_disclaimer">سيشغل هذا البرنامج ألعاب جهاز Nintendo Switch. لا يتضمن البرنامج أي ألعاب أو مفاتيح.<br /><br />قبل أن تبدأ، يرجى تحديد موقع ملف <![CDATA[<b> prod.keys </b>]]>  على وحدة تخزين جهازك.<br /><br /><![CDATA[<a href=\"https://yuzu-mirror.github.io/help/quickstart\">اعرف المزيد</a>]]></string>
+    <string name="app_disclaimer">سيعمل هذا البرنامج على تشغيل ألعاب منصة ألعاب «نينتندو سويتش». لا يتضمن البرنامج أي ألعاب أو مفاتيح تفعيل.<br /><br /> قبل البدء، يرجى تحديد موقع ملف <![CDATA[<b> prod.keys</b> ]]> في مساحة التخزين بجهازك.<br /><br /><![CDATA[<a href=\"https://git.eden-emu.dev/eden-emu/eden/src/branch/master/docs/user/QuickStart.md\">مزيد من المعلومات</a>]]></string>
     <string name="notice_notification_channel_name">الإشعارات والأخطاء</string>
     <string name="notice_notification_channel_description">عرض الإشعارات عند حدوث خطأ ما.</string>
     <string name="notification_permission_not_granted">لم يتم منح إذن الإشعار!</string>
@@ -28,7 +28,7 @@
     <string name="input_overlay_behavior">السلوك</string>
     <string name="overlay_auto_hide">إخفاء الطبقة تلقائيًا</string>
     <string name="overlay_auto_hide_description">إخفاء طبقة ذراع التحكم باللمس تلقائيًا بعد مرور الوقت المحدد من عدم النشاط.</string>
-    <string name="enable_input_overlay_auto_hide">تمكين إخفاء الطبقة تلقائيًا</string>
+    <string name="enable_input_overlay_auto_hide">تفعيل إخفاء الطبقة تلقائيًا</string>
     <string name="hide_overlay_on_controller_input">إخفاء الطبقة عند إدخال ذراع التحكم</string>
     <string name="hide_overlay_on_controller_input_description">إخفاء تلقائي لطبقة عناصر التحكم باللمس عند استخدام ذراع تحكم فعلية. تظهر الطبقة مرة أخرى عند فصل ذراع التحكم.</string>
     <string name="invert_confirm_back_controller_buttons">عكس أزرار التأكيد/الرجوع في وحدة التحكم</string>
@@ -51,7 +51,7 @@
     <string name="stats_overlay_customization">التخصيص</string>
     <string name="stats_overlay_items">الرؤية</string>
     <string name="stats_overlay_options">طبقة الأداء</string>
-    <string name="enable_stats_overlay_">تمكين طبقة إحصائيات الأداء</string>
+    <string name="enable_stats_overlay_">تفعيل طبقة إحصائيات الأداء</string>
     <string name="stats_overlay_options_description">ضبط المعلومات التي يتم عرضها في طبقة إحصائيات الأداء</string>
     <string name="show_fps">عرض معدل الإطارات</string>
     <string name="show_fps_description">عرض معدل الإطارات الحالي</string>
@@ -81,7 +81,7 @@
 
     <!-- Device Overlay settings -->
     <string name="show_soc_overlay">عرض طبقة معلومات الجهاز</string>
-    <string name="enable_soc_overlay">تمكين طبقة الجهاز</string>
+    <string name="enable_soc_overlay">تفعيل طبقة الجهاز</string>
     <string name="soc_overlay_options">طبقة الجهاز</string>
     <string name="soc_overlay_options_description">ضبط المعلومات التي يتم عرضها في طبقة الجهاز</string>
 
@@ -98,15 +98,15 @@
 
     <string name="use_sync_core">مزامنة سرعة النواة</string>
     <string name="use_sync_core_description">قم بمزامنة سرعة النواة مع النسبة المئوية للسرعة القصوى لتحسين الأداء دون تغيير السرعة الفعلية للعبة.</string>
-    <string name="cpuopt_unsafe_host_mmu">تمكين محاكاة MMU المضيف</string>
-    <string name="cpuopt_unsafe_host_mmu_description">يعمل هذا التحسين على تسريع وصول الذاكرة بواسطة البرنامج الضيف. يؤدي تمكينه إلى إجراء عمليات قراءة/كتابة ذاكرة الضيف مباشرة في الذاكرة والاستفادة من MMU المضيف. يؤدي تعطيل هذا إلى إجبار جميع عمليات الوصول إلى الذاكرة على استخدام محاكاة MMU البرمجية.</string>
+    <string name="cpuopt_unsafe_host_mmu">تفعيل محاكاة MMU المضيف</string>
+    <string name="cpuopt_unsafe_host_mmu_description">يعمل هذا التحسين على تسريع وصول الذاكرة بواسطة البرنامج الضيف. يؤدي تفعيله إلى إجراء عمليات قراءة/كتابة ذاكرة الضيف مباشرة في الذاكرة والاستفادة من MMU المضيف. يؤدي تعطيل هذا إلى إجبار جميع عمليات الوصول إلى الذاكرة على استخدام محاكاة MMU البرمجية.</string>
     <string name="debug_knobs">مقابض تصحيح الأخطاء</string>
     <string name="debug_knobs_description">للإستخدام في التطوير فقط.</string>
     <string name="debug_knobs_hint">0 إلى 65535</string>
 
     <!-- NVDEC Emulation -->
     <string name="nvdec_emulation">محاكاة NVDEC</string>
-    <string name="nvdec_emulation_description">حدد كيفية التعامل مع فك تشفير الفيديو (NVDEC) خلال المشاهد التمهيدية والمقدمة.</string>
+    <string name="nvdec_emulation_description">قم بتغيير المعالج المركزي في حالة حدوث عطل أثناء المشاهد السينمائية.</string>
     <string name="nvdec_emulation_none">لا شيء</string>
 
     <!-- Optimize SPIRV output -->
@@ -291,8 +291,27 @@
     <string name="gpu_driver_fetcher">أداة جلب برامج تشغيل وحدة المعالجة الرسومية</string>
     <string name="gpu_driver_manager">إدارة برامج تشغيل وحدة معالجة الرسومات</string>
     <string name="install_gpu_driver_description">تثبيت برامج تشغيل بديلة لأداء أو دقة أفضل</string>
+    <string name="post_processing">تأثيرات ما بعد المعالجة</string>
+    <string name="post_processing_description">تأثيرات ReShade FX التي يتم تطبيقها بعد عملية العرض</string>
+    <string name="post_processing_per_game_description">ضبط تسلسل التأثيرات لهذه اللعبة</string>
+    <string name="post_processing_add">إضافة تأثير</string>
+    <string name="post_processing_remove">إزالة</string>
+    <string name="post_processing_open_list">فتح القائمة</string>
+    <string name="post_processing_close_list">إغلاق القائمة</string>
+    <string name="post_processing_remove_all">إزالة التأثيرات</string>
+    <string name="post_processing_preset_locked">الإعداد مسبقًا نشط. قم بتعديله في «تأثيرات ما بعد المعالجة» قبل بدء اللعبة.</string>
+    <string name="post_processing_preset_modified">تم تغيير القيم عن الإعداد الأصلي.</string>
+    <string name="post_processing_presets">الإعدادات المسبقة</string>
+    <string name="post_processing_preset_new">إعداد مسبق جديد</string>
+    <string name="post_processing_preset_new_description">يحفظ التأثيرات التي قمت بتحميلها، مع قيمها الحالية، كإعداد مسبق يمكنك اختياره لاحقًا.</string>
+    <string name="post_processing_preset_name_invalid">قم بتسمية الإعداد المسبق باسم لا يحتوي على علامة يساوي.</string>
+    <string name="post_processing_preset_none">لا يوجد إعداد مسبق</string>
+    <string name="post_processing_preset_delete">حذف الإعداد المسبق</string>
+    <string name="post_processing_preset_reset">إعادة تعيين القيم المحددة مسبقًا</string>
+    <string name="post_processing_reset">إعادة التعيين إلى الإعدادات الافتراضية</string>
+    <string name="post_processing_empty">لم يتم العثور على أي ملفات. ضع ملفات .fx في هذا المجلد:</string>
     <string name="frame_gen">توليد الإطار</string>
-    <string name="frame_gen_per_game_description">تكوين إعدادات إنشاء الإطارات لهذه اللعبة</string>
+    <string name="frame_gen_per_game_description">ضبط إعدادات إنشاء الإطارات لهذه اللعبة</string>
     <string name="frame_gen_description">قم بإدراج الإطارات المُستكملة بين الإطارات المُعالجة باستخدام تقنية التحجيم بدون فقدان الجودة. يُفرض هذا الخيار عرض الإطارات وفقًا لترتيب FIFO عند تفعيله.</string>
     <string name="frame_gen_multiplier">مضاعف الإطارات</string>
     <string name="frame_gen_multiplier_description">عدد الإطارات المطلوب عرضها لكل إطار مُعالَج. تتطلب القيم الأعلى وقت معالجة رسوميات أكبر. طلب عدد إطارات يفوق قدرة الشاشة على عرضه سيؤدي إلى إبطاء المحاكاة.</string>
@@ -300,13 +319,59 @@
     <string name="frame_gen_multiplier_3x">3x</string>
     <string name="frame_gen_multiplier_4x">4x</string>
     <string name="frame_gen_target_rate">معدل الإطارات المستهدف</string>
+    <string name="frame_gen_target_rate_description">اختر المعدل الذي يمكن لشاشتك عرضه فعليًّا. عندئذٍ يرتفع المضاعف أو ينخفض تلقائيًّا للحفاظ على هذا المعدل، ويقوم بالتراجع عن أي خطوة تؤدي إلى إبطاء سير اللعبة نفسها.</string>
     <string name="frame_gen_target_rate_off">استخدم مضاعفًا ثابتًا</string>
     <string name="frame_gen_target_rate_60">60 إطارًا في الثانية</string>
     <string name="frame_gen_target_rate_90">90 إطارًا في الثانية</string>
     <string name="frame_gen_target_rate_120">120 إطارًا في الثانية</string>
-    <string name="frame_gen_target_rate_144">144 إطارًا في الثانية</string>
-    <string name="frame_gen_target_rate_165">165 إطارًا في الثانية</string>
+    <string name="frame_gen_on">تشغيل</string>
+    <string name="frame_gen_off">إيقاف</string>
+    <string name="frame_gen_fixed">مستقر</string>
+    <string name="frame_gen_flow_auto">تلقائي</string>
+    <string name="frame_gen_quick_description">قم بتشغيل أو إيقاف توليد الإطارات واختر مضاعف الإطارات.</string>
+    <string name="frame_gen_target_rate_quick_description">توليد إطارات بمعدل إطارات مستهدف. ويتم ضبط المضاعف تلقائيًا.</string>
+    <string name="frame_gen_flow_scale_quick_description">الدقة المستخدمة لتقدير الحركة بين الإطارات. تقلل القيم المنخفضة من الوقت الذي تستهلكه وحدة معالجة الرسومات.</string>
     <string name="frame_gen_queue_target">هدف قائمة انتظار الإطارات</string>
+    <string name="frame_gen_queue_target_description">كم عدد الإطارات المكتملة التي قد تنتظر قبل عرضها؟ تعمل قوائم الانتظار الأكبر حجمًا على امتصاص الارتفاعات المفاجئة في حمل وحدة معالجة الرسومات على حساب زمن انتقال الإدخال.</string>
+    <string name="frame_gen_queue_target_0">أقل زمن انتقال (بدون تخزين مؤقت)</string>
+    <string name="frame_gen_queue_target_1">متوازن (1 إطار)</string>
+    <string name="frame_gen_queue_target_2">الأكثر سلاسة (2 إطارات)</string>
+    <string name="frame_gen_flow_scale_auto">تكييف تقدير الحركة مع اللعبة</string>
+    <string name="frame_gen_flow_scale_auto_description">قم بتقدير الحركة بناءً على الدقة التي تعرضها اللعبة فعليًّا، بدلاً من الإخراج الذي تم رفع دقته. ولا يؤثر ذلك على الدقة بأي شكل، لأن رفع الدقة لا يضيف أي تفاصيل تتعلق بالحركة.</string>
+    <string name="frame_gen_flow_scale">دقة تقدير الحركة</string>
+    <string name="frame_gen_flow_scale_description">دقة مسار التدفق البصري، كجزء من الناتج. ويُعد خفض هذه القيمة أرخص طريقة لاستعادة الأداء.</string>
+    <string name="frame_gen_unsupported">توليد الإطار غير متاح</string>
+    <string name="frame_gen_unsupported_description">يفتقر برنامج تشغيل وحدة معالجة الرسومات هذا إلى نموذج ذاكرة Vulkan أو دعم الدقة النصفية (float16) التي تتطلبها برامج التظليل الخاصة بـ «Lossless Scaling».</string>
+    <string name="lossless_scaling_setup_description">اختياري. قم بتوفير ملف Lossless.dll الخاص بك لتفعيل إنشاء الإطارات لاحقًا</string>
+    <string name="lossless_scaling_install">تثبيت ملف Lossless.dll</string>
+    <string name="lossless_scaling_install_description">يتطلب إنشاء الإطارات أن تكون لديك نسخة قانونية خاصة بك من ملف Lossless.dll المأخوذ من برنامج Lossless Scaling</string>
+    <string name="lossless_scaling_replace_description">اختر نسخة أخرى من ملف Lossless.dll</string>
+    <string name="frame_generation_support">توليد الإطارات</string>
+    <string name="frame_generation_supported">مدعوم</string>
+    <string name="frame_generation_unsupported">غير مدعوم (لا يتوفر نموذج ذاكرة Vulkan أو float16)</string>
+    <string name="lossless_scaling">Lossless Scaling</string>
+    <string name="lossless_scaling_description">قم بتوفير نسختك الخاصة من ملف Lossless.dll لتفعيل توليد الإطارات</string>
+    <string name="lossless_scaling_installed">مثبت</string>
+    <string name="lossless_scaling_not_installed">غير مثبت</string>
+    <string name="lossless_scaling_replace">استبدل</string>
+    <string name="lossless_scaling_remove">إزالة</string>
+    <string name="lossless_scaling_remove_description">احذف ملف Lossless.dll المثبت ووحدات التظليل المعدة له</string>
+    <string name="lossless_scaling_remove_confirmation">سيتوقف توليد الإطارات عن العمل إلى أن تقوم بتثبيت ملف Lossless.dll مرة أخرى. ولن يتأثر ملفك الأصلي بذلك.</string>
+    <string name="lossless_scaling_missing">ملف Lossless.dll غير مثبت</string>
+    <string name="lossless_scaling_missing_description">قم بتثبيته من الإعدادات › Lossless Scaling لاستخدام ميزة توليد الإطارات.</string>
+    <string name="lossless_scaling_locked">أغلق اللعبة أولاً</string>
+    <string name="lossless_scaling_locked_description">لا يمكن تعديل ملف Lossless.dll أثناء تشغيل اللعبة.</string>
+    <string name="lossless_scaling_remove_unavailable">لا يوجد شيء يجب إزالته</string>
+    <string name="lossless_scaling_remove_unavailable_description">لم يتم تثبيت ملف Lossless.dll بعد.</string>
+    <string name="lossless_scaling_installing">جاري التحضير لإنشاء مظلّلات الإطارات…</string>
+    <string name="lossless_scaling_install_success">تم تثبيت ملف Lossless.dll بنجاح</string>
+    <string name="lossless_scaling_install_failed">تعذر تثبيت ملف Lossless.dll</string>
+    <string name="error_lossless_copy_failed">تعذر نسخ الملف المحدد.</string>
+    <string name="error_lossless_unreadable">تعذر قراءة الملف المحدد.</string>
+    <string name="error_lossless_not_pe">الملف المحدد ليس مكتبة Windows. حدد ملف Lossless.dll من تثبيت برنامج Lossless Scaling.</string>
+    <string name="error_lossless_missing_shaders">لا تحتوي هذه النسخة من ملف Lossless.dll على برامج التظليل الخاصة بتوليد الإطارات. قم بتحديث ميزة «Lossless Scaling» وحاول مرة أخرى.</string>
+    <string name="error_lossless_translation_failed">تعذر ترجمة برامج التظليل الخاصة بتوليد الإطارات. هذا الإصدار من «Lossless Scaling» غير مدعوم حتى الآن.</string>
+    <string name="error_lossless_cache_failed">تعذر كتابة برامج التظليل المترجمة إلى وحدة التخزين. تأكد من توفر مساحة خالية.</string>
     <string name="advanced_settings">الإعدادات المتقدمة</string>
     <string name="settings_description">ضبط إعدادات المحاكي</string>
     <string name="search_recently_played">تم تشغيلها مؤخرًا</string>
@@ -437,9 +502,9 @@
     <string name="frame_limit_slider">نسبة الحد الأقصى للسرعة</string>
     <string name="frame_limit_slider_description">يحدد النسبة المئوية للحد من سرعة المحاكاة. %100 هي السرعة الطبيعية. القيم الأعلى أو الأقل ستزيد أو تقلل من الحد الأقصى للسرعة.</string>
     <string name="turbo_speed_limit">سرعة تيربو</string>
-    <string name="turbo_speed_limit_description">عند تمكين وضع التيربو، سيتم تشغيل المحاكاة بهذه السرعة.</string>
+    <string name="turbo_speed_limit_description">عند تفعيل وضع التيربو، سيتم تشغيل المحاكاة بهذه السرعة.</string>
     <string name="slow_speed_limit">سرعة بطيئة</string>
-    <string name="slow_speed_limit_description">عند تمكين الوضع البطيء، سيتم تشغيل المحاكاة بهذه السرعة.</string>
+    <string name="slow_speed_limit_description">عند تفعيل الوضع البطيء، سيتم تشغيل المحاكاة بهذه السرعة.</string>
     <string name="cpu_backend">خلفية وحدة المعالجة المركزية</string>
     <string name="cpu_accuracy">دقة وحدة المعالجة المركزية</string>
     <string name="value_with_units">%1$s%2$s</string>
@@ -509,14 +574,10 @@
     <string name="renderer_force_max_clock_description">يجبر وحدة معالجة الرسومات على العمل بأقصى سرعة ممكنة (سيظل يتم تطبيق القيود الحرارية).</string>
     <string name="renderer_asynchronous_gpu_emulation">محاكاة غير متزامنة لوحدة معالجة الرسومات</string>
     <string name="renderer_asynchronous_gpu_emulation_description">يمكن لهذه الحيلة أن تزيد الأداء عن طريق تشغيل محاكاة وحدة معالجة الرسومات بشكل غير متزامن على حساب مشاكل الرسومات وزيادة معدلات الأعطال بسبب العمليات المتعلقة بالتوقيت.</string>
-    <string name="renderer_async_presentation">عرض غير متزامن</string>
-    <string name="renderer_async_presentation_description">يمكن لهذه الحيلة أن تزيد من الأداء عن طريق نقل عملية العرض إلى خيط معالجة منفصل على حساب مشاكل الرسوميات.</string>
     <string name="renderer_reactive_flushing">استخدم التنظيف التفاعلي</string>
     <string name="renderer_reactive_flushing_description">يحسن دقة العرض في بعض الألعاب على حساب الأداء.</string>
-    <string name="enable_buffer_history">تمكين سجل التخزين المؤقت</string>
+    <string name="enable_buffer_history">تفعيل سجل التخزين المؤقت</string>
     <string name="enable_buffer_history_description">يُتيح هذا الخيار الوصول إلى حالات التخزين المؤقت السابقة. وقد يُحسّن جودة العرض وثبات الأداء في بعض الألعاب.</string>
-    <string name="enable_gpu_buffer_readback">تفعيل قراءة مخزن وحدة معالجة الرسومات</string>
-    <string name="enable_gpu_buffer_readback_description">يحافظ هذا النظام على بيانات المخزن المؤقت المُعدّلة بواسطة وحدة معالجة الرسومات عن طريق قراءتها مرة أخرى قبل التحميل. تتطلب بعض الألعاب ذلك لعرض بعض التأثيرات بشكل صحيح. قد يُسبب ذلك مشاكل إذا لم يتمكن الجهاز من التعامل مع عبء العمل الإضافي.</string>
     <string name="use_optimized_vertex_buffers">مخازن الرؤوس المُحسّنة</string>
     <string name="use_optimized_vertex_buffers_description">يُتيح ربطًا مُحسَّنًا لمخازن الرؤوس لتحسين الأداء. يتطلب برامج تشغيل Mesa 26.0+ Turnip/ برامج تشغيل QCOM. قد يتعطل على برامج تشغيل Turnip القديمة (25.3 وما دون).</string>
 
@@ -553,7 +614,7 @@
     <string name="dyna_state_description">يتحكم هذا الخيار في عدد الميزات التي يمكن استخدامها في ExtendedDynamicState (EDS). كلما زادت القيمة، قلّ عدد عمليات تجميع خط الأنابيب بناءً على الحالة الديناميكية التي يدعمها برنامج التشغيل.</string>
     <string name="disabled">معطل</string>
     <string name="vertex_input_dynamic_state">حالة ديناميكية لإدخال الرأس</string>
-    <string name="vertex_input_dynamic_state_description">يتيح تمكين هذه الميزة معالجة أكثر مرونة لمدخلات الرؤوس، مما قد يقلل من وقت تجميع خط الأنابيب في vertex/buffer.</string>
+    <string name="vertex_input_dynamic_state_description">يتيح تفعيل هذه الميزة معالجة أكثر مرونة لمدخلات الرؤوس، مما قد يقلل من وقت تجميع خط الأنابيب في vertex/buffer.</string>
     <string name="sample_shading_fraction">تظليل العينة</string>
     <string name="sample_shading_fraction_description">يسمح هذا الخيار بتنفيذ مُظلل الأجزاء لكل عينة في جزء متعدد العينات بدلاً من تنفيذه مرة واحدة لكل جزء. يُحسّن هذا من جودة الرسومات على حساب بعض الأداء.</string>
 
@@ -585,6 +646,10 @@
     <string name="log">السجلات</string>
     <string name="flush_by_line">تفريغ سجلات التصحيح حسب السطر</string>
     <string name="flush_by_line_description">يفرغ سجلات التصحيح عند كتابة كل سطر، مما يجعل التصحيح أسهل في حالات التوقف أو التجميد.</string>
+    <string name="extended_logging">تفعيل التسجيل الموسع</string>
+    <string name="extended_logging_description">يزيد الحد الأقصى لحجم ملف السجل من 100 ميجابايت إلى 1 جيجابايت.</string>
+    <string name="log_filter">مرشح السجلات</string>
+    <string name="log_filter_description">يتحكم في فئات سجلات Eden. مثال: *:Info Service.LM:Debug</string>
 
     <!-- GPU Logging strings -->
     <string name="gpu_logging_header">تسجيل وحدة معالجة الرسومات</string>
@@ -661,10 +726,10 @@
     <string name="gamecube_controller">ذراع تحكم GameCube</string>
     <string name="invert_axis">عكس المحور</string>
     <string name="invert_button">عكس الزر</string>
-    <string name="toggle_button">زر تشغيل/إيقاف</string>
+    <string name="toggle_button">زر تفعيل/تعطيل</string>
     <string name="turbo_button">زر التوربو</string>
     <string name="set_threshold">تعيين الحد الفاصل</string>
-    <string name="toggle_axis">تشغيل/إيقاف المحور</string>
+    <string name="toggle_axis">تفعيل/تعطيل المحور</string>
     <string name="connected">متصل</string>
     <string name="use_system_vibrator">استخدم هزاز النظام</string>
     <string name="input_overlay">طبقة الإدخال</string>
@@ -758,9 +823,9 @@
     <string name="preferences_system">النظام</string>
     <string name="preferences_system_description">وضع الإرساء، المنطقة، اللغة</string>
     <string name="preferences_graphics">الرسومات</string>
-    <string name="preferences_graphics_description">مستوى الدقة، الدقة، ذاكرة التخزين المؤقتة للتظليل</string>
+    <string name="preferences_graphics_description">مستوى دقة المحاكاة، الدقة، ذاكرة التخزين المؤقتة للتظليل</string>
     <string name="quick_settings">الإعدادات السريعة</string>
-    <string name="enable_quick_settings">تمكين الإعدادات السريعة</string>
+    <string name="enable_quick_settings">تفعيل الإعدادات السريعة</string>
     <string name="enable_quick_settings_description">السماح بالوصول إلى قائمة الإعدادات السريعة عن طريق التمرير و زر القائمة</string>
     <string name="preferences_audio">الصوت</string>
     <string name="preferences_audio_description">محرك الإخراج، مستوى الصوت</string>
@@ -803,7 +868,7 @@
     <string name="version">الإصدار</string>
     <string name="copy_details">نسخ التفاصيل</string>
     <string name="add_ons">الإضافات</string>
-    <string name="add_ons_description">التعديلات، التحديثات، المحتوى القابل للتنزيل</string>
+    <string name="add_ons_description">تفعيل/تعطيل التعديلات، التحديثات، المحتوى القابل للتنزيل</string>
     <string name="playtime">زمن اللعب:</string>
     <string name="reset_playtime">مسح زمن اللعب</string>
     <string name="reset_playtime_description">إعادة تعيين زمن اللعب للعبة الحالية إلى 0 ثانية</string>
@@ -869,7 +934,7 @@
     <string name="loader_error_file_not_found">ملف ROM غير موجود</string>
 
     <string name="loader_requires_firmware">اللعبة تتطلب الفيرموير</string>
-    <string name="loader_requires_firmware_description"><![CDATA[اللعبة التي تحاول تشغيلها تتطلب الفيرموير للتمهيد أو لتجاوز القائمة الافتتاحية. يرجى <a href=\"https://yuzu-mirror.github.io/help/quickstart\">نسخ وتثبيت الفيرموير</a>، أو اضغط \"موافق\" للمتابعة على أي حال.]]></string>
+    <string name="loader_requires_firmware_description"><![CDATA[قد تتطلب هذه اللعبة برنامجاً ثابتاً لتعمل بشكل صحيح، ولم يتم تثبيت أي منها لديك. يرجى تثبيت البرنامج الثابت قبل التشغيل، أو الضغط على \"موافق\" للتشغيل على أية حال.]]></string>
 
     <!-- Intent Launch strings -->
     <string name="searching_for_game">جارٍ البحث عن اللعبة...</string>
@@ -908,13 +973,13 @@
     <!-- Emulation Menu -->
     <string name="emulation_exit">خروج من المحاكاة</string>
     <string name="emulation_done">إنهاء</string>
-    <string name="emulation_toggle_controls">تشغيل/إيقاف أزرار التحكم</string>
+    <string name="emulation_toggle_controls">تفعيل/تعطيل أزرار التحكم</string>
     <string name="emulation_rel_stick_center">مركز العصا النسبي</string>
     <string name="emulation_dpad_slide">انزلاق الأسهم</string>
     <string name="emulation_haptics">الاهتزازات الديناميكية</string>
     <string name="emulation_show_overlay">عرض ذراع التحكم</string>
     <string name="emulation_hide_overlay">إخفاء ذراع التحكم</string>
-    <string name="emulation_toggle_all">تشغيل/إيقاف الكل</string>
+    <string name="emulation_toggle_all">تفعيل/تعطيل الكل</string>
     <string name="emulation_control_adjust">ضبط الطبقة</string>
     <string name="emulation_control_scale">الحجم</string>
     <string name="emulation_control_opacity">الشفافية</string>
@@ -1030,7 +1095,6 @@
     <string name="gpu_fence_behavior_immediate">فوري</string>
     <string name="gpu_fence_behavior_balanced">متوازن</string>
     <string name="gpu_fence_behavior_accurate">دقيق</string>
-    <string name="gpu_fence_behavior_strict">صارم</string>
 
     <string name="vram_usage_conservative">محافظ</string>
     <string name="vram_usage_aggressive">عدواني</string>
@@ -1079,7 +1143,7 @@
     <string name="freedreno_info_title">حول إعدادات Freedreno</string>
     <string name="freedreno_info_description">قم بإعداد خيارات برنامج تشغيل Freedreno/Turnip لوحدة معالجة الرسومات لأغراض التصحيح، والتحليل، وتحسين الأداء. يتم حفظ التغييرات تلقائيًا. راجع https://docs.mesa3d.org/drivers/freedreno.html للحصول على الوثائق التفصيلية.</string>
     <string name="freedreno_per_game_title">إعدادات Freedreno</string>
-    <string name="freedreno_per_game_description">قم بضبط إعدادات برنامج تشغيل وحدة معالجة الرسومات لهذه اللعبة</string>
+    <string name="freedreno_per_game_description">ضبط إعدادات برنامج تشغيل وحدة معالجة الرسومات لهذه اللعبة</string>
     <string name="freedreno_per_game_saved">تم حفظ إعدادات Freedreno</string>
 
     <!-- Gamepad Buttons -->
@@ -1106,7 +1170,6 @@
     <string name="theme_mode_follow_system">اتبع النظام</string>
     <string name="theme_mode_light">فاتح</string>
     <string name="theme_mode_dark">داكن</string>
-
 
     <!-- Black backgrounds theme -->
     <string name="use_black_backgrounds">خلفيات سوداء</string>
@@ -1158,8 +1221,8 @@
     <string name="airplane_mode">وضع الطيران</string>
     <string name="airplane_mode_description">يمرر وضع الطيران إلى نظام تشغيل Switch</string>
 
-    <string name="enable_overlay">تمكين التطبيق الصغير للطبقة</string>
-    <string name="enable_overlay_description">تمكين التطبيق الصغير المدمج في Horizon. اضغط مع الاستمرار على زر الشاشة الرئيسية لمدة 1 ثانية لإظهاره.</string>
+    <string name="enable_overlay">تفعيل التطبيق الصغير للطبقة</string>
+    <string name="enable_overlay_description">تفعيل التطبيق الصغير المدمج في Horizon. اضغط مع الاستمرار على زر الشاشة الرئيسية لمدة 1 ثانية لإظهاره.</string>
 
     <!-- Profile Management -->
     <string name="profile_manager">إدارة ملف التعريف</string>

@@ -154,6 +154,9 @@ FileSys::VirtualFile OpenPrivateRomFS(Core::System& system, u64 program_id) {
 } // namespace
 
 std::vector<u8> ModRuntime::ReadAssetBytes(const std::string& src) {
+    if (!IsOwnerContext()) {
+        return {};
+    }
     // "<archive.lzs>#<member>" pulls one file out of a Story of Seasons lzs archive at runtime.
     if (const auto h = src.find('#'); h != std::string::npos) {
         // A Nintendo SARC resolves member by member without reading the whole archive.
@@ -170,6 +173,9 @@ std::vector<u8> ModRuntime::ReadAssetBytes(const std::string& src) {
 }
 
 std::vector<u8> ModRuntime::ReadAssetBytesRaw(const std::string& src) {
+    if (!IsOwnerContext()) {
+        return {};
+    }
     // Every "<prefix>:" source resolves through the registry; an unknown prefix reads as empty.
     return asset_sources->ReadAll(src);
 }
@@ -189,11 +195,11 @@ void ModRuntime::RegisterAssetSources() {
          .read_bytes = [this](const std::string& src) { return LoadModuleData(src); }});
     // The program romfs as the base NCA ships it: no update, no LayeredFS.
     asset_sources->Register({.prefix = "base",
-                             .open_dir = [this] { return OpenBaseRomfs(system); },
+                             .open_dir = [this] { return OpenBaseRomfs(system, manifest.title_id); },
                              .capability = EDEN_DSMOD_CAP_SOURCE_BASE});
     // The add-on content data romfs the game mounts (null without DLC or with it disabled).
     asset_sources->Register({.prefix = "aoc",
-                             .open_dir = [this] { return OpenAocRomfs(system); },
+                             .open_dir = [this] { return OpenAocRomfs(system, manifest.title_id); },
                              .capability = EDEN_DSMOD_CAP_SOURCE_AOC});
     // Runtime 17: files the player supplies, <EdenDir>/dualscreen/user/<TITLEID>/
     // (mod_user_source.h).
@@ -201,8 +207,11 @@ void ModRuntime::RegisterAssetSources() {
 }
 
 FileSys::VirtualDir ModRuntime::OpenGameRomFS() {
+    if (!IsOwnerContext()) {
+        return nullptr;
+    }
     FileSys::VirtualDir root;
-    auto* const process = system.ApplicationProcess();
+    auto* const process = OwnerProcess();
     if (process != nullptr) {
         Service::FileSystem::ProgramId program_id{};
         std::shared_ptr<Service::FileSystem::SaveDataController> save_data;

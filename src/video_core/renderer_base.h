@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 // SPDX-FileCopyrightText: 2014 Citra Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
@@ -26,6 +29,7 @@ struct RendererSettings {
     void* screenshot_bits{};
     std::function<void(bool)> screenshot_complete_callback;
     Layout::FramebufferLayout screenshot_framebuffer_layout;
+    Service::Nvnflinger::LayerStackId screenshot_layer_stack{Service::Nvnflinger::LayerStackId::Default};
 };
 
 class RendererBase {
@@ -91,15 +95,18 @@ public:
     /// Returns true if a screenshot is being processed
     bool IsScreenshotPending() const;
 
-    /// Request a screenshot of the next frame
+    /// Request a screenshot of the next frame.
     void RequestScreenshot(void* data, std::function<void(bool)> callback,
-                           const Layout::FramebufferLayout& layout);
+                           const Layout::FramebufferLayout& layout,
+                           Service::Nvnflinger::LayerStackId layer_stack =
+                               Service::Nvnflinger::LayerStackId::Default);
 
-    /// Take ownership of a pending screenshot request (data, callback, layout) and clear the
-    /// pending flag, so the render thread can service it without racing new requests.
+    /// Take ownership of a pending screenshot request (data, callback, layout, layer stack) and
+    /// clear the pending flag, so the render thread can service it without racing new requests.
     /// Returns false if no request is pending.
     [[nodiscard]] bool TakePendingScreenshot(void*& data, std::function<void(bool)>& callback,
-                                             Layout::FramebufferLayout& layout);
+                                             Layout::FramebufferLayout& layout,
+                                             Service::Nvnflinger::LayerStackId& layer_stack);
 
 protected:
     Core::Frontend::EmuWindow& render_window; ///< Reference to the render window handle.

@@ -1,5 +1,33 @@
 # Changelog
 
+## 1.2.0
+
+**New**
+
+- **Eden Nightly.** Eden Duo now follows Eden's nightly builds, so upstream fixes and improvements reach you sooner, with an Eden Duo update at least every week. This release is based on Eden Nightly of October 8, 2026.
+- **Pokémon Brilliant Diamond / Shining Pearl (including Luminescent Platinum)**, **Crash Team Racing Nitro-Fueled**, **Dragon Quest III HD-2D Remake** and **Chained Echoes** companion support.
+- For companion makers (see the [Package Format](https://github.com/igawa6/eden-duo-companions/blob/main/docs/PACKAGE_FORMAT.md)):
+  - Runtime 19: larger companion manifests and guest helpers, with module lifecycle corrections. Module ABI 1 stays compatible with existing companions.
+  - Game-file/image decoding and map and scroll rendering corrections.
+
+**Faster**
+
+- Includes Eden's latest presentation and Vulkan improvements.
+
+**Fixed**
+
+- Large companions, such as Pokémon, now load completely.
+- A damaged or incomplete companion package no longer replaces the companion you are using.
+
+**Maybe fixed**
+
+- Graphics glitches on some non-NVIDIA GPUs, thanks to an upstream Eden fix.
+
+Update: install over your current Eden Duo. Your games and settings are kept, and existing companions keep working.
+
+- Requires Android 13+ (arm64) and a device with a second display.
+- Companion packages for supported games: https://github.com/igawa6/eden-duo-companions
+
 ## 1.1.0
 
 **New**

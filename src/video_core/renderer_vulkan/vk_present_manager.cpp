@@ -25,15 +25,13 @@ namespace Vulkan {
 namespace {
 
 constexpr size_t MAX_FRAMES_IN_FLIGHT = 7;
+constexpr u32 MAX_PRESENT_ATTEMPTS = 3;
 #ifdef HAS_LSFG
 static_assert(MAX_FRAMES_IN_FLIGHT <= LSFG_MAX_TARGETS);
 #endif
 
 bool CanStoreToFrame(const vk::PhysicalDevice& physical_device, VkFormat format) {
 #ifdef HAS_LSFG
-    if (!Settings::values.frame_gen.GetValue()) {
-        return false;
-    }
     const VkFormatProperties props{physical_device.GetFormatProperties(format)};
     return (props.optimalTilingFeatures & VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT) != 0;
 #else
@@ -168,6 +166,7 @@ PresentManager::PresentManager(const vk::Instance& instance_,
             .pNext = nullptr,
             .flags = VK_FENCE_CREATE_SIGNALED_BIT,
         });
+        frame.storage_capable = storage_supported;
         free_queue.push_back(&frame);
     }
 
@@ -227,15 +226,22 @@ size_t PresentManager::MaxExtraFrames() const {
     return image_count - 1;
 }
 
+bool PresentManager::NeedsStorage(const Frame* frame, bool required) const {
+    return required && frame->storage_capable && !frame->storage_view;
+}
+
 void PresentManager::RecreateFrame(Frame* frame, u32 width, u32 height, VkFormat image_view_format,
-                                   VkRenderPass rd) {
+                                   VkRenderPass rd, bool storage) {
     auto& dld = device.GetLogical();
 
     frame->width = width;
     frame->height = height;
 
-    const VkImageUsageFlags storage_usage =
-        storage_supported ? static_cast<VkImageUsageFlags>(VK_IMAGE_USAGE_STORAGE_BIT) : 0;
+    const bool with_storage = storage && frame->storage_capable;
+    VkImageUsageFlags storage_usage = 0;
+    if (with_storage) {
+        storage_usage = VK_IMAGE_USAGE_STORAGE_BIT;
+    }
 
     frame->image = memory_allocator.CreateImage({
         .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
@@ -286,7 +292,7 @@ void PresentManager::RecreateFrame(Frame* frame, u32 width, u32 height, VkFormat
     });
 
     frame->storage_view = vk::ImageView{};
-    if (storage_supported) {
+    if (with_storage) {
         frame->storage_view = dld.CreateImageView({
             .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
             .pNext = nullptr,
@@ -360,7 +366,7 @@ void PresentManager::PresentThread(std::stop_token token) {
             // By exchanging the lock ownership we take the swapchain lock
             // before the queue lock goes out of scope. This way the swapchain
             // lock in WaitPresent is guaranteed to occur after here.
-            std::exchange(lock, std::unique_lock{swapchain_mutex});
+            void(std::exchange(lock, std::unique_lock{swapchain_mutex}));
             CopyToSwapchain(frame);
 
             // Free the frame for reuse
@@ -389,12 +395,33 @@ void PresentManager::SetImageCount() {
 #else
     image_count = std::min<size_t>(swapchain.GetImageCount(), MAX_FRAMES_IN_FLIGHT);
 #endif
+    swapchain_image_count = swapchain.GetImageCount();
+    swapchain_image_format = swapchain.GetImageFormat();
+}
+
+void PresentManager::DiscardFrame(Frame* frame) {
+    static constexpr VkPipelineStageFlags wait_stage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+    const VkSemaphore render_ready = *frame->render_ready;
+    const VkSubmitInfo submit_info{
+        .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+        .pNext = nullptr,
+        .waitSemaphoreCount = 1U,
+        .pWaitSemaphores = &render_ready,
+        .pWaitDstStageMask = &wait_stage,
+        .commandBufferCount = 0U,
+        .pCommandBuffers = nullptr,
+        .signalSemaphoreCount = 0U,
+        .pSignalSemaphores = nullptr,
+    };
+
+    std::scoped_lock submit_lock{scheduler.submit_mutex};
+    void(device.GetGraphicsQueue().Submit(submit_info, *frame->present_done));
 }
 
 void PresentManager::CopyToSwapchain(Frame* frame) {
     bool requires_recreation = false;
 
-    while (true) {
+    for (u32 attempt = 0; attempt < MAX_PRESENT_ATTEMPTS; ++attempt) {
         try {
             // Recreate surface and swapchain if needed.
             if (requires_recreation) {
@@ -414,6 +441,8 @@ void PresentManager::CopyToSwapchain(Frame* frame) {
             requires_recreation = true;
         }
     }
+
+    DiscardFrame(frame);
 }
 
 void PresentManager::CopyToSwapchainImpl(Frame* frame) {

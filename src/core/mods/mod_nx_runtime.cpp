@@ -33,6 +33,9 @@
 #include "core/file_sys/control_metadata.h"
 #include "core/file_sys/patch_manager.h"
 #include "core/file_sys/vfs/vfs.h"
+#include "core/file_sys/vfs/vfs_vector.h"
+#include "core/mods/mod_yaz0.h"
+#include "core/mods/mod_bfres.h"
 #include "core/hle/service/ns/language.h"
 #include "core/hle/service/set/settings_types.h"
 #include "core/mods/mod_msbt.h"
@@ -654,6 +657,37 @@ LocateStatus NxAssetState::Locate(const std::string& src, const Roots& roots, Lo
             out.file->Read(out.magic.data(), 4, static_cast<size_t>(out.base)) != 4) {
             error = "file too short";
             return LocateStatus::Error;
+        }
+        if (std::memcmp(out.magic.data(), "Yaz0", 4) == 0) {
+            std::vector<u8> packed, decoded;
+            if (!ReadAll(out, packed, error) || !DecodeYaz0(packed, decoded, MaxWholeRead)) {
+                error = "invalid or oversized Yaz0 asset";
+                return LocateStatus::Error;
+            }
+            out.file = std::make_shared<FileSys::VectorVfsFile>(std::move(decoded));
+            out.base = 0;
+            out.size = out.file->GetSize();
+            if (out.file->Read(out.magic.data(), 4, 0) != 4) {
+                error = "decoded Yaz0 asset too short";
+                return LocateStatus::Error;
+            }
+        }
+        if (std::memcmp(out.magic.data(), "FRES", 4) == 0) {
+            std::vector<u8> container;
+            if (!ReadAll(out, container, error)) {
+                return LocateStatus::Error;
+            }
+            const auto member = BfresBntx(container);
+            if (member.empty()) {
+                error = "unsupported BFRES or invalid embedded BNTX";
+                return LocateStatus::Error;
+            }
+            out.file = std::make_shared<FileSys::VectorVfsFile>(
+                std::vector<u8>(member.begin(), member.end()));
+            out.base = 0;
+            out.size = member.size();
+            out.chain += "#embedded-bntx";
+            std::memcpy(out.magic.data(), "BNTX", 4);
         }
         if (!out.has_rest || std::memcmp(out.magic.data(), "SARC", 4) != 0) {
             return LocateStatus::Ok;
@@ -1602,7 +1636,9 @@ bool ModRuntime::IsNxAssetSource(const std::string& src) const {
         return true;
     }
     return EndsWithNoCase(file, ".bntx") || EndsWithNoCase(file, ".bffnt") ||
-           EndsWithNoCase(file, ".arc") || EndsWithNoCase(file, ".sarc");
+           EndsWithNoCase(file, ".arc") || EndsWithNoCase(file, ".sarc") ||
+           EndsWithNoCase(file, ".bfres") || EndsWithNoCase(file, ".sbfres") ||
+           EndsWithNoCase(file, ".bmaptex") || EndsWithNoCase(file, ".sbmaptex");
 }
 
 bool ModRuntime::NxFallback(const std::string& src) const {

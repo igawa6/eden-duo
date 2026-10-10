@@ -40,7 +40,7 @@ constexpr u32 MaxMethodsScanned = 4096;
 } // namespace
 
 bool ModRuntime::MethodTableLooksReal(VAddr table, s64 name_offset) const {
-    auto& memory = system.ApplicationMemory();
+    auto& memory = OwnerMemory();
     if (!AddressIsSane(table, sizeof(u64))) {
         return false;
     }
@@ -61,7 +61,7 @@ bool ModRuntime::MethodTableLooksReal(VAddr table, s64 name_offset) const {
 /// trusting a constant: the offset moves between Unity versions (0x80 on metadata v23, 0x98 on
 /// v31) and a wrong guess reads plausible-looking garbage instead of failing.
 std::optional<s64> ModRuntime::DetectMethodsOffset(VAddr klass) const {
-    auto& memory = system.ApplicationMemory();
+    auto& memory = OwnerMemory();
     const auto usable = [&](s64 offset) {
         if (!AddressIsSane(klass + offset, sizeof(u64))) {
             return false;
@@ -91,7 +91,7 @@ std::optional<s64> ModRuntime::DetectMethodsOffset(VAddr klass) const {
 
 std::optional<s64> ModRuntime::ResolveMethodByName(s64 class_slot, const std::string& method,
                                                    VAddr& method_info_out) const {
-    auto& memory = system.ApplicationMemory();
+    auto& memory = OwnerMemory();
     const VAddr slot = main_region_begin + static_cast<VAddr>(class_slot);
     if (!AddressIsSane(slot, sizeof(u64))) {
         return std::nullopt;
@@ -199,7 +199,7 @@ std::optional<s64> ModRuntime::FindClassSlotByName(const std::string& class_name
         class_slot_miss_tick[class_name] = tick_count;
         return std::nullopt;
     };
-    auto& memory = system.ApplicationMemory();
+    auto& memory = OwnerMemory();
 
     // 1. the name itself, as a C string inside the module
     PatternFind needle;

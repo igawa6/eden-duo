@@ -13,7 +13,7 @@
 #include <optional>
 #include <string>
 #include <vector>
-#include <ankerl/unordered_dense.h>
+#include "common/container/unordered_map.h"
 #include <boost/container/flat_map.hpp>
 #include "common/common_types.h"
 #include "core/crypto/key_manager.h"
@@ -100,6 +100,8 @@ public:
     virtual std::vector<ContentProviderEntry> ListEntriesFilter(
         std::optional<TitleType> title_type = {}, std::optional<ContentRecordType> record_type = {},
         std::optional<u64> title_id = {}) const = 0;
+
+    [[nodiscard]] std::optional<u64> GetParentApplicationId(u64 program_id) const;
 
 protected:
     // A single instance of KeyManager to be used by GetEntry()
@@ -210,11 +212,11 @@ private:
     ContentProviderParsingFunction parser;
 
     // maps tid -> NcaID of meta
-    ankerl::unordered_dense::map<u64, NcaID> meta_id;
+    ::Common::unordered_map<u64, NcaID> meta_id;
     // maps tid -> meta
-    ankerl::unordered_dense::map<u64, CNMT> meta;
+    ::Common::unordered_map<u64, CNMT> meta;
     // maps tid -> meta for CNMT in yuzu_meta
-    ankerl::unordered_dense::map<u64, CNMT> yuzu_meta;
+    ::Common::unordered_map<u64, CNMT> yuzu_meta;
 };
 
 enum class ContentProviderUnionSlot {
@@ -317,8 +319,8 @@ private:
     void ProcessXCI(const VirtualFile& file);
 
     std::vector<VirtualDir> load_dirs;
-    ankerl::unordered_dense::map<std::tuple<u64, ContentRecordType, TitleType>, VirtualFile> entries;
-    ankerl::unordered_dense::map<u64, u32> versions;
+    ::Common::unordered_map<std::tuple<u64, ContentRecordType, TitleType>, VirtualFile> entries;
+    ::Common::unordered_map<u64, u32> versions;
     std::vector<ExternalUpdateEntry> multi_version_entries;
 };
 

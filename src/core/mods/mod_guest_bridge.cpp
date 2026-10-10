@@ -64,7 +64,7 @@ std::optional<u64> ModRuntime::ScanRange(VAddr base, u64 size, const PatternFind
     if (!find.Valid() || size == 0) {
         return std::nullopt;
     }
-    auto& memory = system.ApplicationMemory();
+    auto& memory = OwnerMemory();
     constexpr u64 ChunkSize = 1024 * 1024;
     const size_t needle = find.bytes.size();
     std::vector<u8> chunk(ChunkSize + needle);
@@ -106,7 +106,7 @@ std::optional<s64> ModRuntime::ScanPattern(const PatternFind& find) const {
         return cached->second;
     }
 
-    auto& memory = system.ApplicationMemory();
+    auto& memory = OwnerMemory();
     constexpr u64 ChunkSize = 1024 * 1024;
     const size_t needle = find.bytes.size();
     std::vector<u8> chunk(ChunkSize + needle);
@@ -268,7 +268,7 @@ bool ModRuntime::InstallBreakpoint(VAddr address) {
     if (!guest_bridge_supported) {
         return false;
     }
-    auto& memory = system.ApplicationMemory();
+    auto& memory = OwnerMemory();
     if (!AddressIsSane(address, sizeof(u32))) {
         LOG_ERROR(Core, "DSMod: cannot hook unmapped address {:016X}", address);
         return false;
@@ -292,14 +292,15 @@ bool ModRuntime::InstallBreakpoint(VAddr address) {
     original_instruction = present;
     patched_original[address] = present;
     memory.Write32(address, BrkInstruction);
-    Core::InvalidateInstructionCacheRange(system.ApplicationProcess(), address, sizeof(u32));
+    Core::InvalidateInstructionCacheRange(OwnerProcess(), address, sizeof(u32));
     return true;
 }
 
 void ModRuntime::RemoveBreakpoint(VAddr address) {
     std::scoped_lock bridge_lock{guest_bridge_mutex};
-    auto& memory = system.ApplicationMemory();
-    if (!AddressIsSane(address, sizeof(u32))) {
+    auto& memory = OwnerMemory();
+    // Restoration is allowed after context revocation, but only in the retained owner's memory.
+    if (address == 0 || !memory.IsValidVirtualAddressRange(address, sizeof(u32))) {
         return;
     }
     u32 restore = original_instruction;
@@ -308,7 +309,7 @@ void ModRuntime::RemoveBreakpoint(VAddr address) {
         patched_original.erase(known);
     }
     memory.Write32(address, restore);
-    Core::InvalidateInstructionCacheRange(system.ApplicationProcess(), address, sizeof(u32));
+    Core::InvalidateInstructionCacheRange(OwnerProcess(), address, sizeof(u32));
 }
 
 void ModRuntime::RequestCall(const Action& action, const StateSnapshot& snapshot) {
@@ -422,7 +423,7 @@ u64 ModRuntime::ResolveCallArg(const std::string& arg) {
         }
         std::string bytes = text;
         bytes.push_back('\0');
-        system.ApplicationMemory().WriteBlock(addr, bytes.data(), bytes.size());
+        OwnerMemory().WriteBlock(addr, bytes.data(), bytes.size());
         LOG_INFO(Core, "DSMod: literal \"{}\" staged at {:016X} (sp {:016X})", text, addr,
                  saved_context.sp);
         return addr;
@@ -568,7 +569,7 @@ void ModRuntime::ApplyPatches() {
     if (patches_applied || manifest.patches.empty()) {
         return;
     }
-    auto& memory = system.ApplicationMemory();
+    auto& memory = OwnerMemory();
     const char* const opt_in = Common::DSMod::DevEnvironment("EDEN_DSMOD_PATCHES");
     const bool apply_optional = opt_in != nullptr && opt_in[0] == '1';
     // Each patch is written (and logged) once. A patch whose address is not mapped yet waits for
@@ -593,7 +594,7 @@ void ModRuntime::ApplyPatches() {
         for (size_t i = 0; i < patch.words.size(); ++i) {
             memory.Write32(address + i * sizeof(u32), patch.words[i]);
         }
-        Core::InvalidateInstructionCacheRange(system.ApplicationProcess(), address,
+        Core::InvalidateInstructionCacheRange(OwnerProcess(), address,
                                               patch.words.size() * sizeof(u32));
         LOG_INFO(Core, "DSMod: patched main+{:X} with {} instruction(s): {}", patch.at,
                  patch.words.size(), patch.why);
@@ -631,7 +632,27 @@ void ModRuntime::ArmSpies() {
 
 bool ModRuntime::OnGuestBreakpoint(Kernel::KThread& thread, Core::ArmInterface& arm_interface) {
     std::scoped_lock bridge_lock{guest_bridge_mutex};
+    if (thread.GetOwnerProcess() != OwnerProcess()) {
+        return false;
+    }
     auto& ctx = thread.GetContext();
+    if (!IsOwnerContext()) {
+        // A call already in flight may only unwind. Never enter another call/sequence step
+        // after the application changed, and never interpret another process's breakpoint.
+        const bool returning = call_state == CallState::InCall && ctx.pc == return_trampoline;
+        if (patched_original.contains(ctx.pc)) {
+            RemoveBreakpoint(ctx.pc);
+            if (returning) {
+                ctx = saved_context;
+                borrowed_thread.SetObject(nullptr);
+            }
+            call_state = CallState::Idle;
+            call_seq = nullptr;
+            arm_interface.SetContext(ctx);
+            return true;
+        }
+        return false;
+    }
     if (!spy_armed.empty()) {
         for (const auto& [name, address] : spy_armed) {
             if (ctx.pc != address) {
@@ -677,6 +698,7 @@ bool ModRuntime::OnGuestBreakpoint(Kernel::KThread& thread, Core::ArmInterface& 
         original_instruction = trampoline_original;
         RemoveBreakpoint(return_trampoline);
         ctx = saved_context;
+        borrowed_thread.SetObject(nullptr);
         arm_interface.SetContext(ctx);
         return true;
     }
@@ -742,6 +764,7 @@ bool ModRuntime::OnGuestBreakpoint(Kernel::KThread& thread, Core::ArmInterface& 
         ctx.pc = call_target;
         arm_interface.SetContext(ctx);
         call_state = CallState::InCall;
+        borrowed_thread.SetObject(&thread);
         // The stuck-call watchdog counts from HERE, not from arming: a hook that fires five
         // seconds after arming (the title screen runs script only on input) used to trip it
         // the instant the call entered, and the abandoned call then returned into a trampoline
@@ -781,7 +804,7 @@ bool ModRuntime::OnGuestBreakpoint(Kernel::KThread& thread, Core::ArmInterface& 
             std::string text;
             const VAddr at = static_cast<VAddr>(last_call_result);
             for (u64 i = 0; i < MaxTextLength && AddressIsSane(at + i, 1); ++i) {
-                const u8 ch = system.ApplicationMemory().Read8(at + i);
+                const u8 ch = OwnerMemory().Read8(at + i);
                 if (ch == 0) {
                     break;
                 }
@@ -838,6 +861,7 @@ bool ModRuntime::OnGuestBreakpoint(Kernel::KThread& thread, Core::ArmInterface& 
     // when it compiles the block, so a block compiled while it was shut would later meet one of
     // our brks as an undefined instruction.
     ctx = saved_context;
+    borrowed_thread.SetObject(nullptr);
     arm_interface.SetContext(ctx);
     call_state = CallState::Idle;
     LOG_DEBUG(Core, "DSMod: guest call returned {}", last_call_result);

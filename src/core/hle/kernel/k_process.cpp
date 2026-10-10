@@ -1021,6 +1021,9 @@ Result KProcess::Run(KernelCore& kernel, s32 priority, size_t stack_size) {
 
     // Suspend for debug, if we should.
     if (kernel.System().DebuggerEnabled()) {
+        LOG_INFO(Debug_GDBStub,
+                 "GDB stub enabled; suspending guest process until a debugger continues execution on port {}",
+                 Settings::values.gdbstub_port.GetValue());
         main_thread->RequestSuspend(kernel, SuspendType::Debug);
     }
 
@@ -1275,8 +1278,21 @@ void KProcess::LoadModule(KernelCore& kernel, CodeSet code_set, KProcessAddress 
     ReprotectSegment(code_set.CodeSegment(), Svc::MemoryPermission::ReadExecute);
     ReprotectSegment(code_set.RODataSegment(), Svc::MemoryPermission::Read);
     ReprotectSegment(code_set.DataSegment(), Svc::MemoryPermission::ReadWrite);
+    const auto& companion_code = code_set.CompanionCodeSegment();
+    if (companion_code.size != 0) {
+        // Native rtld treats RX Code mappings as NSOs and requires MOD0 headers.
+        // Seal this non-module allocation as GeneratedCode without an RWX phase.
+        ASSERT(m_page_table.GetBasePageTable().SetProcessMemoryPermission(
+                   companion_code.addr + base_addr, companion_code.size,
+                   Svc::MemoryPermission::ReadExecute, true).IsSuccess());
+    }
 
 #ifdef HAS_NCE
+    if (this->IsApplication() && Settings::IsNceEnabled() && companion_code.size != 0) {
+        kernel.System().DeviceMemory().buffer.Protect(
+            GetInteger(base_addr + companion_code.addr), companion_code.size,
+            Common::MemoryPermission::Read | Common::MemoryPermission::Execute);
+    }
     const auto& patch = code_set.PatchSegment();
     const auto& post_patch = code_set.PostPatchSegment();
     if (this->IsApplication() && Settings::IsNceEnabled() && patch.size != 0) {

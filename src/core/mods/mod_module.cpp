@@ -28,13 +28,12 @@
 #include "core/mods/dsmod_module_abi.h"
 #include "core/mods/dsmod_module_extensions.h"
 #include "core/mods/mod_module.h"
+#include "core/mods/mod_package_io.h"
 
 namespace Core::Mods {
 namespace {
 std::mutex cache_mutex;
 std::filesystem::path module_cache;
-constexpr size_t MaxManifestBytes = 4 * 1024 * 1024;
-constexpr size_t MaxModuleBytes = 64 * 1024 * 1024;
 
 std::string_view Platform() {
 #if defined(__ANDROID__) && defined(__aarch64__)
@@ -102,15 +101,11 @@ std::filesystem::path CacheDirectory() {
 }
 
 std::vector<u8> ReadBounded(const FileSys::VirtualFile& file, size_t limit) {
-    if (!file || file->GetSize() == 0 || file->GetSize() > limit) {
-        throw std::runtime_error("missing or oversized package file");
+    auto bytes = ReadPackageBytes(file, limit);
+    if (!bytes) {
+        throw std::runtime_error("missing, oversized or incomplete package file");
     }
-    const auto expected = file->GetSize();
-    auto bytes = file->ReadAllBytes();
-    if (bytes.size() != expected) {
-        throw std::runtime_error("incomplete package file read");
-    }
-    return bytes;
+    return std::move(*bytes);
 }
 
 std::string Digest(const std::vector<u8>& bytes) {
@@ -201,7 +196,7 @@ std::unique_ptr<GameModule> GameModule::Load(FileSys::VirtualDir assets, u64 tit
         return nullptr;
     }
     try {
-        const auto raw = ReadBounded(assets->GetFile("manifest.json"), MaxManifestBytes);
+        const auto raw = ReadBounded(assets->GetFile("manifest.json"), MaxPackageMetadataBytes);
         const auto manifest = nlohmann::json::parse(raw);
         if (!manifest.contains("module")) {
             if (manifest.value("requires_module", false)) {
@@ -248,7 +243,7 @@ std::unique_ptr<GameModule> GameModule::Load(FileSys::VirtualDir assets, u64 tit
             throw std::runtime_error("invalid title-ID module filename");
         }
         const auto expected_hash = entry.at("sha256").get<std::string>();
-        const auto bytes = ReadBounded(assets->GetFileRelative(expected_path), MaxModuleBytes);
+        const auto bytes = ReadBounded(assets->GetFileRelative(expected_path), MaxNativeModuleBytes);
         if (!IsHex(expected_hash, 64) || Upper(Digest(bytes)) != Upper(expected_hash)) {
             throw std::runtime_error("dual-screen module checksum mismatch; reinstall the package");
         }

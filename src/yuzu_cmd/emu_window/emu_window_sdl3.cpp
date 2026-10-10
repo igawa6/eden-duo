@@ -53,10 +53,16 @@ EmuWindow_SDL3::EmuWindow_SDL3(InputCommon::InputSubsystem* input_subsystem_, Co
         }
         return 2000;
     }, this);
+    mouse_timer = SDL_AddTimer(100, [](void *userdata, SDL_TimerID, Uint32) -> Uint32 {
+        auto* this_ = (EmuWindow_SDL3*)userdata;
+        this_->input_subsystem->GetMouse()->NotifyChanged();
+        return 100;
+    }, this);
 }
 
 EmuWindow_SDL3::~EmuWindow_SDL3() {
     SDL_RemoveTimer(titlebar_timer);
+    SDL_RemoveTimer(mouse_timer);
     system.HIDCore().UnloadInputDevices();
     input_subsystem->Shutdown();
     SDL_Quit();

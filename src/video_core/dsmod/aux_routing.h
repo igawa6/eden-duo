@@ -296,6 +296,9 @@ public:
     // The mod runtime must stand down while this is on, or its 60 Hz canvas simply overwrites
     // the capture and the screen shows widgets instead of the intercepted pass.
     std::atomic<bool> rt_capture{false};
+    /// False after a companion loses its owning application; stale routing/capture stops while
+    /// the attached auxiliary window can still present the built-in refusal notice.
+    std::atomic<bool> companion_context_active{true};
 
     /// The companion page's background (canvas pixel order), for the bars around a Fit canvas.
     std::atomic<u32> ui_bg{0xFF000000u};
@@ -405,11 +408,14 @@ public:
     // --- mod UI framebuffer: produced by the mod runtime (core), consumed by the renderer ---
     // RGBA8, tightly packed, ui_w * ui_h pixels. Published at the runtime's tick rate and
     // uploaded by the renderer only when it changed.
-    void PublishUi(u32 w, u32 h, std::span<const u32> pixels) {
+    void PublishUi(u32 w, u32 h, std::span<const u32> pixels, bool require_context = false) {
         if (pixels.size() != static_cast<size_t>(w) * h) {
             return; // a truncated canvas would let the upload copy read past the buffer
         }
         std::scoped_lock lk{ui_mutex};
+        if (require_context && !companion_context_active.load(std::memory_order_acquire)) {
+            return;
+        }
         const bool identity_changed =
             (w != ui_w || h != ui_h || ui_pixels.size() != static_cast<size_t>(w) * h);
         ui_w = w;

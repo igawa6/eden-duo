@@ -11,6 +11,25 @@ using VideoCore::DSMod::AuxRouting;
 using VideoCore::DSMod::AuxTouchPoint;
 } // namespace
 
+TEST_CASE("Aux capture cannot overwrite an application-change notice", "[dsmod][process]") {
+    AuxRouting aux;
+    const std::array<u32, 1> capture{0xFFFF0000u};
+    const std::array<u32, 1> notice{0xFF101010u};
+    aux.PublishUi(1, 1, capture, true);
+    REQUIRE(aux.HasUi());
+    aux.companion_context_active.store(false);
+    aux.ClearUi();
+    aux.PublishUi(1, 1, notice);
+    aux.PublishUi(1, 1, capture, true); // a queued GPU readback completes after the notice
+    std::vector<u32> pixels;
+    u32 w{}, h{};
+    u64 serial{};
+    REQUIRE(aux.TakeUi(pixels, w, h, serial));
+    REQUIRE(pixels == std::vector<u32>{notice[0]});
+    REQUIRE(w == 1);
+    REQUIRE(h == 1);
+}
+
 TEST_CASE("Aux touch preserves a start across moves and a short release", "[dsmod]") {
     AuxRouting aux;
     std::array<AuxTouchPoint, 1> points{{{7, 10, 20, 1, 0}}};

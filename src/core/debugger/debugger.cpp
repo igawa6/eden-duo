@@ -6,13 +6,13 @@
 
 #include <mutex>
 #include <utility>
+#include <type_traits>
+
 #include <boost/asio.hpp>
 #include <boost/version.hpp>
-
 #if BOOST_VERSION > 108400 && (!defined(_WINDOWS) && !defined(__ANDROID__)) || defined(YUZU_BOOST_v1)
 #define USE_BOOST_v1
 #endif
-
 #ifdef USE_BOOST_v1
 #include <boost/process/v1/async_pipe.hpp>
 #else
@@ -282,6 +282,7 @@ private:
     }
 
     void ResumeEmulation(Kernel::KThread* except = nullptr) {
+        system.InvalidateDualScreenGuestMailbox();
         Kernel::KScopedLightLock ll{debug_process->GetListLock()};
         Kernel::KScopedSchedulerLock sl{system.Kernel()};
 
@@ -298,6 +299,7 @@ private:
 
     void ResumeThreads(const std::vector<Kernel::KThread*>& threads,
                        Kernel::KThread* except = nullptr) {
+        system.InvalidateDualScreenGuestMailbox();
         Kernel::KScopedLightLock ll{debug_process->GetListLock()};
         Kernel::KScopedSchedulerLock sl{system.Kernel()};
 

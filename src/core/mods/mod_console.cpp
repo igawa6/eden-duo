@@ -79,7 +79,7 @@ void ModRuntime::DriveCmdImpl() {
     if (path == nullptr) {
         return;
     }
-    auto& memory = system.ApplicationMemory();
+    auto& memory = OwnerMemory();
     // Mirror console results to "<EDEN_DSMOD_CMD>.out" so a headless/streamed instance whose log we
     // cannot read still hands results back through a file.
     const auto emit = [](const std::string& line) {

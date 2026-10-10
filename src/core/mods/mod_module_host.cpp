@@ -10,6 +10,8 @@
 #include <cstring>
 #include <limits>
 #include <optional>
+#include <stdexcept>
+#include <utility>
 
 #include <nlohmann/json.hpp>
 
@@ -18,7 +20,9 @@
 #include "core/core.h"
 #include "core/file_sys/vfs/vfs.h"
 #include "core/memory.h"
+#include "core/mods/mod_package_io.h"
 #include "core/mods/mod_runtime.h"
+#include "video_core/gpu.h"
 
 namespace Core::Mods {
 namespace {
@@ -97,6 +101,9 @@ bool ValidString(const char* string, size_t limit) {
 /// get_i64("__source:<prefix>"): 1 when the source is available, 0 when it is known but not
 /// (no DLC installed), nullopt for a name that is not a source query or an unknown prefix.
 std::optional<s64> ModRuntime::SourceQuery(ModRuntime& rt, const char* name) {
+    if (std::strcmp(name, "__mailbox_epoch") == 0) {
+        return rt.system.GetDualScreenGuestMailboxEpoch();
+    }
     constexpr std::string_view Query{"__source:"};
     const std::string_view text{name};
     if (!text.starts_with(Query)) {
@@ -201,7 +208,7 @@ void ModRuntime::InitializeGameModule() {
         if (!output || !rt.module_host.is_mapped(p, address, size)) {
             return EDEN_DSMOD_FALSE;
         }
-        return rt.system.ApplicationMemory().ReadBlock(address, output, size);
+        return rt.OwnerMemory().ReadBlock(address, output, size);
     };
     module_host.get_read_pointer = [](void* p, u64 address, size_t size) -> const u8* {
         auto& rt = *static_cast<ModRuntime*>(p);
@@ -211,7 +218,7 @@ void ModRuntime::InitializeGameModule() {
             !rt.module_host.is_mapped(p, address, size)) {
             return nullptr;
         }
-        return rt.system.ApplicationMemory().GetPointerSilent(address);
+        return rt.OwnerMemory().GetPointerSilent(address);
     };
     // Bounded guest writes: the same ApplicationMemory store path a manifest "write" action
     // (LA's X/Y equip) and the console's writeb use, so it works under NCE and Dynarmic alike.
@@ -225,7 +232,7 @@ void ModRuntime::InitializeGameModule() {
         if (!input || size == 0 || size > MaxWrite || !rt.module_host.is_mapped(p, address, size)) {
             return EDEN_DSMOD_FALSE;
         }
-        auto& memory = rt.system.ApplicationMemory();
+        auto& memory = rt.OwnerMemory();
         const bool aligned = (address & (size - 1)) == 0;
         if (aligned && size == 1) {
             memory.Write8(address, *static_cast<const u8*>(input));
@@ -307,6 +314,9 @@ void ModRuntime::InitializeGameModule() {
         if (!ValidString(name, MaxName)) {
             return fallback;
         }
+        if (std::strcmp(name, "__aux_present") == 0) {
+            return rt.system.GPU().DSModAux().present.load() ? 1 : 0;
+        }
         if (std::strcmp(name, "__relocation_delta") == 0) {
             return rt.nce_vtable_delta;
         }
@@ -336,6 +346,12 @@ void ModRuntime::InitializeGameModule() {
         if (!ValidString(name, MaxName)) {
             return nullptr;
         }
+        // Optional session query: a visual overlay stays scoped to its underlying page.
+        // Borrowed for this callback only, like all get_text results. Old hosts return null.
+        if (std::strcmp(name, "__page") == 0) {
+            return rt.current_page < rt.manifest.pages.size()
+                       ? rt.manifest.pages[rt.current_page].id.c_str() : nullptr;
+        }
         constexpr std::string_view SequencePrefix{"__sequence:"};
         if (std::string_view{name}.starts_with(SequencePrefix)) {
             const auto value = rt.sequence_texts.find(name + SequencePrefix.size());
@@ -356,6 +372,9 @@ void ModRuntime::InitializeGameModule() {
         }
         auto& rt = *static_cast<ModRuntime*>(p);
         std::scoped_lock asset_lock{rt.module_romfs_mutex};
+        if (!rt.IsOwnerContext()) {
+            return 0;
+        }
         std::string source{path};
         // A bare path is a romfs path, as it always was. A prefix names a registered source; an
         // unknown one is refused (it used to be read as the romfs path "romfs:<prefix>:...",
@@ -422,8 +441,12 @@ void ModRuntime::InitializeGameModule() {
         return;
     }
     try {
-        const auto file = manifest.asset_dir->GetFile("manifest.json");
-        auto config = nlohmann::json::parse(file->ReadAllBytes());
+        auto parsed = ReadPackageJson(manifest.asset_dir->GetFile("manifest.json"));
+        if (!parsed || !parsed->is_object()) {
+            throw std::runtime_error(
+                "The dual-screen manifest could not be read (missing, invalid or over 4 MiB).");
+        }
+        auto config = std::move(*parsed);
         config["_build_match"] = !manifest.build_id_file.empty();
         config["_build_id"] = manifest.running_build_id;
         game_module_instance = game_module->Api()->create(&module_host, config.dump().c_str());
@@ -468,6 +491,9 @@ bool ModRuntime::ModuleTicksWhileHidden() const {
 }
 
 void ModRuntime::RunGameModule(StateSnapshot& snapshot, bool tick) {
+    if (!IsOwnerContext()) {
+        return;
+    }
     snapshot.ints["module_ready"] = game_module_instance ? 1 : 0;
     snapshot.ints["module_error"] = module_error.empty() ? 0 : 1;
     if (!module_error.empty()) {

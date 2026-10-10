@@ -29,6 +29,7 @@
 #include "core/hle/service/am/frontend/applet_web_browser.h"
 #include "core/hle/service/am/frontend/applets.h"
 #include "core/hle/service/am/service/storage.h"
+#include "core/hle/service/am/window_system.h"
 #include "core/hle/service/sm/sm.h"
 
 namespace Service::AM::Frontend {
@@ -72,10 +73,16 @@ void FrontendApplet::PushInteractiveOutData(std::shared_ptr<IStorage> storage) {
 
 void FrontendApplet::Exit() {
     auto applet_ = applet.lock();
-
-    std::scoped_lock lk{applet_->lock};
-    applet_->is_completed = true;
-    applet_->state_changed_event.Signal(system.Kernel());
+    {
+        std::scoped_lock lk{applet_->lock};
+        applet_->is_completed = true;
+        applet_->state_changed_event.Signal(system.Kernel());
+    }
+    if (auto caller_applet = applet_->caller_applet.lock()) {
+        std::scoped_lock lk{caller_applet->lock};
+        std::erase(caller_applet->child_applets, applet_);
+    }
+    if (auto* window_system = system.GetAppletManager().GetWindowSystem()) window_system->RequestUpdate();
 }
 
 FrontendAppletSet::FrontendAppletSet() = default;
@@ -243,9 +250,10 @@ std::shared_ptr<FrontendApplet> FrontendAppletHolder::GetApplet(std::shared_ptr<
         return std::make_shared<PhotoViewer>(system, applet, mode, *frontend.photo_viewer);
     case AppletId::NetConnect:
         return std::make_shared<NetConnect>(system, applet, mode, *frontend.net_connect);
+    case AppletId::None:
+        return nullptr;
     default:
-        LOG_ERROR(Service_AM, "No backend implementation exists for applet_id={:02X} program_id={:016X}"
-                              "Falling back to stub applet", static_cast<u8>(id), applet->program_id);
+        UNIMPLEMENTED_MSG("No frontend implementation exists for applet_id={:02X} program_id={:016X}! Using stub applet.", static_cast<u8>(id), applet->program_id);
         return std::make_shared<StubApplet>(system, applet, id, mode);
     }
 }

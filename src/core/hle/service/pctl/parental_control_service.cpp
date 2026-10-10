@@ -1,8 +1,10 @@
-// SPDX-FileCopyrightText: Copyright 2025 Eden Emulator Project
+// SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 // SPDX-FileCopyrightText: Copyright 2024 yuzu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
+
+#include <chrono>
 
 #include "core/core.h"
 #include "core/file_sys/control_metadata.h"
@@ -13,8 +15,10 @@
 
 namespace Service::PCTL {
 
-IParentalControlService::IParentalControlService(Core::System& system_, Capability capability_)
+IParentalControlService::IParentalControlService(Core::System& system_, Capability capability_,
+                                                 u64 program_id_)
     : ServiceFramework{system_, "IParentalControlService"}, capability{capability_},
+      program_id{program_id_},
       service_context{system_, "IParentalControlService"}, synchronization_event{service_context},
       unlinked_event{service_context}, request_suspension_event{service_context} {
     // clang-format off
@@ -92,6 +96,7 @@ IParentalControlService::IParentalControlService(Core::System& system_, Capabili
         {1457, D<&IParentalControlService::GetPlayTimerEventToRequestSuspension>, "GetPlayTimerEventToRequestSuspension"},
         {1458, D<&IParentalControlService::IsPlayTimerAlarmDisabled>, "IsPlayTimerAlarmDisabled"},
         {1459, D<&IParentalControlService::GetPlayTimerRemainingTimeDisplayInfo>, "GetPlayTimerRemainingTimeDisplayInfo"},
+        {1460, D<&IParentalControlService::Unknown1460>, "Unknown1460"},
         {1471, nullptr, "NotifyWrongPinCodeInputManyTimes"},
         {1472, nullptr, "CancelNetworkRequest"},
         {1473, D<&IParentalControlService::GetUnlinkedEvent>, "GetUnlinkedEvent"},
@@ -202,7 +207,6 @@ Result IParentalControlService::Initialize() {
 
     // TODO(ogniK): Recovery flag initialization for pctl:r
 
-    const auto program_id = system.GetApplicationProcessProgramID();
     if (program_id != 0) {
         const FileSys::PatchManager pm{program_id, system.GetFileSystemController(),
                                        system.GetContentProvider()};
@@ -439,8 +443,15 @@ Result IParentalControlService::IsPlayTimerAlarmDisabled(Out<bool> out_play_time
     R_SUCCEED();
 }
 
-Result IParentalControlService::GetPlayTimerRemainingTimeDisplayInfo(/* Out 0x18 */) {
-    LOG_INFO(Service_PCTL, "called");
+Result IParentalControlService::GetPlayTimerRemainingTimeDisplayInfo(Out<PlayTimerRemainingTimeDisplayInfo> out_display_info) {
+    LOG_DEBUG(Service_PCTL, "called");
+    *out_display_info = {.state = PlayTimerDisplayState::NotConfigured};
+    R_SUCCEED();
+}
+
+Result IParentalControlService::Unknown1460(u8 in_unk, Out<PlayTimerRemainingTimeDisplayInfo> out_display_info) {
+    LOG_DEBUG(Service_PCTL, "called, in_unk={}", in_unk);
+    *out_display_info = {.state = PlayTimerDisplayState::NotConfigured};
     R_SUCCEED();
 }
 

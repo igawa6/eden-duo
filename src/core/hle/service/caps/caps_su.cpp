@@ -73,13 +73,8 @@ void IScreenShotApplicationService::CaptureAndSaveScreenshot(AlbumReportOption r
     Layout::FramebufferLayout layout =
         Layout::DefaultFrameLayout(screenshot_width, screenshot_height);
 
-    const Capture::ScreenShotAttribute attribute{
-        .unknown_0{},
-        .orientation = Capture::AlbumImageOrientation::None,
-        .unknown_1{},
-        .unknown_2{},
-        .pad163{},
-    };
+    Capture::ScreenShotAttribute attribute{};
+    attribute.orientation = Capture::AlbumImageOrientation::None;
 
     renderer.RequestScreenshot(
         image_data.data(),
@@ -95,7 +90,8 @@ void IScreenShotApplicationService::CaptureAndSaveScreenshot(AlbumReportOption r
             manager->FlipVerticallyOnWrite(invert_y);
             manager->SaveScreenShot(entry, attribute, report_option, image_data, {});
         },
-        layout);
+        layout,
+        Nvnflinger::LayerStackId::Screenshot);
 }
 
 } // namespace Service::Capture

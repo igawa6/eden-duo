@@ -23,6 +23,8 @@ add_library(core STATIC
     core_timing.h
     cpu_manager.cpp
     cpu_manager.h
+    launch_params.cpp
+    launch_params.h
     crypto/aes_util.cpp
     crypto/aes_util.h
     crypto/ctr_encryption_layer.cpp
@@ -711,8 +713,6 @@ add_library(core STATIC
     hle/service/kernel_helpers.h
     hle/service/lbl/lbl.cpp
     hle/service/lbl/lbl.h
-    hle/service/ldn/client_process_monitor.cpp
-    hle/service/ldn/client_process_monitor.h
     hle/service/ldn/lan_discovery.cpp
     hle/service/ldn/lan_discovery.h
     hle/service/ldn/ldn.cpp
@@ -798,6 +798,8 @@ add_library(core STATIC
     hle/service/ns/application_manager_interface.h
     hle/service/ns/application_version_interface.cpp
     hle/service/ns/application_version_interface.h
+    hle/service/ns/async_result.cpp
+    hle/service/ns/async_result.h
     hle/service/ns/content_management_interface.cpp
     hle/service/ns/content_management_interface.h
     hle/service/ns/develop_interface.cpp
@@ -832,8 +834,6 @@ add_library(core STATIC
     hle/service/ns/system_update_control.h
     hle/service/ns/system_update_interface.cpp
     hle/service/ns/system_update_interface.h
-    hle/service/ns/vulnerability_manager_interface.cpp
-    hle/service/ns/vulnerability_manager_interface.h
     hle/service/nvdrv/core/container.cpp
     hle/service/nvdrv/core/container.h
     hle/service/nvdrv/core/heap_mapper.cpp
@@ -1139,8 +1139,6 @@ add_library(core STATIC
     hle/service/sockets/sockets.h
     hle/service/sockets/sockets_translate.cpp
     hle/service/sockets/sockets_translate.h
-    hle/service/spl/csrng.cpp
-    hle/service/spl/csrng.h
     hle/service/spl/spl.cpp
     hle/service/spl/spl.h
     hle/service/spl/spl_module.cpp
@@ -1300,6 +1298,9 @@ endif()
 
 target_include_directories(core PRIVATE ${OPUS_INCLUDE_DIRS})
 target_link_libraries(core PUBLIC common PRIVATE audio_core hid_core network video_core nx_tzdb tz)
+if (MSVC)
+    target_link_libraries(core PRIVATE getopt)
+endif()
 
 if (BOOST_NO_HEADERS)
     target_link_libraries(core PUBLIC Boost::container Boost::heap Boost::asio Boost::process Boost::crc)
@@ -1314,7 +1315,7 @@ target_link_libraries(core PRIVATE
     RenderDoc::API
     ZLIB::ZLIB)
 
-target_link_libraries(core PUBLIC httplib::httplib zstd::zstd)
+target_link_libraries(core PUBLIC httplib::httplib zstd::zstd unordered_dense::unordered_dense)
 
 if (ENABLE_WEB_SERVICE)
     target_compile_definitions(core PUBLIC ENABLE_WEB_SERVICE)
@@ -1360,23 +1361,11 @@ if (ARCHITECTURE_x86_64 OR ARCHITECTURE_arm64 OR ARCHITECTURE_riscv64 OR ARCHITE
     target_link_libraries(core PRIVATE dynarmic::dynarmic)
 endif()
 
-target_sources(core PRIVATE hle/service/ssl/ssl_backend_openssl.cpp)
-
-target_link_libraries(core PRIVATE OpenSSL::SSL OpenSSL::Crypto)
-
-# TODO
-
-# elseif (APPLE)
-#     target_sources(core PRIVATE
-#         hle/service/ssl/ssl_backend_securetransport.cpp)
-#     target_link_libraries(core PRIVATE "-framework Security")
-# elseif (WIN32)
-#     target_sources(core PRIVATE
-#         hle/service/ssl/ssl_backend_schannel.cpp)
-#     target_link_libraries(core PRIVATE crypt32 secur32)
-# else()
-#     target_sources(core PRIVATE
-#         hle/service/ssl/ssl_backend_none.cpp)
-# endif()
+if (TARGET OpenSSL::SSL)
+    target_sources(core PRIVATE hle/service/ssl/ssl_backend_openssl.cpp)
+    target_link_libraries(core PRIVATE OpenSSL::SSL OpenSSL::Crypto)
+else()
+    target_sources(core PRIVATE hle/service/ssl/ssl_backend_none.cpp)
+endif()
 
 create_target_directory_groups(core)

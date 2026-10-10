@@ -29,6 +29,7 @@ namespace Core::HID::DSModPadGate {
 
 namespace Detail {
 inline std::atomic<bool> active{false};
+inline std::atomic<bool> context_blocked{false};
 inline std::atomic<u64> pass{0};        ///< NpadButton bits let through while active
 inline std::atomic<u8> pass_sticks{0};  ///< bit 0 left stick, bit 1 right stick
 /// Hidden until released (set when the mode ends), one copy per npad slot (NpadIdTypeToIndex:
@@ -36,6 +37,12 @@ inline std::atomic<u8> pass_sticks{0};  ///< bit 0 left stick, bit 1 right stick
 inline constexpr size_t Slots = 10;
 inline std::array<std::atomic<u64>, Slots> latched{};
 } // namespace Detail
+
+/// The kernel sets this before changing the application process. The timing thread clears it
+/// only after retiring the old companion's virtual inputs. Navigation cannot override it.
+inline void BlockForContextChange(bool blocked) {
+    Detail::context_blocked.store(blocked, std::memory_order_release);
+}
 
 /// Turns the gate on or off. `pass`: buttons the companion holds for the game itself.
 inline void Set(bool active, u64 pass = 0, bool pass_left_stick = false,
@@ -83,6 +90,12 @@ inline void Reset() {
 /// Filters one pad sample of npad slot `slot` (NpadIdTypeToIndex) in place. Returns true when the
 /// gate is suppressing (the caller also releases analog triggers then).
 inline bool Apply(size_t slot, u64& buttons, AnalogStickState& left, AnalogStickState& right) {
+    if (Detail::context_blocked.load(std::memory_order_acquire)) {
+        buttons = 0;
+        left = {};
+        right = {};
+        return true;
+    }
     // Released latched buttons stop being latched for this slot; the rest stay hidden.
     if (slot < Detail::Slots && Detail::latched[slot].load(std::memory_order_relaxed) != 0) {
         const u64 held = buttons;

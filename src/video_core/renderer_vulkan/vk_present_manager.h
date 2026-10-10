@@ -6,6 +6,7 @@
 
 #pragma once
 
+#include <atomic>
 #include <condition_variable>
 #include <mutex>
 #include <boost/container/deque.hpp>
@@ -36,6 +37,7 @@ struct Frame {
     vk::CommandBuffer cmdbuf;
     vk::Semaphore render_ready;
     vk::Fence present_done;
+    bool storage_capable{};
 };
 
 class PresentManager {
@@ -64,13 +66,18 @@ public:
 
     /// Recreates the present frame to match the provided parameters
     void RecreateFrame(Frame* frame, u32 width, u32 height, VkFormat image_view_format,
-                       VkRenderPass rd);
+                       VkRenderPass rd, bool storage);
+
+    [[nodiscard]] bool NeedsStorage(const Frame* frame, bool required) const;
 
     /// Waits for the present thread to finish presenting all queued frames.
     void WaitPresent();
 
     /// How many additional frames can be queued without stalling the render thread
     [[nodiscard]] size_t MaxExtraFrames() const;
+
+    [[nodiscard]] std::size_t SwapchainImageCount() const { return swapchain_image_count; }
+    [[nodiscard]] VkFormat SwapchainImageFormat() const { return swapchain_image_format; }
 
 private:
     void PresentThread(std::stop_token token);
@@ -80,6 +87,8 @@ private:
     void CopyToSwapchainImpl(Frame* frame);
 
     void RecreateSwapchain(Frame* frame);
+
+    void DiscardFrame(Frame* frame);
 
     void SetImageCount();
 
@@ -104,7 +113,9 @@ private:
     bool blit_supported;
     bool storage_supported;
     bool use_present_thread;
-    std::size_t image_count{};
+    std::atomic<std::size_t> image_count{};
+    std::atomic<std::size_t> swapchain_image_count{};
+    std::atomic<VkFormat> swapchain_image_format{};
 };
 
 } // namespace Vulkan

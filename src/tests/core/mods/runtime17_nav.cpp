@@ -14,6 +14,27 @@
 using namespace Core::Mods;
 using Nav::Dir;
 
+TEST_CASE("DSMod process gate cannot be reopened by stale navigation", "[dsmod][process]") {
+    namespace Gate = Core::HID::DSModPadGate;
+    Gate::Reset();
+    Gate::BlockForContextChange(true);
+    Gate::Set(true, ~u64{0}, true, true);
+    Gate::Reset(); // navigation exits while the old tick finishes after the process switch
+    u64 buttons = ~u64{0};
+    Core::HID::AnalogStickState left{100, 200};
+    Core::HID::AnalogStickState right{300, 400};
+    REQUIRE(Gate::Apply(0, buttons, left, right));
+    REQUIRE(buttons == 0);
+    REQUIRE(left.x == 0);
+    REQUIRE(left.y == 0);
+    REQUIRE(right.x == 0);
+    REQUIRE(right.y == 0);
+    Gate::BlockForContextChange(false); // old virtual source has now been neutralized
+    buttons = 1;
+    REQUIRE_FALSE(Gate::Apply(0, buttons, left, right));
+    REQUIRE(buttons == 1);
+}
+
 namespace {
 constexpr u64 ZL = 1ULL << 8;
 constexpr u64 ZR = 1ULL << 9;

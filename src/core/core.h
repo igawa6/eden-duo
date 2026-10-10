@@ -12,6 +12,7 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <span>
 #include <string>
 #include <vector>
@@ -206,8 +207,10 @@ public:
     /// busy or emulation is paused. Guest threads are resumed afterwards unless the user paused.
     bool RunWithGuestThreadsSuspended(const std::function<void()>& fn);
 
-    void SetNVDECActive(bool is_nvdec_active);
+    void NotifyNVDECChannelOpen(u64 process_id);
+    void NotifyNVDECChannelClose(u64 process_id);
     [[nodiscard]] bool GetNVDECActive();
+    [[nodiscard]] bool IsNVDECActiveForProcess(u64 process_id);
 
     /**
      * Initialize the debugger.
@@ -337,6 +340,10 @@ public:
 
     [[nodiscard]] u64 GetApplicationProcessProgramID() const;
 
+    [[nodiscard]] u64 GetProgramIdForProcessId(u64 process_id) const;
+
+    [[nodiscard]] u64 ResolveCallerProgramId(u64 process_id) const;
+
     /// Gets the name of the current game
     [[nodiscard]] Loader::ResultStatus GetGameName(std::string& out) const;
 
@@ -394,7 +401,11 @@ public:
     [[nodiscard]] Core::Mods::ModRuntime* ModRuntime();
     void RegisterDualScreenMod(const std::array<u8, 0x20>& build_id, VAddr main_region_begin,
                                u64 main_region_size);
-    void SetDualScreenGuestMailbox(u64 address, u64 size);
+    void SetDualScreenGuestMailbox(u64 address, u64 size,
+                                   std::optional<u32> epoch_offset = std::nullopt);
+    /// Invalidates queued guest mailbox work before resuming threads. Opt-in load plans only.
+    void InvalidateDualScreenGuestMailbox();
+    [[nodiscard]] u32 GetDualScreenGuestMailboxEpoch() const;
     [[nodiscard]] std::pair<u64, u64> GetDualScreenGuestMailbox() const;
 
     [[nodiscard]] Core::Debugger& GetDebugger();
@@ -448,6 +459,7 @@ public:
     void PushGeneralChannelData(std::vector<u8>&& data);
     bool TryPopGeneralChannel(std::vector<u8>& out_data);
     [[nodiscard]] Service::Event& GetGeneralChannelEvent();
+    [[nodiscard]] const std::string& GetCurrentApplicationFilePath() const;
 
     /// Type used for the frontend to designate a callback for System to exit the application.
     using ExitCallback = std::function<void()>;
@@ -460,6 +472,10 @@ public:
 
     /// Instructs the frontend to exit the application.
     void Exit();
+
+    using ApplicationChangedCallback = std::function<void(u64 program_id)>;
+    void RegisterApplicationChangedCallback(ApplicationChangedCallback&& callback);
+    void NotifyApplicationChanged(u64 program_id);
 
     /// Applies any changes to settings to this core instance.
     void ApplySettings();

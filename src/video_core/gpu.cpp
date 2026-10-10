@@ -56,10 +56,10 @@ constexpr u64 GpuClockMultiplier(Settings::GpuClock clock) {
 struct GPU::Impl {
     explicit Impl(Core::System& system_, bool is_async_, bool use_nvdec_)
         : system{system_}
+        , gpu_thread{system_}
         , use_nvdec{use_nvdec_}
         , shader_notify()
         , is_async{is_async_}
-        , gpu_thread{system_}
     {}
 
     ~Impl() = default;
@@ -144,6 +144,12 @@ struct GPU::Impl {
         sync_request_cv.wait(lck, [this, fence] { return CurrentSyncRequestFence() >= fence; });
     }
 
+    void WaitForIdle() {
+        const u64 fence = RequestSyncOperation([] {});
+        gpu_thread.TickGPU(is_async);
+        WaitForSyncOperation(fence);
+    }
+
     /// Tick pending requests within the GPU.
     void TickWork() {
         std::unique_lock lck{sync_request_mutex};
@@ -176,6 +182,7 @@ struct GPU::Impl {
     }
 
     void NotifyShutdown() {
+        gpu_thread.NotifyShutdown();
         std::unique_lock lk{sync_mutex};
         shutting_down.store(true, std::memory_order::relaxed);
         sync_cv.notify_all();
@@ -219,7 +226,19 @@ struct GPU::Impl {
     }
 
     /// Notify rasterizer that any caches of the specified region should be invalidated
-    void InvalidateRegion(DAddr addr, u64 size) {
+    void InvalidateRegion(DAddr addr, u64 size, bool preserve_gpu_writes) {
+        if (Settings::values.nce_invalidation_gpu_readback.GetValue()) {
+            VideoCore::RasterizerInterface* rasterizer = renderer->ReadRasterizer();
+            if (preserve_gpu_writes && rasterizer->MustFlushRegion(addr, size, VideoCommon::CacheType::BufferCache)) {
+                const u64 fence = RequestSyncOperation([rasterizer, addr, size] {
+                    rasterizer->FlushRegion(addr, size, VideoCommon::CacheType::BufferCache);
+                    rasterizer->OnCacheInvalidation(addr, size);
+                });
+                gpu_thread.TickGPU(is_async);
+                WaitForSyncOperation(fence);
+                return;
+            }
+        }
         gpu_thread.InvalidateRegion(addr, size);
     }
 
@@ -297,6 +316,10 @@ struct GPU::Impl {
 
     Core::System& system;
 
+    // Destruction of thread must be done before all (non trivial)
+    // previous members has been destroyed
+    VideoCommon::GPUThread::ThreadManager gpu_thread;
+
     std::unique_ptr<VideoCore::RendererBase> renderer;
     VideoCore::DSMod::AuxRouting dsmod_aux;
     const bool use_nvdec;
@@ -324,11 +347,10 @@ struct GPU::Impl {
 
     const bool is_async;
 
-    VideoCommon::GPUThread::ThreadManager gpu_thread;
     std::unique_ptr<Core::Frontend::GraphicsContext> cpu_context;
 
     Tegra::Control::Scheduler scheduler;
-    ankerl::unordered_dense::map<s32, std::shared_ptr<Tegra::Control::ChannelState>> channels;
+    ::Common::unordered_map<s32, std::shared_ptr<Tegra::Control::ChannelState>> channels;
     Tegra::Control::ChannelState* current_channel;
     s32 bound_channel{-1};
 
@@ -489,6 +511,10 @@ void GPU::NotifyShutdown() {
     impl->NotifyShutdown();
 }
 
+void GPU::WaitForIdle() {
+    impl->WaitForIdle();
+}
+
 void GPU::ObtainContext() {
     impl->ObtainContext();
 }
@@ -509,8 +535,8 @@ void GPU::FlushRegion(DAddr addr, u64 size) {
     impl->FlushRegion(addr, size);
 }
 
-void GPU::InvalidateRegion(DAddr addr, u64 size) {
-    impl->InvalidateRegion(addr, size);
+void GPU::InvalidateRegion(DAddr addr, u64 size, bool preserve_gpu_writes) {
+    impl->InvalidateRegion(addr, size, preserve_gpu_writes);
 }
 
 bool GPU::OnCPUWrite(DAddr addr, u64 size) {

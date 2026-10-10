@@ -5,6 +5,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <algorithm>
+#include <limits>
 #include <random>
 #include <regex>
 #include <openssl/evp.h>
@@ -348,6 +349,22 @@ std::vector<ContentProviderEntry> ContentProvider::ListEntries() const {
     return ListEntriesFilter(std::nullopt, std::nullopt, std::nullopt);
 }
 
+std::optional<u64> ContentProvider::GetParentApplicationId(u64 program_id) const {
+    const auto application_id = GetBaseTitleID(program_id);
+    const auto program_index = program_id - application_id;
+    if (program_index == 0 || program_index > std::numeric_limits<u8>::max()) {
+        return std::nullopt;
+    }
+    if (!ListEntriesFilter(TitleType::Application, ContentRecordType::Meta, program_id).empty()) {
+        return std::nullopt;
+    }
+    if ((!ListEntriesFilter(TitleType::Application, ContentRecordType::Meta, application_id).empty() && HasEntry(program_id, ContentRecordType::Program))
+     || (!ListEntriesFilter(TitleType::Update, ContentRecordType::Meta, GetUpdateTitleID(application_id)).empty() && HasEntry(GetUpdateTitleID(program_id), ContentRecordType::Program))) {
+        return application_id;
+    }
+    return std::nullopt;
+}
+
 PlaceholderCache::PlaceholderCache(VirtualDir dir_) : dir(std::move(dir_)) {}
 
 bool PlaceholderCache::Create(const NcaID& id, u64 size) const {
@@ -566,21 +583,46 @@ VirtualFile RegisteredCache::GetFileAtID(NcaID id) const {
     return file;
 }
 
-static std::optional<NcaID> CheckMapForContentRecord(const ankerl::unordered_dense::map<u64, CNMT>& map, u64 title_id, ContentRecordType type) {
-    const auto cmnt_iter = map.find(title_id);
+static std::optional<NcaID> CheckMapForContentRecord(const ::Common::unordered_map<u64, CNMT>& map, u64 title_id, ContentRecordType type) {
+    auto cmnt_iter = map.find(title_id);
+    u8 id_offset = 0;
+
     if (cmnt_iter == map.cend()) {
-        return std::nullopt;
+        const auto program_index = title_id & AOC_TITLE_ID_MASK;
+        if (program_index == 0) {
+            return std::nullopt;
+        }
+
+        cmnt_iter = map.find(title_id & ~AOC_TITLE_ID_MASK);
+        if (cmnt_iter == map.cend()) {
+            return std::nullopt;
+        }
+
+        id_offset = static_cast<u8>(program_index);
     }
 
     const auto& cnmt = cmnt_iter->second;
     const auto& content_records = cnmt.GetContentRecords();
     const auto iter = std::find_if(content_records.cbegin(), content_records.cend(),
-                                   [type](const ContentRecord& rec) { return rec.type == type; });
-    if (iter == content_records.cend()) {
+                                   [type, id_offset](const ContentRecord& rec) {
+                                       return rec.type == type && rec.id_offset == id_offset;
+                                   });
+    if (iter != content_records.cend()) {
+        return std::make_optional(iter->nca_id);
+    }
+
+    if (id_offset != 0) {
         return std::nullopt;
     }
 
-    return std::make_optional(iter->nca_id);
+    const auto fallback_iter =
+        std::find_if(content_records.cbegin(), content_records.cend(),
+                     [type](const ContentRecord& rec) { return rec.type == type; });
+    if (fallback_iter == content_records.cend()) {
+        return std::nullopt;
+    }
+
+    return std::make_optional(fallback_iter->nca_id);
 }
 
 std::optional<NcaID> RegisteredCache::GetNcaIDFromMetadata(u64 title_id,

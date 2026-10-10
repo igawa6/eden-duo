@@ -182,6 +182,9 @@ const DataPoint* ModRuntime::ResolveElementPoint(const std::string& name, s64& i
 }
 
 bool ModRuntime::PressToken(const std::string& name, u32 frames) {
+    if (!IsOwnerContext()) {
+        return false;
+    }
     auto* const pad = system.GetInputSubsystem() != nullptr
                           ? system.GetInputSubsystem()->GetVirtualGamepad()
                           : nullptr;
@@ -346,6 +349,9 @@ std::optional<std::array<s32, 4>> ModRuntime::FindWidgetRect(size_t page_index,
 ModRuntime::ActionResult ModRuntime::RunAction(const Action& action, const StateSnapshot& snapshot,
                                                std::optional<s64> payload,
                                                const std::array<s32, 4>* tap_origin) {
+    if (!IsOwnerContext()) {
+        return ActionResult::Refused;
+    }
     const auto trace = [](const std::string& line) {
         if (const char* const p = Common::DSMod::DevEnvironment("EDEN_DSMOD_CMD")) {
             std::ofstream f(std::string(p) + ".out", std::ios::app);

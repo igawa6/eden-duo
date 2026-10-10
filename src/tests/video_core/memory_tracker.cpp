@@ -3,7 +3,7 @@
 
 #include <memory>
 #include <stdexcept>
-#include <ankerl/unordered_dense.h>
+#include "common/container/unordered_map.h"
 #include <tuple>
 #include <vector>
 #include <optional>
@@ -30,6 +30,10 @@ class RasterizerInterface {
 public:
     void UpdatePagesCachedCount(DAddr addr, size_t size, s32 delta) {
         ++update_calls;
+        ApplyPagesCachedCount(addr, size, delta);
+    }
+
+    void ApplyPagesCachedCount(DAddr addr, size_t size, s32 delta) {
         calls.emplace_back(addr, size, delta);
         const u64 page_start{addr >> Core::DEVICE_PAGEBITS};
         const u64 page_end{(addr + size + Core::DEVICE_PAGESIZE - 1) >> Core::DEVICE_PAGEBITS};
@@ -45,7 +49,18 @@ public:
     }
 
     void UpdatePagesCachedBatch(std::span<const std::pair<DAddr, size_t>> ranges, s32 delta) {
-        // TODO: for now assume fine?
+        if (ranges.empty()) {
+            return;
+        }
+        ++update_calls;
+        for (const auto& [addr, size] : ranges) {
+            ApplyPagesCachedCount(addr, size, delta);
+        }
+    }
+
+    void ClearUpdateCalls() {
+        update_calls = 0;
+        calls.clear();
     }
 
     [[nodiscard]] size_t UpdateCalls() const noexcept { return update_calls; }
@@ -65,7 +80,7 @@ public:
     }
 
 private:
-    ankerl::unordered_dense::map<u64, int> page_table;
+    ::Common::unordered_map<u64, int> page_table;
     std::vector<std::tuple<DAddr, u64, int>> calls;
     size_t update_calls = 0;
 };
@@ -557,20 +572,51 @@ TEST_CASE("MemoryTracker: Cached write downloads") {
     REQUIRE(rasterizer.Count() == 0);
 }
 
-TEST_CASE("MemoryTracker: FlushCachedWrites batching") {
+TEST_CASE("MemoryTracker: Sparse tracking batching") {
     RasterizerInterface rasterizer;
     std::optional<MemoryTracker> memory_track(rasterizer);
     memory_track->UnmarkRegionAsCpuModified(c, WORD * 2);
+    REQUIRE(rasterizer.Count() == 2 * WORD / PAGE);
+    memory_track->MarkRegionAsCpuModified(c + PAGE, PAGE * 2);
+    memory_track->MarkRegionAsCpuModified(c + PAGE * 4, PAGE);
+    REQUIRE(rasterizer.Count() == 2 * WORD / PAGE - 3);
+    rasterizer.ClearUpdateCalls();
+
+    // One operation restores two sparse ranges; adjacent pages coalesce without filling gaps.
+    memory_track->UnmarkRegionAsCpuModified(c + PAGE, PAGE * 4);
+    REQUIRE(rasterizer.UpdateCalls() == 1);
+    const auto& calls = rasterizer.UpdateCallsList();
+    REQUIRE(calls.size() == 2);
+    REQUIRE(std::get<0>(calls[0]) == c + PAGE);
+    REQUIRE(std::get<1>(calls[0]) == PAGE * 2);
+    REQUIRE(std::get<2>(calls[0]) == 1);
+    REQUIRE(std::get<0>(calls[1]) == c + PAGE * 4);
+    REQUIRE(std::get<1>(calls[1]) == PAGE);
+    REQUIRE(std::get<2>(calls[1]) == 1);
+    REQUIRE(rasterizer.Count() == 2 * WORD / PAGE);
+}
+
+TEST_CASE("MemoryTracker: Cached writes notify before flush") {
+    RasterizerInterface rasterizer;
+    std::optional<MemoryTracker> memory_track(rasterizer);
+    memory_track->UnmarkRegionAsCpuModified(c, WORD * 2);
+    rasterizer.ClearUpdateCalls();
     memory_track->CachedCpuWrite(c + PAGE, PAGE);
     memory_track->CachedCpuWrite(c + PAGE * 2, PAGE);
     memory_track->CachedCpuWrite(c + PAGE * 4, PAGE);
-    REQUIRE(rasterizer.UpdateCalls() == 0);
+    REQUIRE(rasterizer.UpdateCalls() == 3);
+    REQUIRE(rasterizer.Count() == 2 * WORD / PAGE - 3);
+    REQUIRE_FALSE(memory_track->IsRegionCpuModified(c + PAGE, PAGE));
+
+    // Cached writes already stopped tracking these pages. Flushing marks them dirty without
+    // decrementing the rasterizer counts a second time.
+    rasterizer.ClearUpdateCalls();
     memory_track->FlushCachedWrites();
-    // Now we expect a single batch call (coalesced ranges) to the device memory manager
-    REQUIRE(rasterizer.UpdateCalls() == 1);
-    const auto& calls = rasterizer.UpdateCallsList();
-    REQUIRE(std::get<0>(calls[0]) == c + PAGE);
-    REQUIRE(std::get<1>(calls[0]) == PAGE * 3);
+    REQUIRE(rasterizer.UpdateCalls() == 0);
+    REQUIRE(rasterizer.Count() == 2 * WORD / PAGE - 3);
+    REQUIRE(memory_track->IsRegionCpuModified(c + PAGE, PAGE * 2));
+    REQUIRE_FALSE(memory_track->IsRegionCpuModified(c + PAGE * 3, PAGE));
+    REQUIRE(memory_track->IsRegionCpuModified(c + PAGE * 4, PAGE));
 }
 
 TEST_CASE("DeviceMemoryManager: UpdatePagesCachedBatch basic") {

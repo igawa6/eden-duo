@@ -1,7 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources xmlns:tools="http://schemas.android.com/tools" tools:ignore="MissingTranslation">
 
-    <string name="app_disclaimer">Tento software umožňuje spouštět hry pro herní konzoli Nintendo Switch. Neobsahuje žádné herní tituly ani klíče.<br /><br /> Nejdříve prosím vyhledejte soubor <![CDATA[<b> prod.keys </b>]]> v úložišti vašeho zařízení.<br /><br /><![CDATA[<a href=\"https://yuzu-mirror.github.io/help/quickstart\">Další informace</a>]]></string>
     <string name="notice_notification_channel_name">Upozornění a chyby</string>
     <string name="notice_notification_channel_description">Zobrazí oznámení v případě chyby.</string>
     <string name="notification_permission_not_granted">Oprávnění k zobrazení oznámení nebylo uděleno!</string>
@@ -97,7 +96,6 @@
 
     <!-- NVDEC Emulation -->
     <string name="nvdec_emulation">Emulace NVDEC</string>
-    <string name="nvdec_emulation_description">Určuje, jakým způsobem se zpracovává dekódování videa (NVDEC).</string>
     <string name="nvdec_emulation_none">Žádné</string>
 
     <!-- Optimize SPIRV output -->
@@ -496,7 +494,6 @@
     <string name="log">Protokolování</string>
     <string name="flush_by_line">Vypisovat ladicí záznamy po řádcích</string>
     <string name="flush_by_line_description">Vypisuje ladicí záznamy po každém napsaném řádku, což usnadňuje ladění v případě pádu nebo zamrznutí.</string>
-
     <!-- Audio settings strings -->
     <string name="audio_output_engine">Výstupní engine</string>
     <string name="audio_volume">Hlasitost</string>
@@ -607,8 +604,6 @@
     <string name="loader_error_file_not_found">ROM neexistuje</string>
 
     <string name="loader_requires_firmware">Hra vyžaduje firmware</string>
-    <string name="loader_requires_firmware_description"><![CDATA[Hra, kterou se pokoušíte spustit, vyžaduje firmware pro spuštění nebo pro překročení úvodní nabídky. Prosím <a href=\"https://yuzu-mirror.github.io/help/quickstart\"> převezměte a nainstalujte firmware</a>, nebo stiskněte \"OK\" pro pokračování v každém případě.]]></string>
-
     <!-- Intent Launch strings -->
     <string name="searching_for_game">Hledání hry...</string>
     <string name="game_not_found_for_title_id">Hra nebyla nalezena pro ID titulu: %1$s</string>

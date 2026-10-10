@@ -22,21 +22,15 @@ DynarmicCallbacks32::DynarmicCallbacks32(ArmDynarmic32& parent, Kernel::KProcess
     , m_check_memory_access{m_debugger_enabled || !Settings::values.cpuopt_ignore_memory_aborts.GetValue()}
 {}
 
-u8 DynarmicCallbacks32::MemoryRead8(u32 vaddr) {
-    CheckMemoryAccess(vaddr, 1, Kernel::DebugWatchpointType::Read);
-    return m_memory.Read8(vaddr);
-}
-u16 DynarmicCallbacks32::MemoryRead16(u32 vaddr) {
-    CheckMemoryAccess(vaddr, 2, Kernel::DebugWatchpointType::Read);
-    return m_memory.Read16(vaddr);
-}
-u32 DynarmicCallbacks32::MemoryRead32(u32 vaddr) {
-    CheckMemoryAccess(vaddr, 4, Kernel::DebugWatchpointType::Read);
-    return m_memory.Read32(vaddr);
-}
-u64 DynarmicCallbacks32::MemoryRead64(u32 vaddr) {
-    CheckMemoryAccess(vaddr, 8, Kernel::DebugWatchpointType::Read);
-    return m_memory.Read64(vaddr);
+u64 DynarmicCallbacks32::MemoryRead(u32 vaddr, size_t size) {
+    CheckMemoryAccess(vaddr, size, Kernel::DebugWatchpointType::Read);
+    switch (size) {
+    case sizeof(u64): return m_memory.Read64(vaddr);
+    case sizeof(u32): return m_memory.Read32(vaddr);
+    case sizeof(u16): return m_memory.Read16(vaddr);
+    case sizeof(u8): return m_memory.Read8(vaddr);
+    default: UNREACHABLE();
+    }
 }
 
 std::optional<u32> DynarmicCallbacks32::MemoryReadCode(u32 vaddr) {
@@ -50,27 +44,17 @@ std::optional<u32> DynarmicCallbacks32::MemoryReadCode(u32 vaddr) {
     return cached_code_page.inst[(vaddr & Core::Memory::YUZU_PAGEMASK) / sizeof(u32)];
 }
 
-void DynarmicCallbacks32::MemoryWrite8(u32 vaddr, u8 value) {
-    if (CheckMemoryAccess(vaddr, 1, Kernel::DebugWatchpointType::Write)) {
-        m_memory.Write8(vaddr, value);
+void DynarmicCallbacks32::MemoryWrite(Dynarmic::A32::VAddr vaddr, u64 value, size_t size) {
+    if (CheckMemoryAccess(vaddr, size, Kernel::DebugWatchpointType::Write)) {
+        switch (size) {
+        case sizeof(u64): return m_memory.Write64(vaddr, value);
+        case sizeof(u32): return m_memory.Write32(vaddr, u32(value));
+        case sizeof(u16): return m_memory.Write16(vaddr, u16(value));
+        case sizeof(u8): return m_memory.Write8(vaddr, u8(value));
+        default: UNREACHABLE();
+        }
     }
 }
-void DynarmicCallbacks32::MemoryWrite16(u32 vaddr, u16 value) {
-    if (CheckMemoryAccess(vaddr, 2, Kernel::DebugWatchpointType::Write)) {
-        m_memory.Write16(vaddr, value);
-    }
-}
-void DynarmicCallbacks32::MemoryWrite32(u32 vaddr, u32 value) {
-    if (CheckMemoryAccess(vaddr, 4, Kernel::DebugWatchpointType::Write)) {
-        m_memory.Write32(vaddr, value);
-    }
-}
-void DynarmicCallbacks32::MemoryWrite64(u32 vaddr, u64 value) {
-    if (CheckMemoryAccess(vaddr, 8, Kernel::DebugWatchpointType::Write)) {
-        m_memory.Write64(vaddr, value);
-    }
-}
-
 bool DynarmicCallbacks32::MemoryWriteExclusive8(u32 vaddr, u8 value, u8 expected) {
     return CheckMemoryAccess(vaddr, 1, Kernel::DebugWatchpointType::Write) &&
             m_memory.WriteExclusive8(vaddr, value, expected);
@@ -172,12 +156,12 @@ void ArmDynarmic32::MakeJit(Common::PageTable* page_table) {
     if (page_table) {
         constexpr size_t PageBits = 12;
         constexpr size_t NumPageTableEntries = 1 << (32 - PageBits);
-        constexpr size_t PageLog2Stride = 5;
-        static_assert(1 << PageLog2Stride == sizeof(Common::PageTable::PageEntryData));
 
-        config.page_table = reinterpret_cast<std::array<std::uint8_t*, NumPageTableEntries>*>(page_table->entries.data());
-        config.page_table_pointer_mask_bits = Common::PageTable::ATTRIBUTE_BITS;
-        config.page_table_log2_stride = PageLog2Stride;
+        // Dynarmic will not write to the page table, const_cast is safe here
+        config.page_table = reinterpret_cast<std::array<std::uint8_t*, NumPageTableEntries>*>(
+            const_cast<Common::PageTable::PageEntryData*>(page_table->entries.data()));
+        config.page_table_pointer_mask = Common::PageTable::ATTRIBUTE_MASK;
+        config.page_table_marked_bit = uint8_t(0);
         config.absolute_offset_page_table = true;
         config.detect_misaligned_access_via_page_table = 16 | 32 | 64 | 128;
         config.only_detect_misalignment_via_page_table_on_page_boundary = true;
@@ -188,6 +172,13 @@ void ArmDynarmic32::MakeJit(Common::PageTable* page_table) {
 
         config.fastmem_exclusive_access = config.fastmem_pointer  != std::nullopt;
         config.recompile_on_exclusive_fastmem_failure = true;
+
+        if (reinterpret_cast<u64>(m_system.DeviceMemory().buffer.BackingBasePointer() +
+            Kernel::Board::Nintendo::Nx::KSystemControl::Init::GetIntendedMemorySize()) < (1ULL << 39)) {
+            // Systems like FreeBSD allocate memory really low by default, and since we pack our page table entries,
+            // we have to manually sign extend when our actual pointer is negative.
+            config.page_table_sign_extension = std::uint8_t(Common::PageTable::SIGN_BIT);
+        }
     }
 
     // Multi-process state
@@ -420,6 +411,7 @@ void ArmDynarmic32::SignalInterrupt(Kernel::KThread* thread) {
 }
 
 void ArmDynarmic32::ClearInstructionCache() {
+    m_cb->last_code_addr = u64(-1);
     m_jit->ClearCache();
 }
 

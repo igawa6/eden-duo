@@ -1,7 +1,14 @@
+// SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 // SPDX-FileCopyrightText: Copyright 2021 yuzu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #pragma once
+
+#include <cstddef>
+#include <array>
+#include <type_traits>
 
 #include "common/bit_field.h"
 #include "common/common_funcs.h"
@@ -602,10 +609,10 @@ static_assert(sizeof(SixAxisSensorAttribute) == 4, "SixAxisSensorAttribute is an
 struct SixAxisSensorState {
     s64 delta_time{};
     s64 sampling_number{};
-    Common::Vec3f accel{};
-    Common::Vec3f gyro{};
-    Common::Vec3f rotation{};
-    std::array<Common::Vec3f, 3> orientation{};
+    Common::Vec<f32, 3> accel{};
+    Common::Vec<f32, 3> gyro{};
+    Common::Vec<f32, 3> rotation{};
+    std::array<Common::Vec<f32, 3>, 3> orientation{};
     SixAxisSensorAttribute attribute{};
     INSERT_PADDING_BYTES(4); // Reserved
 };

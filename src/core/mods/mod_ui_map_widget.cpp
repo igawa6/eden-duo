@@ -694,6 +694,17 @@ void GeometryMapDraw::fill_clipped(float l, float t, float w, float h, u32 argb)
     }
 }
 
+// Missing/nonfinite headings preserve the classic unrotated marker.
+static float MarkerDegrees(const Widget& widget, const StateSnapshot& snapshot) {
+    if (!widget.map_extras || widget.map_extras->marker_rotate_bind.empty())
+        return 0.0f;
+    const auto& key = widget.map_extras->marker_rotate_bind;
+    const auto f = snapshot.floats.find(key);
+    const float degrees = f != snapshot.floats.end() ? static_cast<float>(f->second)
+                                                     : static_cast<float>(snapshot.GetInt(key));
+    return std::isfinite(degrees) ? std::fmod(degrees, 360.0f) : 0.0f;
+}
+
 // Runtime 14: map "overlays" -- pictures placed in world space over the base picture and under
 // the markers (into the canvas, which the GPU path composites over the map quad), panning and
 // zooming with the map. An image still loading draws nothing yet.
@@ -715,15 +726,30 @@ void GeometryMapDraw::DrawOverlays() {
         if (key->empty() || ov.opacity <= 0.0f) {
             continue;
         }
-        const std::shared_ptr<const Image> pic = images(*key);
+        const float l = to_x(std::min(ov.x0, ov.x1));
+        const float r = to_x(std::max(ov.x0, ov.x1));
+        const float t = to_y(std::max(ov.y0, ov.y1));
+        const float b = to_y(std::min(ov.y0, ov.y1));
+        // Tiled native maps can contain hundreds of pictures. Request only the
+        // visible ones, so a close follow view does not decode the whole world.
+        if (r <= x || b <= y || l >= x + rw || t >= y + rh) {
+            continue;
+        }
+        std::shared_ptr<const Image> pic;
+        if (!ov.src_detail_bind.empty() && std::max(r - l, b - t) > ov.detail_threshold) {
+            const auto detail = snapshot.texts.find(ov.src_detail_bind);
+            if (detail != snapshot.texts.end() && !detail->second.empty()) {
+                pic = images(detail->second);
+                if (pic && !pic->Valid())
+                    pic.reset();
+            }
+        }
+        if (!pic)
+            pic = images(*key); // keep the overview while detail loads
         add_content(pic.get());
         if (pic == nullptr || !pic->Valid()) {
             continue;
         }
-        const float l = to_x(std::min(ov.x0, ov.x1));
-        const float r = to_x(std::max(ov.x0, ov.x1));
-        const float t = to_y(std::max(ov.y0, ov.y1)); // world y grows upward
-        const float b = to_y(std::min(ov.y0, ov.y1));
         const u32 a = static_cast<u32>(std::lround(ov.opacity * 255.0f));
         blit_clipped(*pic, l, t, r - l, b - t, (a << 24) | 0x00FFFFFFu);
     }
@@ -986,7 +1012,24 @@ void GeometryMapDraw::draw_labels() {
     }
     const MapWidgetExtras::LabelStyle style =
         map_extras != nullptr ? map_extras->label_style : MapWidgetExtras::LabelStyle{};
+    std::vector<const MapLabel*> labels;
+    labels.reserve(geo->second.labels.size());
     for (const auto& label : geo->second.labels) {
+        labels.push_back(&label);
+    }
+    if (style.avoid_overlap && map_extras != nullptr) {
+        const auto priority = [&](const MapLabel* label) {
+            const auto group = map_extras->groups.find(label->group);
+            return group != map_extras->groups.end() ? group->second.min_zoom : 0.0f;
+        };
+        // Stable ties retain manifest order; fine-grained names win over broad region names.
+        std::stable_sort(labels.begin(), labels.end(), [&](const auto* a, const auto* b) {
+            return priority(a) > priority(b);
+        });
+    }
+    std::vector<std::array<s32, 4>> occupied;
+    for (const auto* candidate : labels) {
+        const auto& label = *candidate;
         if ((!label.show.Empty() && !GateOpen(label.show, snapshot)) ||
             (!label.hide.Empty() && GateOpen(label.hide, snapshot))) {
             continue;
@@ -1024,6 +1067,29 @@ void GeometryMapDraw::draw_labels() {
             continue;
         }
         const u32 a = static_cast<u32>(std::lround(std::clamp(alpha, 0.0f, 1.0f) * 255.0f));
+        if (style.avoid_overlap) {
+            bool visible_ink = false;
+            if (a != 0) {
+                for (s32 row = t - qy; row < b - qy && !visible_ink; ++row) {
+                    const auto first = bmp->image.pixels.begin() + row * bw + l - qx;
+                    visible_ink = std::any_of(first, first + r - l,
+                                              [](u32 pixel) { return (pixel >> 24) != 0; });
+                }
+            }
+            if (!visible_ink) {
+                continue;
+            }
+            // Reserve only the visible clipped bitmap. Hidden, empty and offscreen labels
+            // never reach this point, so they cannot suppress a visible neighbour.
+            constexpr s32 gap = 4;
+            if (std::any_of(occupied.begin(), occupied.end(), [&](const auto& box) {
+                    return l < box[2] + gap && r + gap > box[0] &&
+                           t < box[3] + gap && b + gap > box[1];
+                })) {
+                continue;
+            }
+            occupied.push_back({l, t, r, b});
+        }
         canvas.DrawImageRegion(l, t, r - l, b - t, bmp->image, l - qx, t - qy, r - l, b - t,
                                (a << 24) | 0x00FFFFFFu);
     }
@@ -1595,6 +1661,29 @@ void GeometryMapDraw::DrawMarkerPicture() {
                 widget.marker_size[1] > 0.0f ? widget.marker_size[1] : static_cast<float>(mk->h);
             const float qx = to_x(wx_player) - widget.marker_anchor[0] * mw;
             const float qy = to_y(wy_player) - widget.marker_anchor[1] * mh;
+            const float degrees = MarkerDegrees(widget, snapshot);
+            const u32 tint = map_extras ? map_extras->marker_tint : 0xFFFFFFFFu;
+            if (degrees != 0.0f) {
+                const s32 ix = static_cast<s32>(std::lround(qx)),
+                          iy = static_cast<s32>(std::lround(qy));
+                const s32 iw = std::max(1, static_cast<s32>(std::lround(mw)));
+                const s32 ih = std::max(1, static_cast<s32>(std::lround(mh)));
+                const float px = widget.marker_anchor[0] * mw, py = widget.marker_anchor[1] * mh;
+                const auto bounds = TransformedImageBounds(ix, iy, iw, ih, degrees, 1.0f, px, py);
+                const auto clip = canvas.Clip();
+                const s32 left = std::max({x, clip[0], bounds[0]});
+                const s32 top = std::max({y, clip[1], bounds[1]});
+                const s32 right = std::min({x + rw, clip[0] + clip[2], bounds[2]});
+                const s32 bottom = std::min({y + rh, clip[1] + clip[3], bounds[3]});
+                if (right > left && bottom > top) {
+                    add_marker_px(left, top, right - left, bottom - top);
+                    canvas.SetClip(left, top, right - left, bottom - top);
+                    canvas.DrawImageTransformed(ix, iy, iw, ih, *mk, 0, 0, mk->w, mk->h, tint,
+                                                degrees, 1.0f, px, py);
+                    canvas.SetClip(clip[0], clip[1], clip[2], clip[3]);
+                }
+                return;
+            }
             const float l = std::max(qx, static_cast<float>(x));
             const float t = std::max(qy, static_cast<float>(y));
             const float r = std::min(qx + mw, static_cast<float>(x + rw));
@@ -1602,7 +1691,7 @@ void GeometryMapDraw::DrawMarkerPicture() {
             if (r > l && b > t) {
                 const float u0 = (l - qx) / mw, v0 = (t - qy) / mh;
                 const float u1 = (r - qx) / mw, v1 = (b - qy) / mh;
-                if (draw_list != nullptr && slot_free) {
+                if (draw_list != nullptr && slot_free && tint == 0xFFFFFFFFu) {
                     draw_list->atlas_key = widget.marker_src;
                     draw_list->quads.push_back({1u, u0, v0, u1, v1, l, t, r - l, b - t, 1.0f});
                 } else {
@@ -1618,7 +1707,7 @@ void GeometryMapDraw::DrawMarkerPicture() {
                         static_cast<s32>(std::lround(b)) - static_cast<s32>(std::lround(t)), *mk,
                         static_cast<s32>(u0 * fw), static_cast<s32>(v0 * fh),
                         std::max(1, static_cast<s32>(std::lround((u1 - u0) * fw))),
-                        std::max(1, static_cast<s32>(std::lround((v1 - v0) * fh))), 0xFFFFFFFFu);
+                        std::max(1, static_cast<s32>(std::lround((v1 - v0) * fh))), tint);
                 }
             }
         }
@@ -1865,8 +1954,19 @@ std::array<s32, 4> PredictMapMarkerBox(const Manifest& manifest, const Widget& w
                 widget.marker_size[0] > 0.0f ? widget.marker_size[0] : static_cast<float>(mk->w);
             const float mh =
                 widget.marker_size[1] > 0.0f ? widget.marker_size[1] : static_cast<float>(mk->h);
-            add_clipped(mx - widget.marker_anchor[0] * mw, my - widget.marker_anchor[1] * mh, mw,
-                        mh);
+            const float qx = mx - widget.marker_anchor[0] * mw;
+            const float qy = my - widget.marker_anchor[1] * mh;
+            const float degrees = MarkerDegrees(widget, snapshot);
+            if (degrees == 0.0f) {
+                add_clipped(qx, qy, mw, mh);
+            } else {
+                const auto b = TransformedImageBounds(
+                    static_cast<s32>(std::lround(qx)), static_cast<s32>(std::lround(qy)),
+                    std::max(1, static_cast<s32>(std::lround(mw))),
+                    std::max(1, static_cast<s32>(std::lround(mh))), degrees, 1.0f,
+                    widget.marker_anchor[0] * mw, widget.marker_anchor[1] * mh);
+                add_clipped(b[0], b[1], b[2] - b[0], b[3] - b[1]);
+            }
         }
     }
     return box;

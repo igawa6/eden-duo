@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 // SPDX-FileCopyrightText: Copyright 2023 yuzu Emulator Project
 // SPDX-License-Identifier: GPL-3.0-or-later
 
@@ -6,6 +9,7 @@
 #include "core/core.h"
 #include "core/core_timing.h"
 #include "core/frontend/emu_window.h"
+#include "core/hle/kernel/k_process.h"
 #include "core/memory.h"
 #include "hid_core/frontend/emulated_console.h"
 #include "hid_core/frontend/emulated_devices.h"
@@ -24,7 +28,7 @@ void SevenSixAxis::OnInit() {}
 void SevenSixAxis::OnRelease() {}
 
 void SevenSixAxis::OnUpdate(const Core::Timing::CoreTiming& core_timing) {
-    if (!IsControllerActivated() || transfer_memory == 0) {
+    if (!IsControllerActivated() || transfer_memory == 0 || transfer_memory_owner == nullptr) {
         seven_sixaxis_lifo.buffer_count = 0;
         seven_sixaxis_lifo.buffer_tail = 0;
         return;
@@ -42,21 +46,19 @@ void SevenSixAxis::OnUpdate(const Core::Timing::CoreTiming& core_timing) {
     next_seven_sixaxis_state.accel = motion_status.accel;
     next_seven_sixaxis_state.gyro = motion_status.gyro;
     next_seven_sixaxis_state.quaternion = {
-        {
-            motion_status.quaternion.xyz.y,
-            motion_status.quaternion.xyz.x,
-            -motion_status.quaternion.w,
-        },
-        -motion_status.quaternion.xyz.z,
+        motion_status.quaternion[1],
+        motion_status.quaternion[0],
+        -motion_status.quaternion[3],
+        -motion_status.quaternion[2],
     };
-
     seven_sixaxis_lifo.WriteNextEntry(next_seven_sixaxis_state);
-    system.ApplicationMemory().WriteBlock(transfer_memory, &seven_sixaxis_lifo,
-                                          sizeof(seven_sixaxis_lifo));
+    transfer_memory_owner->GetMemory().WriteBlock(transfer_memory, &seven_sixaxis_lifo,
+                                                  sizeof(seven_sixaxis_lifo));
 }
 
-void SevenSixAxis::SetTransferMemoryAddress(Common::ProcessAddress t_mem) {
+void SevenSixAxis::SetTransferMemoryAddress(Common::ProcessAddress t_mem, Kernel::KProcess* owner) {
     transfer_memory = t_mem;
+    transfer_memory_owner = owner;
 }
 
 void SevenSixAxis::ResetTimestamp() {

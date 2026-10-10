@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: Copyright 2025 Eden Emulator Project
+// SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 // SPDX-FileCopyrightText: Copyright 2024 yuzu Emulator Project
@@ -154,6 +154,7 @@ enum class AppletMessage : u32 {
     DetectLongPressingCaptureButton = 91,
     AlbumScreenShotTaken = 92,
     AlbumRecordingSaved = 93,
+    StartupLogoDisappeared = 95,
 };
 
 enum class LibraryAppletMode : u32 {
@@ -199,6 +200,14 @@ enum class ProgramSpecifyKind : u32 {
     ExecuteProgram = 0,
     JumpToSubApplicationProgramForDevelopment = 1,
     RestartProgram = 2,
+};
+
+// Maufeat: Use enums for zindex instead of using random zindex numbers
+enum AppletZIndex : s32 {
+    Background = 0,
+    Foreground = 1,
+    ForegroundVisible = 2,
+    Overlay = 3,
 };
 
 struct CommonArguments {

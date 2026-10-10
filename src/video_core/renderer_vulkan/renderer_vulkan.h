@@ -80,7 +80,8 @@ private:
     vk::Buffer RenderToBuffer(std::span<const Tegra::FramebufferConfig> framebuffers,
                               const Layout::FramebufferLayout& layout, VkFormat format,
                               VkDeviceSize buffer_size);
-    void RenderScreenshot(std::span<const Tegra::FramebufferConfig> framebuffers);
+    void RenderScreenshot(std::span<const Tegra::FramebufferConfig> framebuffers,
+                          std::span<const Tegra::FramebufferConfig> primary);
     void RenderAppletCaptureLayer(std::span<const Tegra::FramebufferConfig> framebuffers);
 
     // DSMod aux (second screen) output
@@ -88,6 +89,8 @@ private:
     void RenderAuxWindow(std::span<const Tegra::FramebufferConfig> layers);
     /// Presents the mod runtime's UI image on the aux window. Returns false when there is none.
     bool RenderAuxModUi();
+    std::vector<Tegra::FramebufferConfig> applet_capture_layers;
+    std::vector<Tegra::FramebufferConfig> screenshot_layer_scratch;
 
     Tegra::MaxwellDeviceMemoryManager& device_memory;
     Tegra::GPU& gpu;

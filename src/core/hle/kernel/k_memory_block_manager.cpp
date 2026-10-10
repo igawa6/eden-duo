@@ -34,7 +34,12 @@ void KMemoryBlockManager::Finalize(KMemoryBlockSlabManager* slab_manager,
     while (it != m_memory_block_tree.end()) {
         KMemoryBlock* block = std::addressof(*it);
         it = m_memory_block_tree.erase(it);
-        block_callback(block->GetAddress(), block->GetSize());
+        // Free blocks have no mappings or physical pages to release. In NCE the
+        // guest address space can extend beyond the reserved host arena, so
+        // forwarding its unused tail to HostMemory::Unmap is also out of range.
+        if (block->GetState() != KMemoryState::Free) {
+            block_callback(block->GetAddress(), block->GetSize());
+        }
         slab_manager->Free(block);
     }
 

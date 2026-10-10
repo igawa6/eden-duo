@@ -16,7 +16,8 @@ namespace Service::PCTL {
 
 class IParentalControlService final : public ServiceFramework<IParentalControlService> {
 public:
-    explicit IParentalControlService(Core::System& system_, Capability capability_);
+    explicit IParentalControlService(Core::System& system_, Capability capability_,
+                                     u64 program_id_);
     ~IParentalControlService() override;
 
 private:
@@ -54,7 +55,8 @@ private:
     Result GetPlayTimerSettingsOld(Out<PlayTimerSettingsOld> out_play_timer_settings);
     Result GetPlayTimerEventToRequestSuspension(OutCopyHandle<Kernel::KReadableEvent> out_event);
     Result IsPlayTimerAlarmDisabled(Out<bool> out_play_timer_alarm_disabled);
-    Result GetPlayTimerRemainingTimeDisplayInfo();
+    Result GetPlayTimerRemainingTimeDisplayInfo(Out<PlayTimerRemainingTimeDisplayInfo> out_display_info);
+    Result Unknown1460(u8 in_unk, Out<PlayTimerRemainingTimeDisplayInfo> out_display_info);
     Result GetUnlinkedEvent(OutCopyHandle<Kernel::KReadableEvent> out_event);
     Result GetStereoVisionRestriction(Out<bool> out_stereo_vision_restriction);
     Result SetStereoVisionRestriction(bool stereo_vision_restriction);
@@ -84,6 +86,7 @@ private:
     RestrictionSettings restriction_settings{};
     std::array<char, 8> pin_code{};
     Capability capability{};
+    u64 program_id{};
     // TODO: this is raw
     PlayTimerSettings raw_play_timer_settings{};
 

@@ -379,10 +379,17 @@ std::string R(const MapWidgetExtras::LabelStyle& o) {
     C(outline_color);
     F(outline);
     F(opacity);
+    F(avoid_overlap);
     DUMP_END;
 }
 std::string R(const MapWidgetExtras::Overlay& o) {
     DUMP_BEGIN(MapWidgetExtras::Overlay);
+    if (!o.src_detail_bind.empty()) {
+        F(src_detail_bind);
+    }
+    if (o.detail_threshold != 210.0f) {
+        F(detail_threshold);
+    }
     F(src);
     F(src_bind);
     F(x0);
@@ -406,6 +413,12 @@ std::string R(const MapWidgetExtras& o) {
     F(view_rect_binds);
     F(view_rect_pad);
     F(image_bind);
+    if (!o.marker_rotate_bind.empty()) {
+        F(marker_rotate_bind);
+    }
+    if (o.marker_tint != 0xFFFFFFFFu) {
+        C(marker_tint);
+    }
     F(overlays);
     DUMP_END;
 }
@@ -1216,10 +1229,10 @@ void CheckLayouts() {
         {"ChartSpec", sizeof(ChartSpec), 64},
         {"ViewDefaultBinds", sizeof(ViewDefaultBinds), 128},
         {"ScrollRegion", sizeof(ScrollRegion), 256},
-        {"MapWidgetExtras", sizeof(MapWidgetExtras), 408},
+        {"MapWidgetExtras", sizeof(MapWidgetExtras), 448},
         {"MapWidgetExtras::Group", sizeof(MapWidgetExtras::Group), 112},
-        {"MapWidgetExtras::LabelStyle", sizeof(MapWidgetExtras::LabelStyle), 20},
-        {"MapWidgetExtras::Overlay", sizeof(MapWidgetExtras::Overlay), 128},
+        {"MapWidgetExtras::LabelStyle", sizeof(MapWidgetExtras::LabelStyle), 24},
+        {"MapWidgetExtras::Overlay", sizeof(MapWidgetExtras::Overlay), 168},
         {"WidgetAnim", sizeof(WidgetAnim), 136},
         {"Action", sizeof(Action), 816},
         {"ActionValue", sizeof(ActionValue), 56},
@@ -1366,4 +1379,37 @@ TEST_CASE("DSMod runtime18 golden digest includes new non-default layout fields"
     REQUIRE(R(scroll).find("bar_track_src=") != std::string::npos);
     DynamicMarkerDef marker; marker.size_max = 16.0f;
     REQUIRE(R(marker).find("size_max=") != std::string::npos);
+}
+
+TEST_CASE("DSMod map digest retains non-default heading tint and detail references",
+          "[dsmod][golden][digest]") {
+    MapWidgetExtras extras;
+    extras.marker_rotate_bind = "player.heading";
+    extras.marker_tint = 0xFFFFCC00u;
+    MapWidgetExtras::Overlay overlay;
+    overlay.src_detail_bind = "tile.detail";
+    overlay.detail_threshold = 300.0f;
+    extras.overlays.push_back(overlay);
+    const auto text = R(extras);
+    REQUIRE(text.find("player.heading") != std::string::npos);
+    REQUIRE(text.find("marker_tint=") != std::string::npos);
+    REQUIRE(text.find("tile.detail") != std::string::npos);
+    REQUIRE(text.find("detail_threshold=") != std::string::npos);
+}
+
+TEST_CASE("DSMod map label overlap parser defaults and digest",
+          "[dsmod][digest][map-label-overlap]") {
+    const auto json = nlohmann::json::parse(R"({"pages":[{"id":"p","widgets":[
+        {"type":"map","rect":[0,0,100,100],"label_style":{}},
+        {"type":"map","rect":[0,0,100,100],"label_style":{"avoid_overlap":true}},
+        {"type":"map","rect":[0,0,100,100],"label_style":{"avoid_overlap":false}}
+    ]}]})");
+    Manifest manifest;
+    REQUIRE(ParseDualScreenManifest(json, manifest));
+    const auto& widgets = manifest.pages[0].widgets;
+    REQUIRE_FALSE(widgets[0].map_extras->label_style.avoid_overlap);
+    REQUIRE(widgets[1].map_extras->label_style.avoid_overlap);
+    REQUIRE_FALSE(widgets[2].map_extras->label_style.avoid_overlap);
+    REQUIRE(R(widgets[0].map_extras->label_style).find("avoid_overlap=") == std::string::npos);
+    REQUIRE(R(widgets[1].map_extras->label_style).find("avoid_overlap=true") != std::string::npos);
 }

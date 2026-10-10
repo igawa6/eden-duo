@@ -14,7 +14,7 @@
 #include <vector>
 #include <atomic>
 
-#include <ankerl/unordered_dense.h>
+#include "common/container/unordered_map.h"
 
 #include "common/common_types.h"
 #include "common/input.h"
@@ -22,7 +22,6 @@
 #include "common/settings.h"
 #include "common/vector_math.h"
 #include "hid_core/frontend/motion_input.h"
-#include "hid_core/hid_core.h"
 #include "hid_core/hid_types.h"
 #include "hid_core/irsensor/irs_types.h"
 
@@ -107,11 +106,11 @@ struct RingSensorForce {
 using NfcState = Common::Input::NfcStatus;
 
 struct ControllerMotion {
-    Common::Vec3f accel{};
-    Common::Vec3f gyro{};
-    Common::Vec3f rotation{};
-    Common::Vec3f euler{};
-    std::array<Common::Vec3f, 3> orientation{};
+    Common::Vec<f32, 3> accel{};
+    Common::Vec<f32, 3> gyro{};
+    Common::Vec<f32, 3> rotation{};
+    Common::Vec<f32, 3> euler{};
+    std::array<Common::Vec<f32, 3>, 3> orientation{};
     bool is_at_rest{};
 };
 
@@ -585,7 +584,6 @@ private:
     std::array<VibrationValue, 2> last_vibration_value{DEFAULT_VIBRATION_VALUE,
                                                        DEFAULT_VIBRATION_VALUE};
     std::array<std::chrono::steady_clock::time_point, 2> last_vibration_timepoint{};
-    std::array<bool, HIDCore::available_controllers> controller_connected{};
 
     // Atomically synched values
     std::atomic<HID::NpadStyleIndex> npad_type{HID::NpadStyleIndex::None};
@@ -636,7 +634,7 @@ private:
     ControllerMotionDevices virtual_motion_devices;
 
     mutable std::mutex callback_mutex;
-    ankerl::unordered_dense::map<int, ControllerUpdateCallback> callback_list;
+    ::Common::unordered_map<int, ControllerUpdateCallback> callback_list;
     int last_callback_key = 0;
 
     // Stores the current status of all controller input

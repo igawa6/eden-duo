@@ -227,12 +227,13 @@ Result VfsDirectoryServiceWrapper::RenameDirectory(const std::string& src_path_,
     std::string src_path(Common::FS::SanitizePath(src_path_));
     std::string dest_path(Common::FS::SanitizePath(dest_path_));
     auto src = GetDirectoryRelativeWrapped(backing, src_path);
+    if (src == nullptr)
+        return FileSys::ResultPathNotFound;
+
     if (Common::FS::GetParentPath(src_path) == Common::FS::GetParentPath(dest_path)) {
-        // Use more-optimized vfs implementation rename.
-        if (src == nullptr)
-            return FileSys::ResultPathNotFound;
-        if (!src->Rename(Common::FS::GetFilename(dest_path))) {
-            // TODO(DarkLordZach): Find a better error code for this
+        std::string full_src_path = backing->GetFullPath() + "/" + src_path;
+        std::string full_dest_path = backing->GetFullPath() + "/" + dest_path;
+        if (!Common::FS::RenameDir(full_src_path, full_dest_path)) {
             return ResultUnknown;
         }
         return ResultSuccess;
@@ -786,6 +787,13 @@ void FileSystemController::CreateFactories(FileSys::VfsFilesystem& vfs, bool ove
     }
 }
 
+void FileSystemController::InitTempStorage() {
+    const auto save_directory = system.GetFilesystem()->OpenDirectory(Common::FS::GetEdenPathString(Common::FS::EdenPath::SaveDir), FileSys::OpenMode::ReadWrite);
+    if (save_directory != nullptr) {
+        save_directory->DeleteSubdirectoryRecursive("temp");
+    }
+}
+
 void FileSystemController::Reset() {
     std::scoped_lock lk{registration_lock};
     registrations.clear();
@@ -796,9 +804,9 @@ void LoopProcess(Core::System& system) {
 
     const auto FileSystemProxyFactory = [&] { return std::make_shared<FSP_SRV>(system); };
 
-    server_manager->RegisterNamedService("fsp-ldr", std::make_shared<FSP_LDR>(system));
-    server_manager->RegisterNamedService("fsp:pr", std::make_shared<FSP_PR>(system));
-    server_manager->RegisterNamedService("fsp-srv", std::move(FileSystemProxyFactory));
+    server_manager->RegisterNamedService("fsp-ldr", std::make_shared<FSP_LDR>(system), 61);
+    server_manager->RegisterNamedService("fsp-pr", std::make_shared<FSP_PR>(system), 61);
+    server_manager->RegisterNamedService("fsp-srv", std::move(FileSystemProxyFactory), 61);
     ServerManager::RunServer(std::move(server_manager));
 }
 

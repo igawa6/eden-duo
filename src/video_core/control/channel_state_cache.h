@@ -10,7 +10,7 @@
 #include <limits>
 #include <mutex>
 #include <optional>
-#include <ankerl/unordered_dense.h>
+#include "common/container/unordered_map.h"
 #include <vector>
 
 #include "common/common_types.h"
@@ -78,7 +78,7 @@ public:
 protected:
     static constexpr size_t UNSET_CHANNEL{(std::numeric_limits<size_t>::max)()};
 
-    P* channel_state;
+    P* channel_state = nullptr;
     size_t current_channel_id{UNSET_CHANNEL};
     size_t current_address_space{};
     Tegra::Engines::Maxwell3D* maxwell3d{};
@@ -88,14 +88,14 @@ protected:
 
     std::deque<P> channel_storage;
     std::deque<size_t> free_channel_ids;
-    ankerl::unordered_dense::map<s32, size_t> channel_map;
+    ::Common::unordered_map<s32, size_t> channel_map;
     std::vector<size_t> active_channel_ids;
     struct AddressSpaceRef {
         size_t ref_count;
         size_t storage_id;
         Tegra::MemoryManager* gpu_memory;
     };
-    ankerl::unordered_dense::map<size_t, AddressSpaceRef> address_spaces;
+    ::Common::unordered_map<size_t, AddressSpaceRef> address_spaces;
     mutable std::mutex config_mutex;
 
     virtual void OnGPUASRegister([[maybe_unused]] size_t map_id) {}

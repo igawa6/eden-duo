@@ -63,6 +63,24 @@ ScrollMetrics MeasureScroll(const Page& page, const ScrollRegion& region,
     m.row_h = std::max(0, m.row_h);
     const s64 rows = (m.count + m.cols - 1) / m.cols;
     m.content_h = rows * m.row_h + (rows > 0 ? std::max(0, region.pad) : 0);
+    // A single wrapped auto_w label is a document, with its real native-font height.
+    // Reuse the same measuring scope as rendering/hit tests; fixed-pitch lists keep
+    // their existing metrics. This avoids either truncating text or blank scroll tails.
+    if (region.row_h <= 0) {
+        for (const auto& w : page.widgets) {
+            if (w.scroll != region.id || w.repeat != 1 || !w.auto_w ||
+                RepeatElementCount(w, snapshot) != 1) {
+                continue;
+            }
+            Widget measured = w;
+            ApplyAutoWidth(measured, snapshot);
+            if (measured.auto_box) {
+                m.content_h = std::max<s64>(m.content_h,
+                    std::max<s64>(0, static_cast<s64>(measured.rect[1]) - region.rect[1]) +
+                    measured.rect[3] + std::max(0, region.pad));
+            }
+        }
+    }
     m.max_offset =
         static_cast<s32>(std::clamp<s64>(m.content_h - std::max(0, region.rect[3]), 0, 1'000'000));
     return m;

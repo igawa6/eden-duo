@@ -7,15 +7,20 @@
 #include <algorithm>
 #include <bitset>
 #include <chrono>
+#include <filesystem>
+#include <fstream>
 #include <optional>
 #include <thread>
-#include <ankerl/unordered_dense.h>
+#include "common/container/unordered_map.h"
+#include "common/container/unordered_set.h"
 #include <utility>
 #include <vector>
 
 #include <fmt/format.h>
 
 #include "common/assert.h"
+#include "common/fs/fs.h"
+#include "common/fs/path_util.h"
 #include "common/literals.h"
 #include <ranges>
 #include "common/settings.h"
@@ -153,7 +158,7 @@ VkFormatFeatureFlags GetFormatFeatures(VkFormatProperties properties, FormatType
     }
 }
 
-ankerl::unordered_dense::map<VkFormat, VkFormatProperties> GetFormatProperties(vk::PhysicalDevice physical) {
+::Common::unordered_map<VkFormat, VkFormatProperties> GetFormatProperties(vk::PhysicalDevice physical) {
     static constexpr std::array formats{
         VK_FORMAT_A1R5G5B5_UNORM_PACK16,
         VK_FORMAT_A2B10G10R10_SINT_PACK32,
@@ -305,7 +310,7 @@ ankerl::unordered_dense::map<VkFormat, VkFormatProperties> GetFormatProperties(v
         VK_FORMAT_EAC_R11G11_UNORM_BLOCK,
         VK_FORMAT_EAC_R11G11_SNORM_BLOCK,
     };
-    ankerl::unordered_dense::map<VkFormat, VkFormatProperties> format_properties;
+    ::Common::unordered_map<VkFormat, VkFormatProperties> format_properties;
     for (const auto format : formats) {
         format_properties.emplace(format, physical.GetFormatProperties(format));
     }
@@ -313,7 +318,7 @@ ankerl::unordered_dense::map<VkFormat, VkFormatProperties> GetFormatProperties(v
 }
 
 #if defined(__ANDROID__) && defined(ARCHITECTURE_arm64)
-void OverrideBcnFormats(ankerl::unordered_dense::map<VkFormat, VkFormatProperties>& format_properties) {
+void OverrideBcnFormats(::Common::unordered_map<VkFormat, VkFormatProperties>& format_properties) {
     // These properties are extracted from Adreno driver 512.687.0
     constexpr VkFormatFeatureFlags tiling_features{VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT |
                                                    VK_FORMAT_FEATURE_BLIT_SRC_BIT |
@@ -391,6 +396,17 @@ std::vector<const char*> ExtensionListForVulkan(
         output.push_back(extension.c_str());
     }
     return output;
+}
+
+constexpr std::array<char, 8> STATIC_CACHE_MAGIC_NUMBER{'e', 'd', 'e', 'n', 's', 't', 'p', 'c'};
+constexpr u32 STATIC_CACHE_VERSION = 1;
+
+std::filesystem::path StaticPipelineCacheFilename() {
+    const auto shader_dir = Common::FS::GetEdenPath(Common::FS::EdenPath::ShaderDir);
+    if (!Common::FS::CreateDir(shader_dir)) {
+        return {};
+    }
+    return shader_dir / "vulkan_static_pipelines.bin";
 }
 
 } // Anonymous namespace
@@ -508,17 +524,9 @@ Device::Device(VkInstance instance_, vk::PhysicalDevice physical_, VkSurfaceKHR 
         LOG_WARNING(Render_Vulkan, "Qualcomm drivers require scaled vertex format emulation.");
         has_broken_descriptor_aliasing = true;
         LOG_WARNING(Render_Vulkan, "Qualcomm drivers have broken descriptor aliasing.");
-        LOG_WARNING(Render_Vulkan, "Qualcomm drivers have broken custom border color.");
-        RemoveExtensionFeature(extensions.custom_border_color, features.custom_border_color,
-                               VK_EXT_CUSTOM_BORDER_COLOR_EXTENSION_NAME);
-        LOG_WARNING(Render_Vulkan, "Qualcomm drivers have broken border color swizzle.");
-        RemoveExtensionFeature(extensions.border_color_swizzle, features.border_color_swizzle,
-                               VK_EXT_BORDER_COLOR_SWIZZLE_EXTENSION_NAME);
         LOG_WARNING(Render_Vulkan, "Qualcomm drivers have broken color write enable.");
         RemoveExtensionFeature(extensions.color_write_enable, features.color_write_enable,
                                VK_EXT_COLOR_WRITE_ENABLE_EXTENSION_NAME);
-        LOG_WARNING(Render_Vulkan, "Qualcomm drivers have broken shader float controls.");
-        RemoveExtension(extensions.shader_float_controls, VK_KHR_SHADER_FLOAT_CONTROLS_EXTENSION_NAME);
         LOG_WARNING(Render_Vulkan, "Qualcomm drivers have broken shader atomic int64.");
         RemoveExtensionFeature(extensions.shader_atomic_int64, features.shader_atomic_int64,
                                VK_KHR_SHADER_ATOMIC_INT64_EXTENSION_NAME);
@@ -616,21 +624,6 @@ Device::Device(VkInstance instance_, vk::PhysicalDevice physical_, VkSurfaceKHR 
             LOG_WARNING(Render_Vulkan,
                         "AMD drivers (2026+) have broken float16 math");
             features.shader_float16_int8.shaderFloat16 = false;
-        }
-    }
-
-    if (is_qualcomm) {
-        const size_t sampler_limit = properties.properties.limits.maxSamplerAllocationCount;
-        if (sampler_limit > 0) {
-            constexpr size_t MIN_SAMPLER_BUDGET = 1024U;
-            const size_t reserved = sampler_limit / 4U;
-            const size_t derived_budget =
-                (std::max)(MIN_SAMPLER_BUDGET, sampler_limit - reserved);
-            sampler_heap_budget = derived_budget;
-            LOG_WARNING(Render_Vulkan,
-                        "Qualcomm driver reports max {} samplers; reserving {} (25%) and "
-                        "allowing Eden to use {} (75%) to avoid heap exhaustion",
-                        sampler_limit, reserved, sampler_heap_budget);
         }
     }
 
@@ -773,13 +766,98 @@ Device::Device(VkInstance instance_, vk::PhysicalDevice physical_, VkSurfaceKHR 
 
     vk::Check(vmaCreateAllocator(&allocator_info, &allocator));
 
+    owns_static_pipeline_cache = surface != VkSurfaceKHR{};
+    LoadStaticPipelineCache();
+
     // Initialize GPU logging if enabled
     InitializeGPULogging();
 }
 
 Device::~Device() {
+    SaveStaticPipelineCache();
     ShutdownGPULogging();
     vmaDestroyAllocator(allocator);
+}
+
+void Device::LoadStaticPipelineCache() {
+    const auto create = [this](size_t size, const void* data) {
+        static_pipeline_cache = logical.CreatePipelineCache({
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO,
+            .pNext = nullptr,
+            .flags = 0,
+            .initialDataSize = size,
+            .pInitialData = data,
+        });
+    };
+    if (!owns_static_pipeline_cache) {
+        create(0, nullptr);
+        return;
+    }
+    const auto filename = StaticPipelineCacheFilename();
+    if (filename.empty()) {
+        create(0, nullptr);
+        return;
+    }
+    std::vector<char> data;
+    try {
+        std::ifstream file(filename, std::ios::binary | std::ios::ate);
+        if (!file.is_open()) {
+            create(0, nullptr);
+            return;
+        }
+        file.exceptions(std::ifstream::failbit | std::ifstream::badbit);
+        const size_t total = static_cast<size_t>(file.tellg());
+        file.seekg(0, std::ios::beg);
+        std::array<char, 8> magic{};
+        u32 version{};
+        if (total < magic.size() + sizeof(version)) {
+            create(0, nullptr);
+            return;
+        }
+        file.read(magic.data(), magic.size())
+            .read(reinterpret_cast<char*>(&version), sizeof(version));
+        if (magic != STATIC_CACHE_MAGIC_NUMBER || version != STATIC_CACHE_VERSION) {
+            create(0, nullptr);
+            return;
+        }
+        data.resize(total - magic.size() - sizeof(version));
+        file.read(data.data(), static_cast<std::streamsize>(data.size()));
+    } catch (const std::ios_base::failure& e) {
+        create(0, nullptr);
+        return;
+    }
+    create(data.size(), data.empty() ? nullptr : data.data());
+}
+
+void Device::SaveStaticPipelineCache() const {
+    if (!owns_static_pipeline_cache || !static_pipeline_cache) {
+        return;
+    }
+    const auto filename = StaticPipelineCacheFilename();
+    if (filename.empty()) {
+        return;
+    }
+    size_t size = 0;
+    std::vector<char> data;
+    static_pipeline_cache.Read(&size, nullptr);
+    if (size == 0) {
+        return;
+    }
+    data.resize(size);
+    static_pipeline_cache.Read(&size, data.data());
+    try {
+        std::ofstream file(filename, std::ios::binary | std::ios::trunc);
+        file.exceptions(std::ofstream::failbit);
+        if (!file.is_open()) {
+            return;
+        }
+        file.write(STATIC_CACHE_MAGIC_NUMBER.data(), STATIC_CACHE_MAGIC_NUMBER.size())
+            .write(reinterpret_cast<const char*>(&STATIC_CACHE_VERSION),
+                   sizeof(STATIC_CACHE_VERSION))
+            .write(data.data(), static_cast<std::streamsize>(size));
+    } catch (const std::ios_base::failure& e) {
+        Common::FS::RemoveFile(filename);
+    }
 }
 
 VkFormat Device::GetSupportedFormat(VkFormat wanted_format, VkFormatFeatureFlags wanted_usage,
@@ -1146,6 +1224,11 @@ bool Device::GetSuitability(bool requires_swapchain) {
             VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_5_PROPERTIES_KHR;
         SetNext(next, properties.maintenance5);
     }
+    if (extensions.custom_border_color) {
+        properties.custom_border_color.sType =
+            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_CUSTOM_BORDER_COLOR_PROPERTIES_EXT;
+        SetNext(next, properties.custom_border_color);
+    }
 
     // Perform the property fetch.
     physical.GetProperties2(properties2);
@@ -1242,9 +1325,7 @@ void Device::RemoveUnsuitableExtensions() {
     // VK_EXT_border_color_swizzle
     if (extensions.border_color_swizzle) {
         extensions.border_color_swizzle =
-            extensions.custom_border_color &&
-            features.border_color_swizzle.borderColorSwizzle &&
-            features.border_color_swizzle.borderColorSwizzleFromImage;
+            extensions.custom_border_color && features.border_color_swizzle.borderColorSwizzle;
     }
     RemoveExtensionFeatureIfUnsuitable(extensions.border_color_swizzle,
                                        features.border_color_swizzle,
@@ -1406,6 +1487,11 @@ void Device::RemoveUnsuitableExtensions() {
                                VK_KHR_PIPELINE_EXECUTABLE_PROPERTIES_EXTENSION_NAME);
     }
 
+    // VK_KHR_shader_quad_control
+    extensions.shader_quad_control = features.shader_quad_control.shaderQuadControl;
+    RemoveExtensionFeatureIfUnsuitable(extensions.shader_quad_control, features.shader_quad_control,
+                                       VK_KHR_SHADER_QUAD_CONTROL_EXTENSION_NAME);
+
     // VK_KHR_workgroup_memory_explicit_layout
     extensions.workgroup_memory_explicit_layout =
         features.workgroup_memory_explicit_layout.workgroupMemoryExplicitLayout &&
@@ -1484,17 +1570,34 @@ void Device::SetupFamilies(VkSurfaceKHR surface) {
     }
     if (graphics) {
         graphics_family = *graphics;
+        graphics_family_sparse_binding =
+            (queue_family_properties[*graphics].queueFlags & VK_QUEUE_SPARSE_BINDING_BIT) != 0;
     }
     if (present) {
         present_family = *present;
     }
 }
 
-std::optional<size_t> Device::GetSamplerHeapBudget() const {
-    if (sampler_heap_budget == 0) {
-        return std::nullopt;
+bool Device::TryReserveCustomBorderColorSamplers(size_t count) const {
+    const size_t limit = properties.custom_border_color.maxCustomBorderColorSamplers;
+    if (limit == 0) {
+        return true;
     }
-    return sampler_heap_budget;
+    size_t used = custom_border_color_samplers_used.load(std::memory_order_relaxed);
+    while (used + count <= limit) {
+        if (custom_border_color_samplers_used.compare_exchange_weak(
+                used, used + count, std::memory_order_relaxed, std::memory_order_relaxed)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void Device::ReleaseCustomBorderColorSamplers(size_t count) const {
+    if (count == 0) {
+        return;
+    }
+    custom_border_color_samplers_used.fetch_sub(count, std::memory_order_relaxed);
 }
 
 u64 Device::GetDeviceMemoryUsage() const {
@@ -1576,7 +1679,7 @@ void Device::CollectToolingInfo() {
 std::vector<VkDeviceQueueCreateInfo> Device::GetDeviceQueueCreateInfos() const {
     static constexpr float QUEUE_PRIORITY = 1.0f;
 
-    ankerl::unordered_dense::set<u32> unique_queue_families{graphics_family, present_family};
+    ::Common::unordered_set<u32> unique_queue_families{graphics_family, present_family};
     std::vector<VkDeviceQueueCreateInfo> queue_cis;
     queue_cis.reserve(unique_queue_families.size());
 

@@ -66,7 +66,9 @@ struct UserCallbacks : public TranslateCallbacks {
 
     // All reads through this callback are 4-byte aligned.
     // Memory must be interpreted as little endian.
-    std::optional<std::uint32_t> MemoryReadCode(VAddr vaddr) override { return MemoryRead32(vaddr); }
+    std::optional<std::uint32_t> MemoryReadCode(VAddr vaddr) override {
+        return std::uint32_t(MemoryRead(vaddr, sizeof(std::uint32_t)));
+    }
 
     // This function is called before the instruction at pc is read.
     // IR code can be emitted by the callee prior to instruction handling.
@@ -80,16 +82,10 @@ struct UserCallbacks : public TranslateCallbacks {
 
     // Reads through these callbacks may not be aligned.
     // Memory must be interpreted as if ENDIANSTATE == 0, endianness will be corrected by the JIT.
-    virtual std::uint8_t MemoryRead8(VAddr vaddr) = 0;
-    virtual std::uint16_t MemoryRead16(VAddr vaddr) = 0;
-    virtual std::uint32_t MemoryRead32(VAddr vaddr) = 0;
-    virtual std::uint64_t MemoryRead64(VAddr vaddr) = 0;
+    virtual std::uint64_t MemoryRead(VAddr vaddr, std::size_t size) = 0;
 
     // Writes through these callbacks may not be aligned.
-    virtual void MemoryWrite8(VAddr vaddr, std::uint8_t value) = 0;
-    virtual void MemoryWrite16(VAddr vaddr, std::uint16_t value) = 0;
-    virtual void MemoryWrite32(VAddr vaddr, std::uint32_t value) = 0;
-    virtual void MemoryWrite64(VAddr vaddr, std::uint64_t value) = 0;
+    virtual void MemoryWrite(VAddr vaddr, std::uint64_t value, std::size_t size) = 0;
 
     // Writes through these callbacks may not be aligned.
     virtual bool MemoryWriteExclusive8(VAddr /*vaddr*/, std::uint8_t /*value*/, std::uint8_t /*expected*/) { return false; }
@@ -159,14 +155,23 @@ struct UserConfig {
     /// Maximum size is limited by the maximum length of a x86_64 / arm64 jump.
     std::uint32_t code_cache_size = 128 * 1024 * 1024;  // bytes
 
-    /// Masks out the first N bits in host pointers from the page table.
+    /// Applies a bit mask to the bits in host pointers from the page table.
     /// The intention behind this is to allow users of Dynarmic to pack attributes in the
     /// same integer and update the pointer attribute pair atomically.
-    /// If the configured value is 3, all pointers will be forcefully aligned to 8 bytes.
-    std::int32_t page_table_pointer_mask_bits = 0;
+    /// If the configured value is ~(0b111ULL), all pointers will be forcefully aligned to 8 bytes.
+    std::uint64_t page_table_pointer_mask = 0;
 
-    // Log2 of the size per page entry, value should be either 3 or 4
-    std::size_t page_table_log2_stride = 3;
+    /// Log2 of the size per page entry, value should be either 3 or 4
+    std::uint32_t page_table_log2_stride = 3;
+
+    /// Setting this value has Dynarmic check the specified bit of the page pointer provided by page table.
+    /// If the bit is set to 1, Dynarmic will treat it as unmapped.
+    /// This bit should be included as part of `page_table_pointer_mask_bits`.
+    std::optional<std::uint8_t> page_table_marked_bit = std::nullopt;
+
+    /// If this value is set, Dynarmic will sign extend the page table pointer by this bit.
+    /// Useful for compacting bits into the page table and should be used as part of `page_table_pointer_mask`.
+    std::optional<std::uint8_t> page_table_sign_extension = std::nullopt;
 
     /// Select the architecture version to use.
     /// There are minor behavioural differences between versions.

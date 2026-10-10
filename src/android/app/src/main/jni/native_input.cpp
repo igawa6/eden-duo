@@ -26,7 +26,7 @@
 #include "video_core/dsmod/aux_routing.h"
 #include "native.h"
 
-ankerl::unordered_dense::map<std::string, std::unique_ptr<AndroidConfig>> map_profiles;
+::Common::unordered_map<std::string, std::unique_ptr<AndroidConfig>> map_profiles;
 
 bool IsHandheldOnly() {
     const auto npad_style_set =

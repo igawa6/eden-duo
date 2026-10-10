@@ -268,7 +268,7 @@ void ModRuntime::InitializeModuleWriteExtensions() {
                 return EDEN_DSMOD_FALSE;
             }
         }
-        auto& memory = rt.system.ApplicationMemory();
+        auto& memory = rt.OwnerMemory();
         bool applied = false;
         const auto apply = [&] {
             std::array<u8, EDEN_DSMOD_WRITE_BATCH_MAX_BYTES> now{};
@@ -294,6 +294,9 @@ void ModRuntime::InitializeModuleWriteExtensions() {
 }
 
 ModuleActionOutcome ModRuntime::RunModuleAction(const std::string& name, s64 argument) {
+    if (!IsOwnerContext()) {
+        return ModuleActionOutcome::Declined;
+    }
     if (!game_module || !game_module_instance) {
         return ModuleActionOutcome::NotRun;
     }
@@ -429,6 +432,9 @@ void ModRuntime::DrainModuleImages() {
 }
 
 bool ModRuntime::LoadModuleImageSync(const std::string& key, Image& out) {
+    if (!IsOwnerContext()) {
+        return false;
+    }
     if (!ModuleImageKeyOk(key)) // runtime 16: 4096 (was 256)
         return false;
     std::scoped_lock loader_lock{module_loader_mutex};
@@ -502,6 +508,9 @@ std::shared_ptr<const Image> ModRuntime::GetModuleImage(const std::string& key) 
 }
 
 std::vector<u8> ModRuntime::LoadModuleData(const std::string& key) {
+    if (!IsOwnerContext()) {
+        return {};
+    }
     // Runtime 12 "module:" byte source. Serialized with module shutdown (module_data_mutex); the
     // module may block here while it generates the data.
     constexpr size_t MaxModuleData = size_t{64} << 20;

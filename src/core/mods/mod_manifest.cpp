@@ -40,6 +40,7 @@
 #include "core/file_sys/vfs/vfs_types.h"
 #include "core/hle/service/filesystem/filesystem.h"
 #include "core/mods/mod_nx_assets.h"
+#include "core/mods/mod_package_io.h"
 #include "core/mods/mod_runtime.h"
 #include "core/mods/mod_runtime_shared.h"
 #include "core/mods/mod_settings.h"
@@ -955,6 +956,8 @@ std::shared_ptr<const MapWidgetExtras> ParseMapWidgetExtras(const nlohmann::json
                                      "view_rect_y1_bind",
                                      "view_rect_pad",
                                      "image_bind",
+                                     "marker_rotate_bind",
+                                     "marker_tint",
                                      "overlays"};
     if (std::ranges::none_of(keys, [&](const char* k) { return w.contains(k); })) {
         return nullptr;
@@ -987,6 +990,7 @@ std::shared_ptr<const MapWidgetExtras> ParseMapWidgetExtras(const nlohmann::json
         st.outline_color = ParseColor(ls, "outline_color", st.outline_color);
         st.outline = static_cast<s32>(ls.value("outline", st.outline));
         st.opacity = std::clamp(JsonFloat(ls, "opacity", st.opacity), 0.0f, 1.0f);
+        st.avoid_overlap = ls.value("avoid_overlap", st.avoid_overlap);
     }
     extras->on_map_tap = w.value("on_map_tap", std::string{});
     extras->on_marker_tap = w.value("on_marker_tap", std::string{});
@@ -1002,6 +1006,8 @@ std::shared_ptr<const MapWidgetExtras> ParseMapWidgetExtras(const nlohmann::json
     extras->view_rect_pad = std::max(0.0f, JsonFloat(w, "view_rect_pad", 0.0f));
     // Runtime 14: a bound base picture and world-space overlays.
     extras->image_bind = w.value("image_bind", std::string{});
+    extras->marker_rotate_bind = w.value("marker_rotate_bind", std::string{});
+    extras->marker_tint = ParseColor(w, "marker_tint", 0xFFFFFFFFu);
     if (w.contains("overlays") && w.at("overlays").is_array()) {
         for (const auto& o : w.at("overlays")) {
             if (!o.is_object()) {
@@ -1010,6 +1016,8 @@ std::shared_ptr<const MapWidgetExtras> ParseMapWidgetExtras(const nlohmann::json
             MapWidgetExtras::Overlay ov;
             ov.src = o.value("src", std::string{});
             ov.src_bind = o.value("src_bind", std::string{});
+            ov.src_detail_bind = o.value("src_detail_bind", std::string{});
+            ov.detail_threshold = std::max(1.0f, JsonFloat(o, "detail_threshold", 210.0f));
             ov.x0 = JsonFloat(o, "x0", 0.0f);
             ov.y0 = JsonFloat(o, "y0", 0.0f);
             ov.x1 = JsonFloat(o, "x1", 0.0f);
@@ -2181,21 +2189,7 @@ void ParseManifestJson(const nlohmann::json& json, Manifest& manifest) {
     }
 }
 
-std::optional<nlohmann::json> ReadJson(const FileSys::VirtualFile& file) {
-    if (!file) {
-        return std::nullopt;
-    }
-    std::vector<u8> bytes(file->GetSize());
-    if (file->Read(bytes.data(), bytes.size(), 0) != bytes.size()) {
-        return std::nullopt;
-    }
-    try {
-        return nlohmann::json::parse(bytes.begin(), bytes.end());
-    } catch (const std::exception& e) {
-        LOG_ERROR(Core, "DSMod: JSON parse failed: {}", e.what());
-        return std::nullopt;
-    }
-}
+
 } // namespace
 
 bool ParseMapAreasJson(const nlohmann::json& areas,
@@ -2214,6 +2208,42 @@ bool ParseMapAreasJson(const nlohmann::json& areas,
 bool ParseDualScreenManifest(const nlohmann::json& json, Manifest& out) noexcept {
     try {
         ParseManifestJson(json, out);
+        return true;
+    } catch (const std::exception&) {
+        return false;
+    }
+}
+
+bool PrepareDualScreenManifestReload(const nlohmann::json& json, const Manifest& current,
+                                     Manifest& out) noexcept {
+    try {
+        if (!json.is_object()) {
+            return false;
+        }
+        if (const auto title = json.find("title_id"); title != json.end()) {
+            if (!title->is_string()) {
+                return false;
+            }
+            auto value = title->get<std::string>();
+            std::ranges::transform(value, value.begin(), [](unsigned char c) {
+                return static_cast<char>(std::toupper(c));
+            });
+            if (value != fmt::format("{:016X}", current.title_id)) {
+                return false;
+            }
+        }
+        Manifest candidate = current;
+        candidate.pages.clear();
+        candidate.actions.clear();
+        candidate.tables.clear();
+        candidate.table_max_len.clear();
+        candidate.derived.clear();
+        candidate.page_binds.clear();
+        ParseManifestJson(json, candidate);
+        if (candidate.format != 1 || (!candidate.debug_page && candidate.pages.empty())) {
+            return false;
+        }
+        out = std::move(candidate);
         return true;
     } catch (const std::exception&) {
         return false;
@@ -2410,7 +2440,7 @@ std::optional<Manifest> ModRuntime::Discover(System& system, u64 title_id,
             continue;
         }
         try {
-            const auto manifest_json = ReadJson(ds_dir->GetFile("manifest.json"));
+            const auto manifest_json = ReadPackageJson(ds_dir->GetFile("manifest.json"));
             if (!manifest_json) {
                 continue;
             }
@@ -2439,7 +2469,12 @@ std::optional<Manifest> ModRuntime::Discover(System& system, u64 title_id,
             // package for a newer runtime may use keys, formats or module features this build
             // cannot parse. It is selected (it is the user's package for this game) but replaced
             // by the built-in "update Eden" page.
-            const auto package_json = ReadJson(subdir->GetFile("package.json"));
+            const auto package_file = subdir->GetFile("package.json");
+            const auto package_json = ReadPackageJson(package_file);
+            if (package_file && (!package_json || !package_json->is_object())) {
+                LOG_WARNING(Core, "DSMod: malformed package metadata in {}", subdir->GetName());
+                continue;
+            }
             {
                 const u32 required =
                     PackageMinRuntime(&*manifest_json, package_json ? &*package_json : nullptr);
@@ -2486,7 +2521,7 @@ std::optional<Manifest> ModRuntime::Discover(System& system, u64 title_id,
             }
             for (const auto& candidate :
                  {build_id_short + ".json", build_id_lower + ".json", std::string{"data.json"}}) {
-                const auto data_json = ReadJson(ds_dir->GetFile(candidate));
+                const auto data_json = ReadPackageJson(ds_dir->GetFile(candidate));
                 if (!data_json) {
                     continue;
                 }
@@ -2654,49 +2689,50 @@ void ModRuntime::ReloadManifest() {
         LOG_WARNING(Core, "DSMod reload: no asset dir");
         return;
     }
-    const auto mj = ReadJson(manifest.asset_dir->GetFile("manifest.json"));
-    if (!mj) {
+    const auto mj = ReadPackageJson(manifest.asset_dir->GetFile("manifest.json"));
+    if (!mj || !mj->is_object()) {
         // Nothing may change then: the data file's "derived" would otherwise be appended to the
         // old list, and every cache below would be dropped for a package that did not reload.
         LOG_WARNING(Core, "DSMod reload skipped: manifest.json does not parse");
         return;
     }
-    // The redraw worker reads pages, points and derived values: stop it before they are rebuilt
-    // (it restarts on the next dispatch).
+    const auto package_parent = manifest.asset_dir->GetParentDirectory();
+    const auto package_file = package_parent ? package_parent->GetFile("package.json") : nullptr;
+    const auto package_json = ReadPackageJson(package_file);
+    if (package_file && (!package_json || !package_json->is_object())) {
+        LOG_WARNING(Core, "DSMod reload skipped: invalid package.json");
+        return;
+    }
+    if (const u32 required = PackageMinRuntime(&*mj, package_json ? &*package_json : nullptr);
+        required > DualScreenRuntimeVersion) {
+        LOG_WARNING(Core, "DSMod reload skipped: package needs runtime {} (have {}); restart",
+                    required, DualScreenRuntimeVersion);
+        return;
+    }
+    Manifest replacement;
+    if (!PrepareDualScreenManifestReload(*mj, manifest, replacement)) {
+        LOG_WARNING(Core, "DSMod reload skipped: invalid or unusable manifest.json");
+        return;
+    }
+    // Validate the complete replacement before stopping a worker or shutting down the module.
     StopRedrawWorker();
     {
-        if (const u32 required = PackageMinRuntime(&*mj, nullptr);
-            required > DualScreenRuntimeVersion) {
-            LOG_WARNING(Core,
-                        "DSMod reload skipped: the package now needs runtime {} (have {}); "
-                        "restart the game",
-                        required, DualScreenRuntimeVersion);
-            return;
-        }
         ShutdownGameModule();
-        // Wipe what the file owns before re-reading it: emplace keeps the first value it saw, so a
-        // stale action would survive an edit and quietly ignore the change.
-        manifest.pages.clear();
-        manifest.actions.clear();
-        manifest.tables.clear();
-        manifest.table_max_len.clear();
-        manifest.derived.clear();
-        derived_order_list = nullptr; // re-parsed in place: recompute the evaluation order
-        shared_page.reset();          // pages re-parsed: no job may be handed the old copy
-        manifest.page_binds.clear();  // re-read fresh, not accumulated across reloads
-        ParseManifestJson(*mj, manifest);
+        manifest = std::move(replacement);
+        derived_order_list = nullptr;
+        shared_page.reset();
         if (!mj->contains("nav")) {
             // As Discover: a min_runtime >= 17 in package.json (next to dualscreen/) turns the
             // default navigation on too.
             const auto parent = manifest.asset_dir->GetParentDirectory();
-            const auto pj = parent ? ReadJson(parent->GetFile("package.json")) : std::nullopt;
+            const auto pj = parent ? ReadPackageJson(parent->GetFile("package.json")) : std::nullopt;
             if (pj && NavDefaultOn(&*mj, &*pj)) {
                 manifest.nav.enabled = true;
             }
         }
     }
     if (!manifest.data_file.empty()) {
-        if (const auto dj = ReadJson(manifest.asset_dir->GetFile(manifest.data_file))) {
+        if (const auto dj = ReadPackageJson(manifest.asset_dir->GetFile(manifest.data_file))) {
             manifest.uses_clock_keys = manifest.uses_clock_keys || JsonReferencesClockKeys(*dj);
             if (dj->contains("points")) {
                 manifest.points.clear();

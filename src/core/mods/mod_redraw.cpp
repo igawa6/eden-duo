@@ -498,8 +498,10 @@ u64 ModRuntime::WidgetDependencyHash(const Widget& w, const StateSnapshot& s,
         }
         // Runtime 14: the bound base picture and the overlays' pictures / gates.
         add(w.map_extras->image_bind);
+        add(w.map_extras->marker_rotate_bind);
         for (const auto& ov : w.map_extras->overlays) {
             add(ov.src_bind);
+            add(ov.src_detail_bind);
             add(ov.show.point);
         }
     }

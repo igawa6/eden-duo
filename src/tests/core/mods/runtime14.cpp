@@ -3,6 +3,7 @@
 // Runtime 14: horizontal swipe (SwipeTracker, the swipe hit test) and its manifest keys; the map
 // widget's bound default view (view_rect_*_bind, mod_map_view_rect.h).
 #include <cmath>
+#include <limits>
 #include <map>
 #include <memory>
 #include <catch2/catch_test_macros.hpp>
@@ -682,4 +683,152 @@ TEST_CASE("DSMod battle map: manifest keys", "[dsmod][runtime14][battle_map]") {
     REQUIRE(dms[1].icon_src_bind.empty());
     REQUIRE(dms[1].size_world == 0.0f);
     REQUIRE(dms[1].bar_bind.empty());
+}
+
+TEST_CASE("DSMod battle map: offscreen overlays do not request texture decoding",
+          "[dsmod][runtime14][battle_map]") {
+    BattleMap map;
+    auto extras = std::make_shared<MapWidgetExtras>(*map.page.widgets[0].map_extras);
+    auto offscreen = extras->overlays[0];
+    offscreen.src_bind.clear();
+    offscreen.src = "offscreen.tile";
+    offscreen.x0 = 101;
+    offscreen.x1 = 120;
+    extras->overlays.push_back(offscreen);
+    map.page.widgets[0].map_extras = extras;
+    unsigned visible_requests = 0, offscreen_requests = 0;
+    const auto images = [&](const std::string& key) -> std::shared_ptr<const Image> {
+        if (key == "offscreen.tile")
+            ++offscreen_requests;
+        if (key == "img.green")
+            ++visible_requests;
+        return map.Images()(key);
+    };
+    Canvas canvas;
+    canvas.Resize(100, 100);
+    StateSnapshot state;
+    state.texts["bt.ov"] = "img.green";
+    REQUIRE(RenderPage(canvas, map.manifest, map.page, state, images));
+    REQUIRE(visible_requests > 0);
+    REQUIRE(offscreen_requests == 0);
+    REQUIRE(Px(canvas, 40, 30) == Green);
+    // Bringing the same tile into the viewport must request it on the next draw.
+    extras->overlays.back().x0 = 60;
+    extras->overlays.back().x1 = 80;
+    REQUIRE(RenderPage(canvas, map.manifest, map.page, state, images));
+    REQUIRE(offscreen_requests > 0);
+}
+
+TEST_CASE("DSMod map: detail thresholds retain overview while loading and skip offscreen tiles",
+          "[dsmod][map-detail]") {
+    BattleMap map;
+    auto extras = std::make_shared<MapWidgetExtras>(*map.page.widgets[0].map_extras);
+    auto& ov = extras->overlays[0];
+    ov.src_detail_bind = "detail";
+    ov.detail_threshold = 30.0f;
+    map.page.widgets[0].map_extras = extras;
+    StateSnapshot state;
+    state.texts["bt.ov"] = "img.green";
+    state.texts["detail"] = "detail.yellow";
+    unsigned detail_requests = 0;
+    bool ready = false;
+    const auto images = [&](const std::string& key) -> std::shared_ptr<const Image> {
+        if (key == "detail.yellow") {
+            ++detail_requests;
+            return ready ? Solid(Yellow) : nullptr;
+        }
+        return map.Images()(key);
+    };
+    Canvas canvas;
+    canvas.Resize(100, 100);
+    ViewState views;
+    views["m"].zoom = 1.0f;
+    REQUIRE(RenderPage(canvas, map.manifest, map.page, state, images, views));
+    REQUIRE(detail_requests == 0);
+    REQUIRE(Px(canvas, 40, 30) == Green);
+    views["m"].zoom = 2.0f;
+    REQUIRE(RenderPage(canvas, map.manifest, map.page, state, images, views));
+    REQUIRE(detail_requests > 0);
+    REQUIRE(Px(canvas, 70, 60) == Green);
+    ready = true;
+    REQUIRE(RenderPage(canvas, map.manifest, map.page, state, images, views));
+    REQUIRE(Px(canvas, 70, 60) == Yellow);
+    ov.x0 = 110;
+    ov.x1 = 130;
+    detail_requests = 0;
+    REQUIRE(RenderPage(canvas, map.manifest, map.page, state, images, views));
+    REQUIRE(detail_requests == 0);
+}
+
+TEST_CASE(
+    "DSMod map: rotated tinted marker is clipped and its dirty prediction contains every pixel",
+    "[dsmod][map-heading]") {
+    BattleMap map;
+    auto& widget = map.page.widgets[0];
+    auto extras = std::make_shared<MapWidgetExtras>(*widget.map_extras);
+    extras->overlays.clear();
+    extras->marker_rotate_bind = "heading";
+    extras->marker_tint = Yellow;
+    widget.map_extras = extras;
+    widget.marker_src = "img.white";
+    widget.marker_size = {18, 8};
+    widget.marker_anchor = {0.25f, 0.5f};
+    StateSnapshot state;
+    state.floats[widget.marker_x_bind = "player.x"] = 50.0;
+    state.floats[widget.marker_y_bind = "player.y"] = 50.0;
+    for (const double angle : {0.0, 45.0, 90.0, 225.0, std::numeric_limits<double>::quiet_NaN()}) {
+        state.floats["heading"] = angle;
+        Canvas canvas;
+        canvas.Resize(100, 100);
+        MapDrawRecords records;
+        REQUIRE(RenderPage(canvas, map.manifest, map.page, state, map.Images(), {}, nullptr, {}, {},
+                           nullptr, nullptr, {}, &records));
+        REQUIRE(records.size() == 1);
+        const auto predicted =
+            PredictMapMarkerBox(map.manifest, widget, state, records[0], map.Images());
+        unsigned painted = 0;
+        for (s32 y = 0; y < 100; ++y)
+            for (s32 x = 0; x < 100; ++x) {
+                if (Px(canvas, x, y) != Yellow)
+                    continue;
+                ++painted;
+                REQUIRE(x >= predicted[0]);
+                REQUIRE(x < predicted[0] + predicted[2]);
+                REQUIRE(y >= predicted[1]);
+                REQUIRE(y < predicted[1] + predicted[3]);
+            }
+        REQUIRE(painted > 100);
+        if (angle == 90.0) {
+            REQUIRE(Px(canvas, 50, 61) == Yellow);
+            REQUIRE(Px(canvas, 61, 50) == Blue);
+        }
+    }
+    widget.rect = {10, 10, 80, 80};
+    state.floats["player.x"] = 0.0;
+    state.floats["heading"] = 45.0;
+    Canvas canvas;
+    canvas.Resize(100, 100);
+    REQUIRE(RenderPage(canvas, map.manifest, map.page, state, map.Images()));
+    for (s32 y = 0; y < 100; ++y)
+        for (s32 x = 0; x < 10; ++x)
+            REQUIRE(Px(canvas, x, y) != Yellow);
+}
+
+TEST_CASE("DSMod map: heading and detail keys are optional", "[dsmod][map-heading][map-detail]") {
+    const auto json = nlohmann::json::parse(R"({"format":1,"pages":[{"id":"p","widgets":[
+      {"type":"map","rect":[0,0,100,100],"marker_rotate_bind":"heading","marker_tint":"#FFFFFF00",
+       "overlays":[{"src":"low","src_detail_bind":"high","detail_threshold":210,
+                    "x0":0,"y0":0,"x1":10,"y1":10}]},
+      {"type":"map","rect":[0,0,100,100],"overlays":[{"src":"old","x0":0,"y0":0,"x1":10,"y1":10}]}]}]})");
+    Manifest manifest;
+    REQUIRE(ParseDualScreenManifest(json, manifest));
+    const auto& current = *manifest.pages[0].widgets[0].map_extras;
+    REQUIRE(current.marker_rotate_bind == "heading");
+    REQUIRE(current.marker_tint == Yellow);
+    REQUIRE(current.overlays[0].src_detail_bind == "high");
+    REQUIRE(current.overlays[0].detail_threshold == 210.0f);
+    const auto& previous = *manifest.pages[0].widgets[1].map_extras;
+    REQUIRE(previous.marker_rotate_bind.empty());
+    REQUIRE(previous.marker_tint == White);
+    REQUIRE(previous.overlays[0].src_detail_bind.empty());
 }

@@ -8,12 +8,14 @@
 #include <cinttypes>
 #include <cstring>
 #include <limits>
+#include <span>
 #include <vector>
 
 #include "common/common_funcs.h"
 #include "common/hex_util.h"
 #include "common/logging.h"
 #include "common/lz4_compression.h"
+#include "common/zbic_compression.h"
 #include "common/settings.h"
 #include "common/swap.h"
 #include "core/core.h"
@@ -111,11 +113,36 @@ std::optional<VAddr> AppLoader_NSO::LoadModule(Kernel::KProcess& process, Core::
         for (std::size_t i = 0; i < nso_header.segments.size(); ++i) {
             nso_file.Read(compressed_data.data(), nso_header.segments_compressed_size[i], nso_header.segments[i].offset);
             if (nso_header.IsSegmentCompressed(i)) {
-                int r = Common::Compression::DecompressDataLZ4(decompressed_size.data(), nso_header.segments[i].size, compressed_data.data(), nso_header.segments_compressed_size[i]);
-                ASSERT(r == int(nso_header.segments[i].size));
-                std::memcpy(codeset.memory.data() + module_start + nso_header.segments[i].location, decompressed_size.data(), nso_header.segments[i].size);
+                if (nso_header.IsZBICCompressed()) {
+                    // ZBIC compression
+                    const int r = Common::Compression::DecompressDataZBIC(
+                        std::span<u8>{decompressed_size}.first(nso_header.segments[i].size),
+                        std::span<const u8>{compressed_data}.first(nso_header.segments_compressed_size[i])
+                    );
+                    ASSERT(r > 0);
+                } else {
+                    // LZ4 compression
+                    int r = Common::Compression::DecompressDataLZ4(
+                        decompressed_size.data(),
+                        nso_header.segments[i].size,
+                        compressed_data.data(),
+                        nso_header.segments_compressed_size[i]
+                    );
+                    ASSERT(r == int(nso_header.segments[i].size));
+                }
+
+                std::memcpy(
+                    codeset.memory.data() + module_start + nso_header.segments[i].location,
+                    decompressed_size.data(),
+                    nso_header.segments[i].size
+                );
             } else {
-                std::memcpy(codeset.memory.data() + module_start + nso_header.segments[i].location, compressed_data.data(), nso_header.segments[i].size);
+                // Not compressed
+                std::memcpy(
+                    codeset.memory.data() + module_start + nso_header.segments[i].location,
+                    compressed_data.data(),
+                    nso_header.segments[i].size
+                );
             }
             codeset.segments[i].addr = module_start + nso_header.segments[i].location;
             codeset.segments[i].offset = module_start + nso_header.segments[i].location;
@@ -180,7 +207,7 @@ std::optional<VAddr> AppLoader_NSO::LoadModule(Kernel::KProcess& process, Core::
                 return std::nullopt;
             }
             mailbox_address = load_base + image_size;
-            if (load_into_process) {
+            if (load_into_process && load_plan->GuestCodeSize() == 0) {
                 auto module_image = std::span<u8>{codeset.memory}.subspan(module_start);
                 if (!load_plan->Apply(module_image, load_base + module_start, mailbox_address)) {
                     LOG_ERROR(Loader, "Dual-screen load plan byte validation failed for {}", name);
@@ -234,6 +261,32 @@ std::optional<VAddr> AppLoader_NSO::LoadModule(Kernel::KProcess& process, Core::
     }
 #endif
 
+    if (load_plan && load_plan->GuestCodeSize() != 0) {
+        const u64 code_size = load_plan->GuestCodeSize();
+        if (code_size > std::numeric_limits<u32>::max() - image_size ||
+            load_base > std::numeric_limits<VAddr>::max() - image_size - code_size) {
+            LOG_ERROR(Loader, "Dual-screen guest code is too large for {}", name);
+            return std::nullopt;
+        }
+        if (load_into_process) {
+            const auto offset = codeset.memory.size();
+            if (offset % Core::Memory::YUZU_PAGESIZE != 0) {
+                LOG_ERROR(Loader, "Dual-screen guest code placement is unaligned for {}", name);
+                return std::nullopt;
+            }
+            codeset.memory.resize(offset + code_size);
+            auto& segment = codeset.CompanionCodeSegment();
+            segment = {offset, offset, static_cast<u32>(code_size)};
+            auto module_image = std::span<u8>{codeset.memory}.subspan(module_start);
+            if (!load_plan->Apply(module_image, load_base + module_start, mailbox_address,
+                                  load_base + offset)) {
+                LOG_ERROR(Loader, "Dual-screen guest code validation failed for {}", name);
+                return std::nullopt;
+            }
+        }
+        image_size += static_cast<u32>(code_size);
+    }
+
     // If we aren't actually loading (i.e. just computing the process code layout), we are done
     if (!load_into_process) {
 #ifdef HAS_NCE
@@ -253,7 +306,10 @@ std::optional<VAddr> AppLoader_NSO::LoadModule(Kernel::KProcess& process, Core::
 
     // Apply cheats if they exist and the program has a valid title ID
     if (pm) {
-        system.SetApplicationProcessBuildID(nso_header.build_id);
+        // TODO(Maufeat): Check if there is a better way to check
+        if (name == "main")
+            system.SetApplicationProcessBuildID(nso_header.build_id);
+
         const auto cheats = pm->CreateCheatList(nso_header.build_id);
         if (!cheats.empty()) {
             system.RegisterCheatList(cheats, nso_header.build_id, load_base, image_size);
@@ -267,7 +323,8 @@ std::optional<VAddr> AppLoader_NSO::LoadModule(Kernel::KProcess& process, Core::
     }
 
     if (load_plan) {
-        system.SetDualScreenGuestMailbox(mailbox_address, load_plan->MailboxSize());
+        system.SetDualScreenGuestMailbox(mailbox_address, load_plan->MailboxSize(),
+                                         load_plan->MailboxEpochOffset());
     }
 
     // Load codeset for current process

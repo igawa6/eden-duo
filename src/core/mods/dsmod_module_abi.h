@@ -193,8 +193,12 @@ struct EdenDsmodHostApi {
     EdenDsmodBool (*poll_guest_result)(void* userdata, EdenDsmodGuestResult* result);
     size_t (*read_romfs)(void* userdata, const char* path, uint64_t offset, void* output,
                          size_t size);
+    // Optional host queries (no struct/ABI growth): __aux_present answers
+    // whether the auxiliary surface exists. Older hosts return the caller's fallback.
     int64_t (*get_i64)(void* userdata, const char* name, int64_t fallback);
     double (*get_f64)(void* userdata, const char* name, double fallback);
+    // Optional __page query: current underlying page ID, borrowed during the callback.
+    // Older hosts and asset-worker copies return null; callers must handle absence.
     const char* (*get_text)(void* userdata, const char* name);
 };
 

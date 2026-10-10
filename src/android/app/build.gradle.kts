@@ -69,7 +69,7 @@ android {
         targetSdk = 36
         // Eden Duo release version (shown to users); versionCode stays time-based so every new
         // build installs as an update.
-        versionName = "1.1.0"
+        versionName = "1.2.0"
         versionCode = autoVersion
 
         externalNativeBuild {
@@ -90,7 +90,9 @@ android {
                         "-DBUILD_TESTING=OFF",
                         "-DYUZU_TESTS=OFF",
                         "-DDYNARMIC_TESTS=OFF",
-                        *extraCMakeArgs.toTypedArray()
+                        *extraCMakeArgs.toTypedArray(),
+                        // Duo must never offer an upstream Eden APK as its own update.
+                        "-DENABLE_UPDATE_CHECKER=OFF"
                     )
                 )
 
@@ -300,6 +302,13 @@ android {
         // apply nightly suffix I/A
         resValue("string", "app_name_suffixed", "$currentName$suffix")
         resValue("string", "app_name", "$currentName$suffix")
+    }
+
+    sourceSets {
+        named("main") {
+            java.srcDir("${edenDir}/externals/generated/sdl/java")
+            kotlin.srcDir("${edenDir}/externals/generated/sdl/java")
+        }
     }
 }
 

@@ -180,12 +180,11 @@ FileSys::VirtualDir BuildAoc(Core::System& system, u64 program_id) {
     return root;
 }
 
-FileSys::VirtualDir Open(Core::System& system, CachedRoot Cache::* which,
+FileSys::VirtualDir Open(Core::System& system, u64 program_id, CachedRoot Cache::* which,
                          FileSys::VirtualDir (*build)(Core::System&, u64)) {
-    if (system.ApplicationProcess() == nullptr) {
+    if (program_id == 0) {
         return nullptr;
     }
-    const u64 program_id = system.GetApplicationProcessProgramID();
     FileSys::VirtualFile game_file = system.GetAppLoader().GetFile();
     Cache& all = GetCache();
     std::scoped_lock lock{all.mutex};
@@ -200,12 +199,12 @@ FileSys::VirtualDir Open(Core::System& system, CachedRoot Cache::* which,
 
 } // namespace
 
-FileSys::VirtualDir OpenBaseRomfs(Core::System& system) {
-    return Open(system, &Cache::base, BuildBase);
+FileSys::VirtualDir OpenBaseRomfs(Core::System& system, u64 program_id) {
+    return Open(system, program_id, &Cache::base, BuildBase);
 }
 
-FileSys::VirtualDir OpenAocRomfs(Core::System& system) {
-    return Open(system, &Cache::aoc, BuildAoc);
+FileSys::VirtualDir OpenAocRomfs(Core::System& system, u64 program_id) {
+    return Open(system, program_id, &Cache::aoc, BuildAoc);
 }
 
 void ReleaseRomfsSources() {

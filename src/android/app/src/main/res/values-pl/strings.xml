@@ -1,7 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources xmlns:tools="http://schemas.android.com/tools" tools:ignore="MissingTranslation">
 
-    <string name="app_disclaimer">To oprogramowanie uruchamia gry na konsoli Nintendo Switch. Żadne tytuły gier ani klucze nie są dołączone.<br /><br />Zanim zaczniesz, zlokalizuj plik <![CDATA[<b> prod.keys </b>]]> na swoim urządzeniu.<br /><br /><![CDATA[<a href=\"https://yuzu-mirror.github.io/help/quickstart\">Więcej informacji</a>]]></string>
     <string name="notice_notification_channel_name">Powiadomienia błędy</string>
     <string name="notice_notification_channel_description">Pokaż powiadomienie gdy coś pójdzie źle</string>
     <string name="notification_permission_not_granted">Nie zezwolono na powiadomienia!</string>
@@ -97,7 +96,6 @@
 
     <!-- NVDEC Emulation -->
     <string name="nvdec_emulation">Emulacja NVDEC</string>
-    <string name="nvdec_emulation_description">Wybierz metodę dekodowania wideo (NVDEC).</string>
     <string name="nvdec_emulation_none">Brak</string>
 
     <!-- Optimize SPIRV output -->
@@ -500,7 +498,6 @@
     <string name="log">Rejestrowanie</string>
     <string name="flush_by_line">Opróżniaj dzienniki debugowania linia po linii</string>
     <string name="flush_by_line_description">Opróżnia dzienniki debugowania po każdej napisanej linii, ułatwiając debugowanie w przypadku awarii lub zawieszenia.</string>
-
     <string name="general">Ogólne</string>
 
     <!-- Audio settings strings -->
@@ -760,8 +757,6 @@
     <string name="loader_error_file_not_found">Plik ROM nie istnieje</string>
 
     <string name="loader_requires_firmware">Gra wymaga oprogramowania sprzętowego</string>
-    <string name="loader_requires_firmware_description"><![CDATA[Gra, którą próbujesz uruchomić, wymaga oprogramowania sprzętowego do uruchomienia lub przejścia przez menu startowe. Proszę <a href=\"https://yuzu-mirror.github.io/help/quickstart\"> zrzuć i zainstaluj oprogramowanie sprzętowe</a>, lub naciśnij \"OK\", aby kontynuować mimo to.]]></string>
-
     <!-- Intent Launch strings -->
     <string name="searching_for_game">Wyszukiwanie gry...</string>
     <string name="game_not_found_for_title_id">Nie znaleziono gry dla ID tytułu: %1$s</string>
@@ -934,7 +929,6 @@
     <string name="theme_mode_follow_system">Podążaj za systemowym</string>
     <string name="theme_mode_light">Jasny</string>
     <string name="theme_mode_dark">Ciemny</string>
-
 
     <!-- Black backgrounds theme -->
     <string name="use_black_backgrounds">Czarne tła</string>

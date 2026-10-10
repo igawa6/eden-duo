@@ -37,6 +37,8 @@ struct Profile {
     bool support_explicit_workgroup_layout{};
     bool support_workgroup_layout_8bit_access{};
     bool support_workgroup_layout_16bit_access{};
+    bool support_shader_quad_control{};
+    bool support_quad_shuffles{};
     bool support_vote{};
     u32 supported_subgroup_stages{0x7F};
     bool support_viewport_index_layer_non_geometry{};
@@ -86,6 +88,8 @@ struct Profile {
     bool has_broken_signed_operations{};
     /// Float controls break when fp16 is enabled
     bool has_broken_fp16_float_controls{};
+    /// Declaring fp32 denorm flush to zero miscompiles on some drivers
+    bool has_broken_fp32_denorm_flush{};
     /// Dynamic vec4 indexing is broken on some OpenGL drivers
     bool has_gl_component_indexing_bug{};
     /// The precise type qualifier is broken in the fragment stage of some drivers

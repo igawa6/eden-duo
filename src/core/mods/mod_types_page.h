@@ -215,6 +215,7 @@ struct MapWidgetExtras {
         u32 outline_color{0xFF000000u};
         s32 outline{2};
         float opacity{1.0f};
+        bool avoid_overlap{false}; ///< Cull intersecting labels, preferring finer zoom groups.
     } label_style;
     std::string on_map_tap;
     std::string on_marker_tap;
@@ -231,12 +232,16 @@ struct MapWidgetExtras {
     /// Runtime 14: a text point naming the area's base picture ("image_bind"), drawn over the
     /// area's world box like the area's own `image` and overriding it; "" / missing = the area's.
     std::string image_bind;
+    std::string marker_rotate_bind; ///< clockwise degrees about the marker anchor
+    u32 marker_tint{0xFFFFFFFFu};
     /// Runtime 14: pictures placed in world space ("overlays"), drawn over the base picture and
     /// under the markers, panning / zooming with the map. The picture's top edge is at the larger
     /// y (world y grows upward, as for the area).
     struct Overlay {
         std::string src;      ///< a fixed image key
         std::string src_bind; ///< a text point naming the image key (wins when non-empty)
+        std::string src_detail_bind;    ///< optional higher-detail image for the same world box
+        float detail_threshold{210.0f}; ///< projected edge length above which detail is requested
         float x0{}, y0{}, x1{}, y1{};
         PointGate show;
         float opacity{1.0f};

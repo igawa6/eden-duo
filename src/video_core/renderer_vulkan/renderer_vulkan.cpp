@@ -40,6 +40,9 @@
 #include <boost/container/small_vector.hpp>
 
 #include "video_core/dsmod/aux_routing.h"
+#ifdef HAS_RESHADE
+#include "video_core/post_processing/fx_chain.h"
+#endif
 #include "video_core/renderer_vulkan/renderer_vulkan.h"
 #include "video_core/renderer_vulkan/vk_blit_screen.h"
 #include "video_core/renderer_vulkan/vk_rasterizer.h"
@@ -223,6 +226,10 @@ RendererVulkan::RendererVulkan(Core::Frontend::EmuWindow& emu_window,
         scheduler.RegisterOnSubmit([this] { turbo_mode->QueueSubmitted(); });
     }
 
+#ifdef HAS_RESHADE
+    VideoCore::FxChain::Instance().LoadFromSettings();
+#endif
+
     Report();
 } catch (const vk::Exception& exception) {
     LOG_ERROR(Render_Vulkan, "Vulkan initialization failed with error: {}", exception.what());
@@ -310,8 +317,8 @@ void RendererVulkan::Composite(std::span<const Tegra::FramebufferConfig> framebu
 
     // Screenshots are serviced even when the window is hidden or occluded, so headless
     // verification runs can still capture the primary screen.
-    if (!primary.empty()) {
-        RenderScreenshot(primary);
+    if (!framebuffers.empty()) {
+        RenderScreenshot(framebuffers, primary);
     }
 
     // Headless verification: a compositor that suspends a hidden window stops consuming
@@ -329,13 +336,14 @@ void RendererVulkan::Composite(std::span<const Tegra::FramebufferConfig> framebu
 
     scheduler.RequestOutsideRenderPassOperationContext();
     blit_swapchain.DrawToFrame(device, rasterizer, frame, primary,
-                               render_window.GetFramebufferLayout(), swapchain.GetImageCount(),
+                               render_window.GetFramebufferLayout(),
+                               present_manager.SwapchainImageCount(),
                                swapchain.GetImageViewFormat());
 
 #ifdef HAS_LSFG
     void(frame_gen.WantedGenerations(present_manager.MaxExtraFrames()));
 
-    frame_gen.Process(device, frame, swapchain.GetImageFormat(), GuestExtent(primary));
+    frame_gen.Process(device, frame, present_manager.SwapchainImageFormat(), GuestExtent(primary));
 
     const size_t generated_frames = frame_gen.GeneratedFrameCount();
     for (size_t generation = 0; generation < generated_frames; ++generation) {
@@ -821,7 +829,7 @@ bool RendererVulkan::RenderAuxModUi() {
     if (frame->width != layout.width || frame->height != layout.height || !frame->image) {
         aux_present_manager->RecreateFrame(frame, layout.width, layout.height,
                                            aux_swapchain->GetImageViewFormat(),
-                                           *aux_ui_render_pass);
+                                           *aux_ui_render_pass, /*storage=*/false);
     }
 
     const VkExtent2D dst_extent{frame->width, frame->height};
@@ -1111,7 +1119,8 @@ bool RendererVulkan::RenderAuxModUiGpu() {
     }
     if (frame->width != layout.width || frame->height != layout.height || !frame->framebuffer) {
         aux_present_manager->RecreateFrame(frame, layout.width, layout.height,
-                                           aux_swapchain->GetImageViewFormat(), *aux_c_render_pass);
+                                           aux_swapchain->GetImageViewFormat(), *aux_c_render_pass,
+                                           /*storage=*/false);
     }
     const VkExtent2D render_area{frame->width, frame->height};
     const std::array<f32, 4> scale_offset{2.0f / static_cast<f32>(aux_c_cw),
@@ -1274,7 +1283,8 @@ bool RendererVulkan::RenderAuxModUiGpu() {
         aux_c_readback_buf.Invalidate();
         std::vector<u32> out(static_cast<size_t>(aux_c_readback_w) * aux_c_readback_h);
         std::memcpy(out.data(), aux_c_readback_buf.Mapped().data(), out.size() * sizeof(u32));
-        gpu.DSModAux().PublishUi(aux_c_readback_w, aux_c_readback_h, out);
+        gpu.DSModAux().PublishUi(aux_c_readback_w, aux_c_readback_h, out,
+                               /*require_context=*/true);
     }
     if (((++aux_c_present_count) % 600) == 0) {
         LOG_DEBUG(
@@ -1381,18 +1391,28 @@ vk::Buffer RendererVulkan::RenderToBuffer(std::span<const Tegra::FramebufferConf
     return dst_buffer;
 }
 
-void RendererVulkan::RenderScreenshot(std::span<const Tegra::FramebufferConfig> framebuffers) {
+void RendererVulkan::RenderScreenshot(std::span<const Tegra::FramebufferConfig> framebuffers,
+                                     std::span<const Tegra::FramebufferConfig> primary) {
     // Take ownership of the request under the shared lock so the buffer and callback cannot be
     // claimed (or the callback fired early) by a concurrent RequestScreenshot.
     void* bits{};
     std::function<void(bool)> callback;
     Layout::FramebufferLayout layout{};
-    if (!TakePendingScreenshot(bits, callback, layout)) {
+    Service::Nvnflinger::LayerStackId layer_stack{};
+    if (!TakePendingScreenshot(bits, callback, layout, layer_stack)) {
         return;
     }
 
     LOG_INFO(Render_Vulkan, "servicing screenshot request {}x{}", layout.width, layout.height);
-    const auto dst_buffer = RenderToBuffer(framebuffers, layout, VK_FORMAT_R8G8B8A8_UNORM,
+    // Frontend captures describe the primary screen after Duo routing. Guest captures select
+    // their own layer stack from the original composition, including a layer routed to aux.
+    const auto source = layer_stack == Service::Nvnflinger::LayerStackId::Default
+                            ? primary
+                            : framebuffers;
+    const auto screenshot_layers = Tegra::FilterLayerStack(
+        source, layer_stack, screenshot_layer_scratch);
+
+    const auto dst_buffer = RenderToBuffer(screenshot_layers, layout, VK_FORMAT_B8G8R8A8_UNORM,
                                            layout.width * layout.height * 4);
 
     std::memcpy(bits, dst_buffer.Mapped().data(), dst_buffer.Mapped().size());
@@ -1429,6 +1449,12 @@ std::vector<u8> RendererVulkan::GetAppletCaptureBuffer() {
 
 void RendererVulkan::RenderAppletCaptureLayer(
     std::span<const Tegra::FramebufferConfig> framebuffers) {
+    const auto capture_layers = Tegra::FilterLayerStack(
+        framebuffers, Service::Nvnflinger::LayerStackId::LastFrame, applet_capture_layers);
+
+    if (capture_layers.empty())
+        return;
+
     if (!applet_frame.image) {
         applet_frame.image = CreateWrappedImage(memory_allocator, CaptureImageSize, CaptureFormat);
         applet_frame.image_view = CreateWrappedImageView(device, applet_frame.image, CaptureFormat);
@@ -1437,8 +1463,8 @@ void RendererVulkan::RenderAppletCaptureLayer(
     }
 
     scheduler.RequestOutsideRenderPassOperationContext();
-    blit_applet.DrawToFrame(device, rasterizer, &applet_frame, framebuffers,
-                            VideoCore::Capture::Layout, 1, CaptureFormat);
+    blit_applet.DrawToFrame(device, rasterizer, &applet_frame, capture_layers,
+                           VideoCore::Capture::Layout, 1, CaptureFormat);
 }
 
 } // namespace Vulkan

@@ -11,7 +11,7 @@
 #include <list>
 #include <memory>
 #include <string>
-#include <ankerl/unordered_dense.h>
+#include "common/container/unordered_map.h"
 #include <vector>
 
 #include "common/polyfill_thread.h"
@@ -124,14 +124,26 @@ public:
     void AppendNewProcess(KProcess* process);
     void RemoveProcess(KProcess* process);
 
-    /// Makes the given process the new application process.
-    void MakeApplicationProcess(KProcess* process);
+    /// Makes the given process the current application process.
+    void SetApplicationProcess(KProcess* process);
 
     /// Retrieves a pointer to the application process.
     KProcess* ApplicationProcess();
 
     /// Retrieves a const pointer to the application process.
     const KProcess* ApplicationProcess() const;
+
+    /// Captures an owning reference to the application process under the identity lock.
+    KScopedAutoObject<KProcess> RetainApplicationProcess(u64* owner_epoch = nullptr);
+
+    /// Checks application identity while an independently retained process keeps it alive.
+    bool IsApplicationProcess(const KProcess* process) const;
+
+    /// Checks that no application transition occurred since the owning reference was captured.
+    bool IsApplicationProcess(const KProcess* process, u64 owner_epoch) const;
+
+    /// Retrieves the process with the given process ID, or a null object.
+    KScopedAutoObject<KProcess> GetProcessByProcessId(u64 process_id);
 
     /// Retrieves the list of processes.
     std::list<KScopedAutoObject<KProcess>> GetProcessList();

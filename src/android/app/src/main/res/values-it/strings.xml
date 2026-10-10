@@ -1,7 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources xmlns:tools="http://schemas.android.com/tools" tools:ignore="MissingTranslation">
 
-    <string name="app_disclaimer">Questo software esegue giochi per la console Nintendo Switch. Non sono inclusi titoli di giochi o chiavi.<br /><br /> Prima di iniziare, individua il file <![CDATA[<b>prod.keys</b>]]> nella memoria del tuo dispositivo.<br /><br /> <![CDATA[<a href=\"https://yuzu-mirror.github.io/help/quickstart\">Ulteriori informazioni</a>]]></string>
     <string name="notice_notification_channel_name">Avvisi ed errori</string>
     <string name="notice_notification_channel_description">Mostra le notifiche quando qualcosa va storto.</string>
     <string name="notification_permission_not_granted">Autorizzazione di notifica non concessa!</string>
@@ -79,7 +78,6 @@
     <string name="cpuopt_unsafe_host_mmu_description">Questa ottimizzazione accelera gli accessi alla memoria da parte del programma guest. Abilitandola, le letture/scritture della memoria guest vengono eseguite direttamente in memoria e sfruttano la MMU host. Disabilitandola, tutti gli accessi alla memoria sono costretti a utilizzare l\'emulazione software della MMU.</string>
     <!-- NVDEC Emulation -->
     <string name="nvdec_emulation">Emulazione NVDEC</string>
-    <string name="nvdec_emulation_description">Scegli come gestire la decodifica video</string>
     <string name="nvdec_emulation_none">Nessuna</string>
 
     <!-- Optimize SPIRV output -->
@@ -437,7 +435,6 @@
     <string name="log">Registrazione</string>
     <string name="flush_by_line">Svuota i log di debug per riga</string>
     <string name="flush_by_line_description">Svuota i log di debug su ogni riga scritta, facilitando il debug in caso di crash o blocco.</string>
-
     <!-- Audio settings strings -->
     <string name="audio_output_engine">Motore di Output</string>
     <string name="audio_volume">Volume</string>
@@ -664,8 +661,6 @@
     <string name="loader_error_file_not_found">Il file della ROM non esiste</string>
 
     <string name="loader_requires_firmware">Firmware richiesto</string>
-    <string name="loader_requires_firmware_description"><![CDATA[Il gioco che stai cercando di avviare richiede il firmware per poter partire o per superare il menù iniziale. <a href=\"https://yuzu-mirror.github.io/help/quickstart\">Esegui il dump del firmware e installalo</a>, o premi \"OK\" per continuare lo stesso.]]></string>
-
     <!-- Intent Launch strings -->
     <string name="searching_for_game">Ricerca del gioco in corso...</string>
     <string name="game_not_found_for_title_id">Gioco non trovato per l\'ID titolo: %1$s</string>

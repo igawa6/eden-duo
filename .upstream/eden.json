@@ -1,0 +1,8 @@
+{
+  "repository": "https://git.eden-emu.dev/eden-emu/eden",
+  "channel": "nightly",
+  "source_commit": "10bcd2d849843b146a79c61a21df615e1bdcfcde",
+  "original_base": "d9336ce6ce4c043a20862e567711c7b0bc1e11b6",
+  "release_tag": "v1791243079.10bcd2d849",
+  "release_url": "https://git.eden-emu.dev/eden-ci/nightly/releases/tag/v1791243079.10bcd2d849"
+}

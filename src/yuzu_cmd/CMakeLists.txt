@@ -44,9 +44,6 @@ target_link_libraries(yuzu-cmd PRIVATE common core input_common frontend_common 
 if (ENABLE_OPENGL)
     target_link_libraries(yuzu-cmd PRIVATE glad)
 endif()
-if (MSVC)
-    target_link_libraries(yuzu-cmd PRIVATE getopt)
-endif()
 target_link_libraries(yuzu-cmd PRIVATE ${PLATFORM_LIBRARIES} Threads::Threads)
 
 create_resource("../../dist/eden.bmp" "yuzu_cmd/yuzu_icon.h" "yuzu_icon")
@@ -76,4 +73,15 @@ if (NOT MSVC)
         $<$<COMPILE_LANGUAGE:C,CXX>:-Wno-unused-variable>
         $<$<COMPILE_LANGUAGE:C,CXX>:-Wno-unused-parameter>
         $<$<COMPILE_LANGUAGE:C,CXX>:-Wno-missing-field-initializers>)
+endif()
+
+if (YUZU_TESTS)
+    # These return before the kernel exists; SDL still invokes the quit callback.
+    foreach(option IN ITEMS version help)
+        add_test(NAME cli_${option} COMMAND ${CMAKE_COMMAND} -E env
+            XDG_DATA_HOME=${CMAKE_CURRENT_BINARY_DIR}/cli-${option}-profile/data
+            XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/cli-${option}-profile/config
+            XDG_CACHE_HOME=${CMAKE_CURRENT_BINARY_DIR}/cli-${option}-profile/cache
+            $<TARGET_FILE:yuzu-cmd> --${option})
+    endforeach()
 endif()

@@ -43,7 +43,8 @@ bool RendererBase::IsScreenshotPending() const {
 }
 
 void RendererBase::RequestScreenshot(void* data, std::function<void(bool)> callback,
-                                     const Layout::FramebufferLayout& layout) {
+                                     const Layout::FramebufferLayout& layout,
+                                     Service::Nvnflinger::LayerStackId layer_stack) {
     auto async_callback{[callback_ = std::move(callback)](bool invert_y) {
         std::thread t{callback_, invert_y};
         t.detach();
@@ -66,6 +67,7 @@ void RendererBase::RequestScreenshot(void* data, std::function<void(bool)> callb
         renderer_settings.screenshot_bits = data;
         renderer_settings.screenshot_complete_callback = async_callback;
         renderer_settings.screenshot_framebuffer_layout = layout;
+        renderer_settings.screenshot_layer_stack = layer_stack;
         renderer_settings.screenshot_requested = true;
     }
     if (stale) {
@@ -74,7 +76,8 @@ void RendererBase::RequestScreenshot(void* data, std::function<void(bool)> callb
 }
 
 bool RendererBase::TakePendingScreenshot(void*& data, std::function<void(bool)>& callback,
-                                         Layout::FramebufferLayout& layout) {
+                                         Layout::FramebufferLayout& layout,
+                                         Service::Nvnflinger::LayerStackId& layer_stack) {
     std::scoped_lock lock{g_screenshot_request_mutex};
     if (!renderer_settings.screenshot_requested) {
         return false;
@@ -82,6 +85,7 @@ bool RendererBase::TakePendingScreenshot(void*& data, std::function<void(bool)>&
     data = renderer_settings.screenshot_bits;
     callback = std::move(renderer_settings.screenshot_complete_callback);
     layout = renderer_settings.screenshot_framebuffer_layout;
+    layer_stack = renderer_settings.screenshot_layer_stack;
     renderer_settings.screenshot_bits = nullptr;
     renderer_settings.screenshot_requested = false;
     return true;

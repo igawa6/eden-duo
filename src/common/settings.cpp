@@ -126,17 +126,15 @@ void LogSettings() {
                     setting->UsingGlobal() ? '-' : 'C', TranslateCategory(category),
                     setting->GetLabel());
                 if (is_default)
-                    settings_list.push_back(fmt::format("{}: {}\n", name, setting->Canonicalize()));
+                    settings_list.push_back(fmt::format("{}: {}", name, setting->Canonicalize()));
                 else
-                    settings_list.push_front(fmt::format("{}: {}\n", name, setting->Canonicalize()));
+                    settings_list.push_front(fmt::format("{}: {}", name, setting->Canonicalize()));
             }
         }
     }
-
-    std::string settings_str{};
+    LOG_INFO(Config, "Eden Configuration:");
     for (auto const& e : settings_list)
-        settings_str += e;
-    LOG_INFO(Config, "Eden Configuration:\n{}", settings_str);
+        LOG_INFO(Config, "{}", e);
 #define LOG_PATH(NAME) \
     LOG_INFO(Config, #NAME ": {}", Common::FS::PathToUTF8String(Common::FS::GetEdenPath(Common::FS::EdenPath::NAME)))
     LOG_PATH(CacheDir);
@@ -148,7 +146,7 @@ void LogSettings() {
 #undef LOG_PATH
 }
 
-bool getDebugKnobAt(u8 i) {
+bool GetDebugKnobAt(u8 i) {
     return (values.debug_knobs.GetValue() & (1 << (i & 0xF))) != 0;
 }
 
@@ -178,10 +176,6 @@ bool IsGPUFenceBehaviorBalanced() {
 
 bool IsGPUFenceBehaviorAccurate() {
     return values.gpu_fence_behavior.GetValue() == GpuFenceBehavior::Accurate;
-}
-
-bool IsGPUFenceBehaviorStrict() {
-    return values.gpu_fence_behavior.GetValue() == GpuFenceBehavior::Strict;
 }
 
 bool IsFastmemEnabled() {

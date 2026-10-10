@@ -244,7 +244,7 @@ std::optional<s64> ModRuntime::FindPlayerNode(const PlayerFind& spec) const {
         // quietly report the player standing where the last room left them.
         const VAddr px = player_found + static_cast<VAddr>(spec.pos_offset);
         if (AddressIsSane(player_found, 8) &&
-            system.ApplicationMemory().Read64(player_found) ==
+            OwnerMemory().Read64(player_found) ==
                 main_region_begin + static_cast<u64>(spec.vtable) +
                     static_cast<u64>(nce_vtable_delta) &&
             AddressIsSane(px, 4)) {
@@ -253,7 +253,7 @@ std::optional<s64> ModRuntime::FindPlayerNode(const PlayerFind& spec) const {
             // while reporting somebody else's position.
             if (player_sampled_tick != tick_count) {
                 player_sampled_tick = tick_count;
-                auto& mem = system.ApplicationMemory();
+                auto& mem = OwnerMemory();
                 f32 x{}, y{};
                 const u32 rx = mem.Read32(px);
                 const u32 ry = mem.Read32(px + 4);
@@ -304,7 +304,7 @@ std::optional<s64> ModRuntime::FindPlayerNode(const PlayerFind& spec) const {
     if (!InGameplay()) {
         return std::nullopt;
     }
-    auto& memory = system.ApplicationMemory();
+    auto& memory = OwnerMemory();
     const u64 vtable =
         main_region_begin + static_cast<u64>(spec.vtable) + static_cast<u64>(nce_vtable_delta);
 

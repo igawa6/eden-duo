@@ -1,13 +1,20 @@
+// SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 // SPDX-FileCopyrightText: Copyright 2023 yuzu Emulator Project
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 #pragma once
 
 #include "common/common_types.h"
-#include "common/quaternion.h"
+#include "common/vector_math.h"
 #include "common/typed_address.h"
 #include "hid_core/resources/controller_base.h"
 #include "hid_core/resources/ring_lifo.h"
+
+namespace Kernel {
+class KProcess;
+}
 
 namespace Core {
 class System;
@@ -33,7 +40,7 @@ public:
     void OnUpdate(const Core::Timing::CoreTiming& core_timing) override;
 
     // Called on InitializeSevenSixAxisSensor
-    void SetTransferMemoryAddress(Common::ProcessAddress t_mem);
+    void SetTransferMemoryAddress(Common::ProcessAddress t_mem, Kernel::KProcess* owner);
 
     // Called on ResetSevenSixAxisSensorTimestamp
     void ResetTimestamp();
@@ -44,9 +51,9 @@ private:
         u64 timestamp{};
         u64 sampling_number{};
         u64 unknown{};
-        Common::Vec3f accel{};
-        Common::Vec3f gyro{};
-        Common::Quaternion<f32> quaternion{};
+        Common::Vec<f32, 3> accel{};
+        Common::Vec<f32, 3> gyro{};
+        Common::Vec<f32, 4> quaternion{};
     };
     static_assert(sizeof(SevenSixAxisState) == 0x48, "SevenSixAxisState is an invalid size");
 
@@ -58,6 +65,7 @@ private:
 
     SevenSixAxisState next_seven_sixaxis_state{};
     Common::ProcessAddress transfer_memory{};
+    Kernel::KProcess* transfer_memory_owner{};
     Core::HID::EmulatedConsole* console = nullptr;
 
     Core::System& system;

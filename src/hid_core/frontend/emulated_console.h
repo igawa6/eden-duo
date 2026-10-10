@@ -11,14 +11,13 @@
 #include <memory>
 #include <mutex>
 #include <optional>
-#include <ankerl/unordered_dense.h>
+#include "common/container/unordered_map.h"
 
 #include "common/common_funcs.h"
 #include "common/common_types.h"
 #include "common/input.h"
 #include "common/param_package.h"
 #include "common/point.h"
-#include "common/quaternion.h"
 #include "common/vector_math.h"
 #include "hid_core/frontend/motion_input.h"
 #include "hid_core/hid_types.h"
@@ -43,12 +42,12 @@ using TouchValues = std::array<Common::Input::TouchStatus, MaxTouchDevices>;
 
 // Contains all motion related data that is used on the services
 struct ConsoleMotion {
-    Common::Vec3f accel{};
-    Common::Vec3f gyro{};
-    Common::Vec3f rotation{};
-    std::array<Common::Vec3f, 3> orientation{};
-    Common::Quaternion<f32> quaternion{};
-    Common::Vec3f gyro_bias{};
+    Common::Vec<f32, 3> accel{};
+    Common::Vec<f32, 3> gyro{};
+    Common::Vec<f32, 3> rotation{};
+    std::array<Common::Vec<f32, 3>, 3> orientation{};
+    Common::Vec<f32, 4> quaternion{};
+    Common::Vec<f32, 3> gyro_bias{};
     f32 verticalization_error{};
     bool is_at_rest{};
 };
@@ -185,7 +184,7 @@ private:
 
     mutable std::mutex mutex;
     mutable std::mutex callback_mutex;
-    ankerl::unordered_dense::map<int, ConsoleUpdateCallback> callback_list;
+    ::Common::unordered_map<int, ConsoleUpdateCallback> callback_list;
     int last_callback_key = 0;
 
     // Stores the current status of all console input

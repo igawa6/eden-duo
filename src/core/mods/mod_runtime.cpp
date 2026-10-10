@@ -33,14 +33,19 @@
 #include "common/dsmod_dev_tools.h"
 #include "common/logging.h"
 #include "common/settings.h"
+#include "core/arm/debug.h"
 #include "core/core_timing.h"
 #include "core/hle/kernel/k_process.h"
+#include "core/hle/kernel/k_thread.h"
+#include "core/hle/kernel/kernel.h"
+#include "core/memory.h"
 #include "core/mods/mod_hooks.h"
 #include "core/mods/mod_runtime.h"
 #include "core/mods/mod_runtime_shared.h"
 #include "core/mods/mod_view_default.h"
 #include "hid_core/resources/npad/dsmod_pad_gate.h"
 #include "input_common/drivers/virtual_gamepad.h"
+#include "input_common/main.h"
 #include "video_core/dsmod/aux_routing.h"
 #include "video_core/gpu.h"
 
@@ -51,13 +56,114 @@ constexpr auto ModTickNs = std::chrono::nanoseconds{1000000000 / ModTickHz};
 } // namespace
 
 ModRuntime::ModRuntime(System& system_, Manifest manifest_)
-    : system{system_}, core_timing{system_.CoreTiming()}, manifest{std::move(manifest_)} {
+    : system{system_}, core_timing{system_.CoreTiming()},
+      owner_process{system_.Kernel().RetainApplicationProcess(&owner_epoch)},
+      owner_pointer{owner_process.GetPointerUnsafe()}, borrowed_thread{system_.Kernel()},
+      manifest{std::move(manifest_)} {
     // Before anything can read an asset: the registry is read without a lock from here on.
     RegisterAssetSources();
     // Runtime 16 @game.seconds: emulated-system time since boot (the wall clock is the default).
     clock_points.SetSource(ClockSource{.game_seconds = [this] {
         return static_cast<s64>(core_timing.GetGlobalTimeNs().count() / 1000000000);
     }});
+}
+
+Kernel::KProcess* ModRuntime::OwnerProcess() const {
+    return owner_pointer.load(std::memory_order_acquire);
+}
+
+Core::Memory::Memory& ModRuntime::OwnerMemory() const {
+    return OwnerProcess()->GetMemory();
+}
+
+bool ModRuntime::IsOwnerContext() const {
+    const auto* const process = OwnerProcess();
+    return owner_guard.Allow(process != nullptr &&
+                             system.Kernel().IsApplicationProcess(process, owner_epoch));
+}
+
+void ModRuntime::RefuseChangedProcess() {
+    if (process_notice_published) {
+        // Later application switches can still encounter this retired runtime. Its sources are
+        // already neutral and permanently refused; never leave a subsequent app's pad blocked.
+        Core::HID::DSModPadGate::BlockForContextChange(false);
+        return;
+    }
+    auto& aux = system.GPU().DSModAux();
+    aux.companion_context_active.store(false, std::memory_order_release);
+    aux.bound_layer.store(VideoCore::DSMod::AuxRouting::NoLayer);
+    aux.mirror_enabled.store(false);
+    aux.rt_capture.store(false);
+    if (!process_workers_stopped) {
+        // No decoder or module callback may retain a guest pointer when the owner is released.
+        StopRedrawWorker();
+        DropFontPages();
+        nx_assets.reset(); // stops and joins its decode worker
+        ShutdownGameModule(); // joins module image/map-area workers before destroying the instance
+        process_workers_stopped = true;
+    }
+    ReleaseHeldInputs();
+    // Dev scripts/autostart can hold untracked tokens. Neutralize the virtual source while the
+    // independent kernel context-change gate still protects the new application's HID samples.
+    if (auto* const input = system.GetInputSubsystem()) {
+        input->GetVirtualGamepad()->ResetControllers();
+    }
+    NavOff("application process changed");
+    Core::HID::DSModPadGate::Reset();
+    Core::HID::DSModPadGate::BlockForContextChange(false);
+    {
+        std::scoped_lock lock{tap_mutex};
+        pending_taps.clear();
+    }
+    live_fingers.clear();
+    ignored_fingers.clear();
+    tap_was_down = false;
+    hold_tracker = {};
+    swipe_tracker = {};
+    gesture_target.clear();
+    // Retire hooks and restore the borrowed thread only while guest execution is stopped.
+    // A busy pause/resume defers cleanup until the next tick; the old process stays retained.
+    const bool retired = RunWithGuestStopped([this] {
+        std::scoped_lock lock{guest_bridge_mutex};
+        if (auto* const thread = borrowed_thread.GetPointerUnsafe()) {
+            thread->GetContext() = saved_context;
+            borrowed_thread.SetObject(nullptr);
+        }
+        if (OwnerProcess() != nullptr) {
+            auto& memory = OwnerMemory();
+            for (const auto& [address, instruction] : patched_original) {
+                if (memory.IsValidVirtualAddressRange(address, sizeof(u32))) {
+                    memory.Write32(address, instruction);
+                    Core::InvalidateInstructionCacheRange(OwnerProcess(), address, sizeof(u32));
+                }
+            }
+        }
+        patched_original.clear();
+        spy_armed.clear();
+        call_seq = nullptr;
+        call_state = CallState::Idle;
+        g_guest_hooks_enabled.store(false, std::memory_order_relaxed);
+        // Atomic pointer clear plus the bridge lock prevent a late breakpoint callback from
+        // observing an owner after its final reference is dropped. All workers are joined above.
+        owner_pointer.store(nullptr, std::memory_order_release);
+        owner_process.SetObject(nullptr);
+    });
+    if (!retired) {
+        return;
+    }
+    aux.SetTouch({});
+    aux.ClearComposite();
+    aux.ClearUi();
+    // Use the built-in font, independently of package/module assets and cached game state.
+    Canvas notice;
+    notice.Resize(1240, 1080);
+    notice.Clear(0xFF101010u);
+    notice.DrawTextAligned(620, 440, "Companion paused", 6, 0xFFFFFFFFu, 1);
+    notice.DrawTextAligned(620, 540, "The running application changed.", 4, 0xFFFFFFFFu, 1);
+    notice.DrawTextAligned(620, 620, "Restart the game to use its companion.", 4, 0xFFFFFFFFu, 1);
+    aux.PublishUi(notice.Width(), notice.Height(), notice.Pixels());
+    process_notice_published = true;
+    LOG_WARNING(Core, "DSMod: companion stopped because its application process changed");
 }
 
 ModRuntime::~ModRuntime() {
@@ -75,6 +181,7 @@ ModRuntime::~ModRuntime() {
     ShutdownGameModule();
     ReleaseHeldInputs();
     Core::HID::DSModPadGate::Reset(); // runtime 17: never leave the game's pad gated
+    Core::HID::DSModPadGate::BlockForContextChange(false);
     system.GPU().DSModAux().ClearUi();
     // The brk gate stays open for the whole session (see OnGuestBreakpoint), but it belongs to
     // this game: the runtime is destroyed only after the cores are shut down, and the next title
@@ -92,6 +199,7 @@ void ModRuntime::Initialize() {
     if (event) {
         return;
     }
+    system.GPU().DSModAux().companion_context_active.store(true, std::memory_order_release);
 #if EDEN_DSMOD_BUILD_DEV_TOOLS
     dev.log_guest_threads = Common::DSMod::DevEnvironment("EDEN_DSMOD_THREADS") != nullptr;
 #endif
@@ -389,6 +497,10 @@ void ModRuntime::DriveCmd() {
 }
 
 void ModRuntime::Tick() {
+    if (!IsOwnerContext()) {
+        RefuseChangedProcess();
+        return;
+    }
     static thread_local RuntimeStageStats stats;
     const RuntimeStageTimer timer{stats, "tick"};
     ++tick_count;
@@ -480,7 +592,7 @@ void ModRuntime::Tick() {
 #if EDEN_DSMOD_BUILD_DEV_TOOLS
     // Diagnostic: where are the guest threads? Useful when a title hangs before it ever presents.
     if (dev.log_guest_threads && (tick_count % 180) == 0) {
-        if (auto* const process = system.ApplicationProcess(); process != nullptr) {
+        if (auto* const process = OwnerProcess(); process != nullptr) {
             std::string summary;
             int listed = 0;
             for (const auto& thread : process->GetThreadList()) {

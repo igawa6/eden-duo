@@ -6,9 +6,11 @@
 
 #include <iostream>
 #include <memory>
+#include <mutex>
 #include <regex>
 #include <string>
 #include "common/settings_enums.h"
+#include "core/launch_params.h"
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
 #endif
@@ -41,7 +43,7 @@
 #include "core/file_sys/vfs/vfs_vector.h"
 #include <atomic>
 #include <csignal>
-#include <stb_image_write.h>
+#include "common/stb.h"
 #include "video_core/dsmod/aux_routing.h"
 #include "input_common/drivers/virtual_gamepad.h"
 #include "core/file_sys/card_image.h"
@@ -55,12 +57,15 @@
 #include "core/file_sys/registered_cache.h"
 #include "core/file_sys/vfs/vfs_real.h"
 #include "core/hle/service/am/applet_manager.h"
+#include "core/hle/service/acc/profile_manager.h"
 #include "core/hle/service/filesystem/filesystem.h"
 #include "core/loader/loader.h"
 #include "frontend_common/config.h"
 #include "input_common/main.h"
 #include "network/network.h"
 #include "sdl_config.h"
+#include "video_core/gpu.h"
+#include "video_core/rasterizer_interface.h"
 #include "video_core/renderer_base.h"
 #include "yuzu_cmd/emu_window/emu_window_sdl3.h"
 #ifdef HAS_OPENGL
@@ -77,12 +82,6 @@
 #include "common/windows/timer_resolution.h"
 #endif
 
-#undef _UNICODE
-#include <getopt.h>
-#ifndef _MSC_VER
-#include <unistd.h>
-#endif
-
 #ifdef _WIN32
 extern "C" {
 // tells Nvidia and AMD drivers to use the dedicated GPU by default on laptops with switchable
@@ -90,6 +89,12 @@ extern "C" {
 __declspec(dllexport) unsigned long NvOptimusEnablement = 0x00000001;
 __declspec(dllexport) int AmdPowerXpressRequestHighPerformance = 1;
 }
+#endif
+
+#undef _UNICODE
+#include <getopt.h>
+#ifndef _MSC_VER
+#include <unistd.h>
 #endif
 
 static void PrintHelp(const char* argv0) {
@@ -102,7 +107,7 @@ static void PrintHelp(const char* argv0) {
                  "-m, --multiplayer=nick:password@address:port"
                  " Nickname, password, address and port for multiplayer\n"
                  "-p, --program         Pass following string as arguments to executable\n"
-                 "-u, --user            Select a specific user profile from 0 to 7\n"
+                 "-u, --user            Select a user profile from 0 to 7 or by name\n"
                  "-d, --debug           Run the GDB stub on a port from 1 to 65535\n"
                  "-v, --version         Output version information and exit\n";
 }
@@ -405,8 +410,15 @@ static void ScreenshotSignalHandler(int) {
 }
 
 static void WritePng(const std::string& path, const void* rgba, u32 width, u32 height) {
-    if (stbi_write_png(path.c_str(), static_cast<int>(width), static_cast<int>(height), 4, rgba,
-                       static_cast<int>(width) * 4) != 0) {
+    std::ofstream output(path, std::ios::binary | std::ios::trunc);
+    const int encoded = output ? stbi_write_png_to_func(
+        [](void* context, void* data, int size) {
+            static_cast<std::ofstream*>(context)->write(static_cast<const char*>(data), size);
+        },
+        &output, static_cast<int>(width), static_cast<int>(height), 4, rgba,
+        static_cast<int>(width) * 4) : 0;
+    output.close();
+    if (encoded != 0 && output) {
         LOG_INFO(Frontend, "wrote {} ({}x{})", path, width, height);
     } else {
         LOG_ERROR(Frontend, "failed to write {}", path);
@@ -454,6 +466,11 @@ static void TakeScreenshots(Core::System& system) {
     system.Renderer().RequestScreenshot(
         pixels,
         [pixels, layout](bool) {
+            // Both renderers return screenshots in BGRA byte order.
+            for (size_t i = 0; i < static_cast<size_t>(layout.width) * layout.height; ++i) {
+                pixels[i] = (pixels[i] & 0xFF00FF00u) | ((pixels[i] & 0x00FF0000u) >> 16) |
+                            ((pixels[i] & 0x000000FFu) << 16);
+            }
             WritePng(g_screenshot_prefix + "-screen1.png", pixels, layout.width, layout.height);
             delete[] pixels;
         },
@@ -468,12 +485,13 @@ static std::atomic<bool> g_button_requested{false};
 static std::chrono::steady_clock::time_point g_button_until{};
 static std::chrono::steady_clock::time_point g_wait_until{};
 static bool g_button_held{false};
+static bool g_timed_stick_active{false};
+static InputCommon::VirtualGamepad::VirtualStick g_timed_stick{
+    InputCommon::VirtualGamepad::VirtualStick::Left};
 static bool g_tap_active{false};
 static std::chrono::steady_clock::time_point g_tap_until{};
 static std::vector<int> g_button_keys;
 static std::vector<InputCommon::VirtualGamepad::VirtualButton> g_button_all;
-static InputCommon::VirtualGamepad::VirtualButton g_button_current{
-    InputCommon::VirtualGamepad::VirtualButton::ButtonA};
 
 static void ButtonSignalHandler(int) {
     g_button_requested.store(true);
@@ -635,12 +653,14 @@ static void ServiceButtonRequests(SdlState* state) {
             for (const auto button : g_button_all) {
                 pad->SetButtonState(0, button, false);
                 pad->SetButtonState(8, button, false);
+            }
+            if (g_timed_stick_active) {
                 for (const std::size_t player : {std::size_t{0}, std::size_t{8}}) {
-                    pad->SetStickPosition(player, InputCommon::VirtualGamepad::VirtualStick::Left,
-                                          0.0f, 0.0f);
+                    pad->SetStickPosition(player, g_timed_stick, 0.0f, 0.0f);
                 }
             }
         }
+        g_timed_stick_active = false;
         if (auto* const keyboard = state->input_subsystem.GetKeyboard(); keyboard != nullptr) {
             for (const int key : g_button_keys) {
                 keyboard->ReleaseKey(key);
@@ -688,6 +708,12 @@ static void ServiceButtonRequests(SdlState* state) {
                      step.x2, step.y2, step.frames);
             return;
         }
+        if (step.name == "pause" || step.name == "resume") {
+            if (step.name == "pause") state->system.Pause();
+            else state->system.Run();
+            LOG_INFO(Frontend, "harness emulation {}", step.name);
+            return;
+        }
         if (step.name == "hold" || step.name == "release") {
             // A held button that outlives the step. Pressing two buttons on the same frame is not
             // the same gesture as holding one and tapping another -- Metroid Dread readies a
@@ -706,19 +732,22 @@ static void ServiceButtonRequests(SdlState* state) {
             g_wait_until = now + std::chrono::milliseconds(60);
             return;
         }
-        if (step.name == "stick") {
-            // Hold the left stick for a while. A game that walks on the analog stick ignores the
-            // d-pad entirely, so button steps alone can never move the character.
+        if (step.name == "stick" || step.name == "rstick") {
+            // Timed analog input for native movement/camera/menu verification. Reset the same
+            // stick independently of the button list when its duration expires.
+            g_timed_stick = step.name == "rstick"
+                                ? InputCommon::VirtualGamepad::VirtualStick::Right
+                                : InputCommon::VirtualGamepad::VirtualStick::Left;
             if (pad != nullptr) {
                 for (const std::size_t player : {std::size_t{0}, std::size_t{8}}) {
-                    pad->SetStickPosition(player, InputCommon::VirtualGamepad::VirtualStick::Left,
-                                          step.x, step.y);
+                    pad->SetStickPosition(player, g_timed_stick, step.x, step.y);
                 }
             }
+            g_timed_stick_active = true;
             g_button_held = true;
             g_button_until = now + std::chrono::milliseconds(step.frames);
-            LOG_INFO(Frontend, "left stick held at ({:.2f}, {:.2f}) for {} ms", step.x, step.y,
-                     step.frames);
+            LOG_INFO(Frontend, "{} held at ({:.2f}, {:.2f}) for {} ms", step.name, step.x,
+                     step.y, step.frames);
             return;
         }
         if (pad == nullptr) {
@@ -776,9 +805,6 @@ static void ServiceButtonRequests(SdlState* state) {
             }
             start = plus + 1;
         }
-        g_button_current = g_button_all.empty()
-                               ? InputCommon::VirtualGamepad::VirtualButton::ButtonA
-                               : g_button_all.front();
         const int g_button_key = g_button_keys.empty() ? -1 : g_button_keys.front();
         g_button_held = true;
         g_button_until = now + std::chrono::milliseconds(step.frames);
@@ -823,10 +849,14 @@ static void ServiceButtonRequests(SdlState* state) {
                     continue;
                 }
             }
-            if (step.name == "tap" || step.name == "stick") {
-                // "stick <x> <y> [ms]" -- the left stick, in -1..1. Buttons alone cannot walk a
-                // character in a game that moves on the analog stick, which is most of them.
+            if (step.name == "tap" || step.name == "stick" || step.name == "rstick") {
+                // "stick/rstick <x> <y> [ms]" -- left/right analog stick, in -1..1.
                 if (!(iss >> step.x >> step.y)) {
+                    continue;
+                }
+                if (step.name != "tap" &&
+                    (!(step.x >= -1.0f && step.x <= 1.0f) ||
+                     !(step.y >= -1.0f && step.y <= 1.0f))) {
                     continue;
                 }
             }
@@ -874,6 +904,7 @@ extern "C" SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv) {
     std::optional<std::string> config_path{};
     std::string program_args;
     std::optional<int> selected_user{};
+    std::optional<std::string> selected_username{};
     std::optional<u16> override_gdb_port{};
     bool use_multiplayer = false;
     bool fullscreen = false;
@@ -893,19 +924,19 @@ extern "C" SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv) {
 
     static struct option long_options[] = {
         // clang-format off
-        {"debug", no_argument, 0, 'd'},
+        {"debug", required_argument, 0, 'd'},
         {"config", required_argument, 0, 'c'},
         {"fullscreen", no_argument, 0, 'f'},
         {"help", no_argument, 0, 'h'},
         {"game", required_argument, 0, 'g'},
         {"multiplayer", required_argument, 0, 'm'},
-        {"program", optional_argument, 0, 'p'},
+        {"program", required_argument, 0, 'p'},
         {"user", required_argument, 0, 'u'},
         {"version", no_argument, 0, 'v'},
-        {"input-profile", no_argument, 0, 'i'},
+        {"input-profile", required_argument, 0, 'i'},
         {"null-render", no_argument, 0, 'n'},
         {"singlecore", no_argument, 0, 's'},
-        {"filter", no_argument, 0, 'x'},
+        {"filter", required_argument, 0, 'x'},
         {"aux-window", no_argument, 0, 'a'},
         {"aux-virtual", no_argument, 0, 'V'},
         {"dump-il2cpp", required_argument, 0, 'D'},
@@ -917,7 +948,7 @@ extern "C" SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv) {
     };
 
     while (optind < argc) {
-        int arg = getopt_long(argc, argv, "g:fhvcip::c:u:d:D:R:I:S:aVxn", long_options, &option_index);
+        int arg = getopt_long(argc, argv, "g:fhvc:i:p:u:d:D:R:I:S:aVx:ns", long_options, &option_index);
         if (arg != -1) {
             switch (char(arg)) {
             case 'd':
@@ -932,7 +963,7 @@ extern "C" SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv) {
                 break;
             case 'h':
                 PrintHelp(argv[0]);
-                return SDL_APP_FAILURE;
+                return SDL_APP_SUCCESS;
             case 'g':
                 filepath = std::string(optarg);
                 break;
@@ -973,15 +1004,20 @@ extern "C" SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv) {
                 break;
             }
             case 'p':
-                program_args = argv[optind];
-                ++optind;
+                program_args = optarg;
                 break;
             case 'u':
-                selected_user = atoi(optarg);
+                if (std::isdigit(static_cast<unsigned char>(optarg[0]))) {
+                    selected_user = std::atoi(optarg);
+                    selected_username.reset();
+                } else {
+                    selected_username = optarg;
+                    selected_user.reset();
+                }
                 break;
             case 'v':
                 PrintVersion();
-                return SDL_APP_FAILURE;
+                return SDL_APP_SUCCESS;
             case 'n':
                 force_null_render = true;
                 break;
@@ -989,8 +1025,7 @@ extern "C" SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv) {
                 force_single_core = true;
                 break;
             case 'x':
-                log_filter = argv[optind];
-                ++optind;
+                log_filter = optarg;
                 break;
             case 'a':
                 aux_window_requested = true;
@@ -1033,45 +1068,42 @@ extern "C" SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv) {
         std::exit(InstallPackage(install_path));
     }
 
-    SdlConfig config{config_path};
-
-    // apply the log_filter setting
-    // the logger was initialized before and doesn't pick up the filter on its own
-    Common::Log::Filter filter;
-    filter.ParseFilterString(log_filter.value_or(Settings::values.log_filter.GetValue()));
-    Common::Log::SetGlobalFilter(filter);
-
-    if (!program_args.empty()) {
-        Settings::values.program_args = program_args;
-    }
-
-    if (!input_profile.empty()) {
-        auto& players = Settings::values.players.GetValue();
-        players[0].profile_name = input_profile;
-    }
-
-    if (selected_user.has_value()) {
-        Settings::values.current_user = std::clamp(*selected_user, 0, 7);
-    }
-
-    if (override_gdb_port.has_value()) {
-        Settings::values.use_gdbstub = true;
-        Settings::values.gdbstub_port = *override_gdb_port;
-    }
-
-    if (force_single_core) {
-        Settings::values.use_multi_core = false;
-    }
-
-    if (force_null_render) {
-        Settings::values.renderer_backend = Settings::RendererBackend::Null;
-    }
-
+    Core::LaunchParams lp{};
+    lp.argv0 = argv[0];
+    lp.filepath = filepath;
+    lp.config_path = config_path;
+    lp.program_args = program_args;
+    lp.selected_user = selected_user;
+    lp.override_gdb_port = override_gdb_port;
+    lp.use_multiplayer = use_multiplayer;
+    lp.fullscreen = fullscreen;
+    lp.nickname = nickname;
+    lp.password = password;
+    lp.address = address;
+    lp.port = port;
+    lp.input_profile = input_profile;
+    lp.log_filter = log_filter;
+    lp.force_null_render = force_null_render;
+    lp.force_single_core = force_single_core;
 #ifdef _WIN32
     LocalFree(argv_w);
 #endif
+    SdlConfig config{lp.config_path};
+    if (selected_username.has_value()) {
+        const auto user_index = state->system.GetProfileManager().GetUserIndex(*selected_username);
+        if (!user_index.has_value()) {
+            LOG_ERROR(Frontend, "Invalid user argument '{}'", *selected_username);
+            return SDL_APP_FAILURE;
+        }
+        lp.selected_user = static_cast<int>(*user_index);
+    }
+    if (lp.selected_user.has_value() &&
+        !state->system.GetProfileManager().UserExistsIndex(*lp.selected_user)) {
+        LOG_ERROR(Frontend, "Selected user {} doesn't exist", *lp.selected_user);
+    }
+    Core::ApplyLaunchParams(lp);
 
-    if (filepath.empty()) {
+    if (lp.filepath.empty()) {
         LOG_CRITICAL(Frontend, "Failed to load ROM: No ROM specified");
         return SDL_APP_FAILURE;
     }
@@ -1086,14 +1118,14 @@ extern "C" SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv) {
     case Settings::RendererBackend::OpenGL_GLSL:
     case Settings::RendererBackend::OpenGL_GLASM:
     case Settings::RendererBackend::OpenGL_SPIRV:
-        state->emu_window = std::make_unique<EmuWindow_SDL3_GL>(&state->input_subsystem, state->system, fullscreen);
+        state->emu_window = std::make_unique<EmuWindow_SDL3_GL>(&state->input_subsystem, state->system, lp.fullscreen);
         break;
 #endif
     case Settings::RendererBackend::Vulkan:
-        state->emu_window = std::make_unique<EmuWindow_SDL3_VK>(&state->input_subsystem, state->system, fullscreen);
+        state->emu_window = std::make_unique<EmuWindow_SDL3_VK>(&state->input_subsystem, state->system, lp.fullscreen);
         break;
     case Settings::RendererBackend::Null:
-        state->emu_window = std::make_unique<EmuWindow_SDL3_Null>(&state->input_subsystem, state->system, fullscreen);
+        state->emu_window = std::make_unique<EmuWindow_SDL3_Null>(&state->input_subsystem, state->system, lp.fullscreen);
         break;
     default:
         LOG_CRITICAL(Frontend, "Invalid renderer backend");
@@ -1114,12 +1146,12 @@ extern "C" SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv) {
     Service::AM::FrontendAppletParameters load_parameters{
         .applet_id = Service::AM::AppletId::Application,
     };
-    const Core::SystemResultStatus load_result = state->system.Load(*state->emu_window, filepath, load_parameters);
+    const Core::SystemResultStatus load_result = state->system.Load(*state->emu_window, lp.filepath, load_parameters);
     switch (load_result) {
     case Core::SystemResultStatus::Success:
         break; // Expected case
     case Core::SystemResultStatus::ErrorGetLoader:
-        LOG_CRITICAL(Frontend, "Failed to obtain loader for {}!", filepath);
+        LOG_CRITICAL(Frontend, "Failed to obtain loader for {}!", lp.filepath);
         return SDL_APP_FAILURE;
     case Core::SystemResultStatus::ErrorLoader:
         LOG_CRITICAL(Frontend, "Failed to load ROM!");
@@ -1141,14 +1173,14 @@ extern "C" SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv) {
         return SDL_APP_FAILURE;
     }
 
-    if (use_multiplayer) {
+    if (lp.use_multiplayer) {
         if (auto member = Network::GetRoomMember().lock()) {
             member->BindOnChatMessageReceived(OnMessageReceived);
             member->BindOnStatusMessageReceived(OnStatusMessageReceived);
             member->BindOnStateChanged(OnStateChanged);
             member->BindOnError(OnNetworkError);
-            LOG_DEBUG(Network, "Start connection to {}:{} with nickname {}", address, port, nickname);
-            member->Join(nickname, address.c_str(), port, 0, Network::NoPreferredIP, password);
+            LOG_DEBUG(Network, "Start connection to {}:{} with nickname {}", lp.address, lp.port, lp.nickname);
+            member->Join(lp.nickname, lp.address.c_str(), lp.port, 0, Network::NoPreferredIP, lp.password);
         } else {
             LOG_ERROR(Network, "Could not access RoomMember");
             return SDL_APP_FAILURE;
@@ -1219,6 +1251,30 @@ extern "C" SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv) {
 
     // don't do anything, SDL3 already exists for us :D
     state->system.RegisterExitCallback([] {});
+
+    // QLaunch launched applications (should) now reload shader cache.
+    static std::mutex shader_cache_reload_mutex;
+    state->system.RegisterApplicationChangedCallback([state](u64 changed_program_id) {
+        if (!Settings::values.use_disk_shader_cache.GetValue()) {
+            return;
+        }
+
+        std::scoped_lock lk{shader_cache_reload_mutex};
+
+        LOG_INFO(Frontend, "Reloading disk shader cache for {:016X}", changed_program_id);
+
+        state->system.Pause();
+        state->system.GPU().WaitForIdle();
+        state->system.GPU().ObtainContext();
+
+        state->system.Renderer().ReadRasterizer()->LoadDiskResources(
+            changed_program_id, std::stop_token{},
+            [](VideoCore::LoadCallbackStage, size_t, size_t) {});
+
+        state->system.GPU().ReleaseContext();
+        state->system.Run();
+    });
+
     void(state->system.Run());
     if (state->system.DebuggerEnabled())
         state->system.InitializeDebugger();
@@ -1256,9 +1312,13 @@ extern "C" SDL_AppResult SDL_AppEvent(void *appstate, SDL_Event *event) {
 extern "C" void SDL_AppQuit(void *appstate, SDL_AppResult result) {
     SdlState *state = (SdlState *)appstate;
     if (!state) return;
-    state->system.DetachDebugger();
-    void(state->system.Pause());
-    state->system.ShutdownMainProcess();
+    // SDL calls quit for successful early exits such as --help/--version and for load failures.
+    // Those paths have no live kernel to pause, or Load already shut it down.
+    if (state->system.IsPoweredOn()) {
+        state->system.DetachDebugger();
+        state->system.Pause();
+        state->system.ShutdownMainProcess();
+    }
     delete state;
 }
 

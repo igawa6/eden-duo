@@ -377,3 +377,46 @@ TEST_CASE("DSMod scroll: a label half above the viewport draws its visible glyph
     REQUIRE(!later.empty());
     REQUIRE(later.front().rect[1] == 0);
 }
+
+TEST_CASE("DSMod scroll: wrapped document uses measured height and resets for short text",
+          "[dsmod][ui][scroll][document]") {
+    Canvas canvas;
+    canvas.Resize(200, 200);
+    const TextProvider texts = [](const std::string& ref) {
+        return std::make_shared<const std::string>(ref == "msbt:long" ?
+            "one\ntwo\nthree\nfour\nfive\nsix" : "short");
+    };
+    const TextMeasureScope measure{canvas, &texts};
+    Page page;
+    ScrollRegion region;
+    region.id = "document";
+    region.rect = {10, 20, 100, 30};
+    region.pad = 4;
+    page.scrolls.push_back(region);
+    Widget label;
+    label.type = WidgetType::Label;
+    label.rect = {10, 20, 90, 0};
+    label.text_src = "msbt:long";
+    label.text_scale = 2;
+    label.line_gap = 3;
+    label.wrap_width = 90;
+    label.repeat = 1;
+    label.auto_w = true;
+    label.scroll = region.id;
+    page.widgets.push_back(label);
+    StateSnapshot snapshot;
+    const auto long_metrics = MeasureScroll(page, region, snapshot);
+    REQUIRE(long_metrics.content_h == 79); // 5 pitches of 13 + 10 height + 4 pad
+    REQUIRE(long_metrics.max_offset == 49);
+    snapshot.ints[ScrollOffsetKey(region.id)] = 9999;
+    const auto expanded = ExpandWidgets(page, snapshot);
+    REQUIRE(expanded.size() == 1);
+    REQUIRE(expanded[0].rect[1] == 20 - 49);
+    REQUIRE(expanded[0].scroll_clip == region.rect);
+    page.widgets[0].text_src = "msbt:short";
+    REQUIRE(MeasureScroll(page, region, snapshot).max_offset == 0);
+    REQUIRE(ExpandWidgets(page, snapshot)[0].rect[1] == 20);
+    // An explicit list pitch still owns its content size.
+    region.row_h = 40;
+    REQUIRE(MeasureScroll(page, region, snapshot).content_h == 44);
+}

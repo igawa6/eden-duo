@@ -12,6 +12,7 @@ object Settings {
         SECTION_SYSTEM(R.string.preferences_system),
         SECTION_RENDERER(R.string.preferences_graphics),
         SECTION_FRAME_GEN(R.string.frame_gen),
+        SECTION_POST_PROCESSING(R.string.post_processing),
         SECTION_PERFORMANCE_STATS(R.string.stats_overlay_options),
         SECTION_INPUT_OVERLAY(R.string.input_overlay_options),
         SECTION_SOC_OVERLAY(R.string.soc_overlay_options),
@@ -35,8 +36,8 @@ object Settings {
     fun getPlayerString(player: Int): String =
         YuzuApplication.appContext.getString(R.string.preferences_player, player)
 
-    fun getDebugKnobAt(index: Int): Boolean {
-        return org.yuzu.yuzu_emu.NativeLibrary.getDebugKnobAt(index)
+    fun GetDebugKnobAt(index: Int): Boolean {
+        return org.yuzu.yuzu_emu.NativeLibrary.GetDebugKnobAt(index)
     }
 
     const val PREF_FIRST_APP_LAUNCH = "FirstApplicationLaunch"

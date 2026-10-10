@@ -148,6 +148,7 @@
     <addaction name="action_Show_Filter_Bar"/>
     <addaction name="action_Show_Status_Bar"/>
     <addaction name="action_Show_Performance_Overlay"/>
+    <addaction name="action_Post_Processing_Shaders"/>
     <addaction name="separator"/>
     <addaction name="menu_Reset_Window_Size"/>
     <addaction name="menu_View_Debugging"/>
@@ -233,8 +234,7 @@
     </property>
     <addaction name="action_Report_Compatibility"/>
     <addaction name="action_Open_Mods_Page"/>
-    <addaction name="action_Open_Quickstart_Guide"/>
-    <addaction name="action_Open_FAQ"/>
+    <addaction name="action_Open_UserHandbook"/>
     <addaction name="separator"/>
     <addaction name="action_About"/>
     <addaction name="action_Eden_Dependencies"/>
@@ -407,14 +407,9 @@
     <string>Open &amp;Mods Page</string>
    </property>
   </action>
-  <action name="action_Open_Quickstart_Guide">
+  <action name="action_Open_UserHandbook">
    <property name="text">
-    <string>Open &amp;Quickstart Guide</string>
-   </property>
-  </action>
-  <action name="action_Open_FAQ">
-   <property name="text">
-    <string>&amp;FAQ</string>
+    <string>&amp;User Handbook</string>
    </property>
   </action>
   <action name="action_Capture_Screenshot">
@@ -608,6 +603,11 @@
    </property>
    <property name="text">
     <string>Show &amp;Performance Overlay</string>
+   </property>
+  </action>
+  <action name="action_Post_Processing_Shaders">
+   <property name="text">
+    <string>Post-Processing &amp;Shaders...</string>
    </property>
   </action>
   <action name="action_Carousel_View">

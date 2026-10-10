@@ -6,6 +6,7 @@
 
 #include <mutex>
 #include <span>
+#include <optional>
 
 #include <android/native_window_jni.h>
 #include "common/android/applets/software_keyboard.h"
@@ -59,6 +60,7 @@ public:
     void HaltEmulation();
     void RunEmulation();
     void ShutdownEmulation();
+    void RequestDiskShaderCacheReload(u64 program_id);
 
     const Core::PerfStatsResults& PerfStats();
     int ShadersBuilding();
@@ -80,6 +82,7 @@ private:
     static void LoadDiskCacheProgress(VideoCore::LoadCallbackStage stage, int progress, int max);
     static void OnEmulationStopped(Core::SystemResultStatus result);
     static void ChangeProgram(std::size_t program_index);
+    void ReloadDiskShaderCache(u64 program_id);
 
 private:
     // Window management
@@ -107,6 +110,7 @@ private:
     Common::Android::SoftwareKeyboard::AndroidKeyboard* m_software_keyboard{};
     std::unique_ptr<FileSys::ManualContentProvider> m_manual_provider;
     int m_applet_id{1};
+    std::optional<u64> m_pending_shader_cache_title;
 
     // GPU driver parameters
     std::shared_ptr<Common::DynamicLibrary> m_vulkan_library;
@@ -117,4 +121,5 @@ private:
 
     // Program index for next boot
     std::atomic<s32> m_next_program_index = -1;
+    std::atomic<u64> m_next_program_id = 0;
 };

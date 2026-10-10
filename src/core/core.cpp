@@ -4,6 +4,7 @@
 #include <array>
 #include <atomic>
 #include <memory>
+#include <unordered_map>
 #include <utility>
 
 #include "game_settings.h"
@@ -57,6 +58,7 @@
 #include "core/memory.h"
 #include "core/memory/cheat_engine.h"
 #include "core/mods/mod_runtime.h"
+#include "common/atomic_ops.h"
 #include "core/perf_stats.h"
 #include "core/reporter.h"
 #include "core/tools/freezer.h"
@@ -218,6 +220,7 @@ struct System::Impl {
     void Run() {
         std::unique_lock<std::mutex> lk(suspend_guard);
 
+        InvalidateDualScreenGuestMailbox();
         kernel.SuspendEmulation(false);
         core_timing.SyncPause(false);
         is_paused.store(false, std::memory_order_relaxed);
@@ -228,6 +231,7 @@ struct System::Impl {
 
         core_timing.SyncPause(true);
         kernel.SuspendEmulation(true);
+        InvalidateDualScreenGuestMailbox();
         is_paused.store(true, std::memory_order_relaxed);
     }
 
@@ -260,12 +264,30 @@ struct System::Impl {
         }
     }
 
-    void SetNVDECActive(bool is_nvdec_active) {
-        nvdec_active = is_nvdec_active;
+    void NotifyNVDECChannelOpen(u64 process_id) {
+        std::scoped_lock lock{nvdec_active_mutex};
+        ++nvdec_active_channels[process_id];
+    }
+
+    void NotifyNVDECChannelClose(u64 process_id) {
+        std::scoped_lock lock{nvdec_active_mutex};
+        const auto it = nvdec_active_channels.find(process_id);
+        if (it == nvdec_active_channels.end()) {
+            return;
+        }
+        if (--it->second == 0) {
+            nvdec_active_channels.erase(it);
+        }
     }
 
     bool GetNVDECActive() {
-        return nvdec_active;
+        std::scoped_lock lock{nvdec_active_mutex};
+        return !nvdec_active_channels.empty();
+    }
+
+    bool IsNVDECActiveForProcess(u64 process_id) {
+        std::scoped_lock lock{nvdec_active_mutex};
+        return nvdec_active_channels.contains(process_id);
     }
 
     void InitializeDebugger(System& system, u16 port) {
@@ -306,11 +328,21 @@ struct System::Impl {
 
     SystemResultStatus Load(System& system, Frontend::EmuWindow& emu_window, const std::string& filepath, Service::AM::FrontendAppletParameters& params) {
         dsmod_mailbox_address = dsmod_mailbox_size = 0;
+        dsmod_mailbox_epoch_offset.reset();
+        dsmod_mailbox_epoch.store(0, std::memory_order_release);
         // DSMod: the loader registers "main" during CreateApplicationProcess below, and the first
         // registration wins. A previous load that failed after registering (or a previous game in
         // the same process) must not leave its build id and main base behind for this one.
         ResetPendingDualScreenMod();
+        if (params.launch_type == Service::AM::LaunchType::FrontendInitiated) {
+            fs_controller.InitTempStorage();
+        }
+
         InitializeKernel(system);
+
+        if (params.applet_type == Service::AM::AppletType::Application) {
+            current_application_filepath = filepath;
+        }
 
         const auto file = GetGameFileFromPath(virtual_filesystem, filepath);
 
@@ -348,7 +380,7 @@ struct System::Impl {
         LaunchTimestampCache::SaveLaunchTimestamp(params.program_id);
 
         // Make the process created be the application
-        kernel.MakeApplicationProcess(process->GetHandle());
+        kernel.SetApplicationProcess(process->GetHandle());
 
         // Set up the rest of the system.
         SystemResultStatus init_result{SetupForApplicationProcess(system, emu_window)};
@@ -446,6 +478,8 @@ struct System::Impl {
         kernel.ShutdownCores();
         mod_runtime.reset();
         dsmod_mailbox_address = dsmod_mailbox_size = 0;
+        dsmod_mailbox_epoch_offset.reset();
+        dsmod_mailbox_epoch.store(0, std::memory_order_release);
         ResetPendingDualScreenMod();
         services.reset();
         service_manager.reset();
@@ -511,6 +545,7 @@ struct System::Impl {
     Core::SpeedLimiter speed_limiter;
     ExecuteProgramCallback execute_program_callback;
     ExitCallback exit_callback;
+    ApplicationChangedCallback application_changed_callback;
 
     std::optional<Service::Services> services;
     std::optional<Core::Debugger> debugger;
@@ -532,6 +567,27 @@ struct System::Impl {
     VAddr pending_mod_base{};
     u64 pending_mod_title_id{};
     u64 pending_mod_size{};
+    void InvalidateDualScreenGuestMailbox() {
+        // No module callback or title-specific offsets. The timing thread is paused at ordinary
+        // Pause/Run; the debugger may also call this while only guest threads are stopped.
+        std::scoped_lock lock{dsmod_mailbox_epoch_mutex};
+        if (!dsmod_mailbox_epoch_offset || dsmod_mailbox_size < 4 ||
+            *dsmod_mailbox_epoch_offset > dsmod_mailbox_size - 4) return;
+        auto* process = kernel.ApplicationProcess();
+        if (!process) return;
+        auto* pointer = process->GetMemory().GetPointer<u32>(
+            dsmod_mailbox_address + *dsmod_mailbox_epoch_offset);
+        if (!pointer || reinterpret_cast<uintptr_t>(pointer) % alignof(u32) != 0) return;
+        u32 epoch = dsmod_mailbox_epoch.load(std::memory_order_relaxed) + 1;
+        if (epoch == 0) epoch = 1;
+        u32 expected{};
+        (void)Common::AtomicCompareAndSwap(pointer, u32{}, u32{}, expected);
+        while (!Common::AtomicCompareAndSwap(pointer, epoch, expected, expected)) {}
+        dsmod_mailbox_epoch.store(epoch, std::memory_order_release);
+    }
+    std::mutex dsmod_mailbox_epoch_mutex;
+    std::optional<u32> dsmod_mailbox_epoch_offset;
+    std::atomic<u32> dsmod_mailbox_epoch{};
     u64 dsmod_mailbox_address{};
     u64 dsmod_mailbox_size{};
     InputCommon::InputSubsystem* input_subsystem{};
@@ -546,6 +602,8 @@ struct System::Impl {
     std::array<u64, Core::Hardware::NUM_CPU_CORES> dynarmic_ticks{};
     std::array<u8, 0x20> build_id{};
 
+    std::string current_application_filepath;
+
     /// Service manager
     std::shared_ptr<Service::SM::ServiceManager> service_manager;
     /// ContentProviderUnion instance
@@ -556,6 +614,8 @@ struct System::Impl {
 
     mutable std::mutex suspend_guard;
     std::mutex general_channel_mutex;
+    std::mutex nvdec_active_mutex;
+    std::unordered_map<u64, u32> nvdec_active_channels;
     std::atomic_bool is_paused{};
     std::atomic_bool is_shutting_down{};
     std::atomic_bool is_powered_on{};
@@ -563,7 +623,6 @@ struct System::Impl {
     bool extended_memory_layout : 1 = false;
     bool exit_locked : 1 = false;
     bool exit_requested : 1 = false;
-    bool nvdec_active : 1 = false;
 
     void EnsureGeneralChannelInitialized(System& system) {
         if (!general_channel_event) {
@@ -631,12 +690,20 @@ bool System::RunWithGuestThreadsSuspended(const std::function<void()>& fn) {
     return impl->RunWithGuestThreadsSuspended(fn);
 }
 
-void System::SetNVDECActive(bool is_nvdec_active) {
-    impl->SetNVDECActive(is_nvdec_active);
+void System::NotifyNVDECChannelOpen(u64 process_id) {
+    impl->NotifyNVDECChannelOpen(process_id);
+}
+
+void System::NotifyNVDECChannelClose(u64 process_id) {
+    impl->NotifyNVDECChannelClose(process_id);
 }
 
 bool System::GetNVDECActive() {
     return impl->GetNVDECActive();
+}
+
+bool System::IsNVDECActiveForProcess(u64 process_id) {
+    return impl->IsNVDECActiveForProcess(process_id);
 }
 
 void System::InitializeDebugger() {
@@ -789,7 +856,25 @@ const Core::SpeedLimiter& System::SpeedLimiter() const {
 }
 
 u64 System::GetApplicationProcessProgramID() const {
-    return impl->kernel.ApplicationProcess()->GetProgramId();
+    const auto* const process = impl->kernel.ApplicationProcess();
+    return process != nullptr ? process->GetProgramId() : 0;
+}
+
+u64 System::GetProgramIdForProcessId(u64 process_id) const {
+    auto process = impl->kernel.GetProcessByProcessId(process_id);
+    return process.IsNull() ? 0 : process->GetProgramId();
+}
+
+u64 System::ResolveCallerProgramId(u64 process_id) const {
+    if (const auto program_id = this->GetProgramIdForProcessId(process_id); program_id != 0) {
+        return program_id;
+    }
+
+    const auto fallback = this->GetApplicationProcessProgramID();
+    LOG_WARNING(Core,
+                "Could not resolve caller process_id={}, falling back to application {:016X}",
+                process_id, fallback);
+    return fallback;
 }
 
 Loader::ResultStatus System::GetGameName(std::string& out) const {
@@ -820,9 +905,19 @@ InputCommon::InputSubsystem* System::GetInputSubsystem() const {
     return impl->input_subsystem;
 }
 
-void System::SetDualScreenGuestMailbox(u64 address, u64 size) {
+void System::SetDualScreenGuestMailbox(u64 address, u64 size, std::optional<u32> epoch_offset) {
     impl->dsmod_mailbox_address = address;
     impl->dsmod_mailbox_size = size;
+    impl->dsmod_mailbox_epoch_offset = epoch_offset;
+    impl->dsmod_mailbox_epoch.store(0, std::memory_order_release);
+}
+
+void System::InvalidateDualScreenGuestMailbox() {
+    impl->InvalidateDualScreenGuestMailbox();
+}
+
+u32 System::GetDualScreenGuestMailboxEpoch() const {
+    return impl->dsmod_mailbox_epoch.load(std::memory_order_acquire);
 }
 
 std::pair<u64, u64> System::GetDualScreenGuestMailbox() const {
@@ -1004,6 +1099,10 @@ void System::ExecuteProgram(std::size_t program_index) {
     }
 }
 
+const std::string& System::GetCurrentApplicationFilePath() const {
+    return impl->current_application_filepath;
+}
+
 /// @brief Gets a reference to the user channel stack.
 /// It is used to transfer data between programs.
 std::vector<std::vector<u8>>& System::GetUserChannel() {
@@ -1052,6 +1151,18 @@ void System::Exit() {
         impl->exit_callback();
     } else {
         LOG_CRITICAL(Core, "exit_callback must be initialized by the frontend");
+    }
+}
+
+void System::RegisterApplicationChangedCallback(ApplicationChangedCallback&& callback) {
+    impl->application_changed_callback = std::move(callback);
+}
+
+void System::NotifyApplicationChanged(u64 program_id) {
+    //LOG_DEBUG(Core, "Running application changed to {:016X}", program_id);
+
+    if (impl->application_changed_callback) {
+        impl->application_changed_callback(program_id);
     }
 }
 

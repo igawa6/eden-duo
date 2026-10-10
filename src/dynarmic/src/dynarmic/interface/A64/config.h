@@ -89,20 +89,16 @@ struct UserCallbacks {
 
     // All reads through this callback are 4-byte aligned.
     // Memory must be interpreted as little endian.
-    virtual std::optional<std::uint32_t> MemoryReadCode(VAddr vaddr) { return MemoryRead32(vaddr); }
+    virtual std::optional<std::uint32_t> MemoryReadCode(VAddr vaddr) {
+        return std::uint32_t(MemoryRead(vaddr, sizeof(std::uint32_t)));
+    }
 
     // Reads through these callbacks may not be aligned.
-    virtual std::uint8_t MemoryRead8(VAddr vaddr) = 0;
-    virtual std::uint16_t MemoryRead16(VAddr vaddr) = 0;
-    virtual std::uint32_t MemoryRead32(VAddr vaddr) = 0;
-    virtual std::uint64_t MemoryRead64(VAddr vaddr) = 0;
+    virtual std::uint64_t MemoryRead(VAddr vaddr, std::size_t size) = 0;
     virtual Vector MemoryRead128(VAddr vaddr) = 0;
 
     // Writes through these callbacks may not be aligned.
-    virtual void MemoryWrite8(VAddr vaddr, std::uint8_t value) = 0;
-    virtual void MemoryWrite16(VAddr vaddr, std::uint16_t value) = 0;
-    virtual void MemoryWrite32(VAddr vaddr, std::uint32_t value) = 0;
-    virtual void MemoryWrite64(VAddr vaddr, std::uint64_t value) = 0;
+    virtual void MemoryWrite(VAddr vaddr, std::uint64_t value, std::size_t size) = 0;
     virtual void MemoryWrite128(VAddr vaddr, Vector value) = 0;
 
     // Writes through these callbacks may not be aligned.
@@ -173,14 +169,23 @@ struct UserConfig {
     /// This is only used if page_table is not nullptr.
     std::uint32_t page_table_address_space_bits = 36;
 
-    /// Masks out the first N bits in host pointers from the page table.
+    /// Applies a bit mask to the bits in host pointers from the page table.
     /// The intention behind this is to allow users of Dynarmic to pack attributes in the
     /// same integer and update the pointer attribute pair atomically.
-    /// If the configured value is 3, all pointers will be forcefully aligned to 8 bytes.
-    std::int32_t page_table_pointer_mask_bits = 0;
+    /// If the configured value is ~(0b111ULL), all pointers will be forcefully aligned to 8 bytes.
+    std::uint64_t page_table_pointer_mask = 0;
 
-    // Log2 of the size per page entry, value should be either 3 or 4
-    std::size_t page_table_log2_stride = 3;
+    /// Log2 of the size per page entry, value should be either 3 or 4
+    std::uint32_t page_table_log2_stride = 3;
+
+    /// Setting this value has Dynarmic check the specified bit of the page pointer provided by page table.
+    /// If the bit is set to 1, Dynarmic will treat it as unmapped.
+    /// This bit should be included as part of `page_table_pointer_mask`.
+    std::optional<std::uint8_t> page_table_marked_bit = std::nullopt;
+
+    /// If this value is set, Dynarmic will sign extend the page table pointer by this bit.
+    /// Useful for compacting bits into the page table and should be used as part of `page_table_pointer_mask`.
+    std::optional<std::uint8_t> page_table_sign_extension = std::nullopt;
 
     /// Counter-timer frequency register. The value of the register is not interpreted by
     /// dynarmic.

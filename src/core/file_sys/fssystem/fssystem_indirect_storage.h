@@ -6,6 +6,9 @@
 
 #pragma once
 
+#include <type_traits>
+#include <array>
+#include <cstddef>
 #include "core/file_sys/errors.h"
 #include "core/file_sys/fssystem/fs_i_storage.h"
 #include "core/file_sys/fssystem/fssystem_bucket_tree.h"
@@ -85,6 +88,9 @@ public:
     void SetStorage(s32 idx, VirtualFile storage) {
         ASSERT(0 <= idx && idx < StorageCount);
         m_data_storage[idx] = storage;
+        if (idx == 0) {
+            m_original_missing = storage == nullptr || storage->GetSize() == 0;
+        }
     }
 
     template <typename T>
@@ -130,6 +136,9 @@ protected:
 
     template <bool ContinuousCheck, bool RangeCheck, typename F>
     Result OperatePerEntry(s64 offset, s64 size, F func);
+    // Launching another game makes the original storage inaccessable.
+    // This is a helper for multi-nca games.
+    void ReportMissingOriginal(s64 offset, s64 size);
 
 private:
     struct ContinuousReadingEntry {
@@ -154,6 +163,8 @@ private:
 private:
     mutable BucketTree m_table;
     std::array<VirtualFile, StorageCount> m_data_storage;
+    bool m_original_missing{false};
+    bool m_reported_missing_original{false};
 };
 
 template <bool ContinuousCheck, bool RangeCheck, typename F>
@@ -271,6 +282,10 @@ Result IndirectStorage::OperatePerEntry(s64 offset, s64 size, F func) {
 
         if (needs_operate) {
             const auto cur_entry_phys_offset = cur_entry.GetPhysicalOffset();
+
+            if (cur_entry.storage_index == 0 && m_original_missing) {
+                this->ReportMissingOriginal(cur_offset, cur_size);
+            }
 
             if constexpr (RangeCheck) {
                 // Get the current data storage's size.
