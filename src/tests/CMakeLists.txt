@@ -67,7 +67,7 @@ target_include_directories(buffer_usage_test PRIVATE ${PROJECT_SOURCE_DIR}/src)
 add_test(NAME buffer_usage_test COMMAND buffer_usage_test)
 
 add_executable(macro_shader_binding_test ${PROJECT_SOURCE_DIR}/tools/duo/macro-shader-binding-check.cpp)
-target_link_libraries(macro_shader_binding_test PRIVATE core video_core ${PLATFORM_LIBRARIES})
+target_link_libraries(macro_shader_binding_test PRIVATE common core input_common video_core ${PLATFORM_LIBRARIES})
 add_test(NAME macro_shader_binding_test COMMAND macro_shader_binding_test)
 
 add_executable(staging_upload_ring_test ${PROJECT_SOURCE_DIR}/tools/duo/staging-upload-ring-check.cpp)
@@ -76,7 +76,7 @@ add_test(NAME staging_upload_ring_test COMMAND staging_upload_ring_test)
 set_tests_properties(staging_upload_ring_test PROPERTIES SKIP_RETURN_CODE 2)
 
 add_executable(buffer_upload_order_test ${PROJECT_SOURCE_DIR}/tools/duo/buffer-upload-order-check.cpp)
-target_link_libraries(buffer_upload_order_test PRIVATE core video_core ${PLATFORM_LIBRARIES})
+target_link_libraries(buffer_upload_order_test PRIVATE common core input_common video_core ${PLATFORM_LIBRARIES})
 add_test(NAME buffer_upload_order_test COMMAND buffer_upload_order_test)
 set_tests_properties(buffer_upload_order_test PROPERTIES SKIP_RETURN_CODE 2)
 
