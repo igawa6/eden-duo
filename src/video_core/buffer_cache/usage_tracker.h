@@ -6,6 +6,9 @@
 
 #pragma once
 
+#include <algorithm>
+#include <vector>
+
 #include "common/alignment.h"
 #include "common/common_types.h"
 
@@ -53,6 +56,9 @@ public:
         if (IsPageUsed(page, offset, size)) {
             return true;
         }
+        if (page == page_end) {
+            return false;
+        }
         for (size_t i = page + 1; i < page_end; i++) {
             if (pages[i] != 0) {
                 return true;
@@ -64,21 +70,24 @@ public:
     }
 
 private:
+    static u64 PageMask(u64 offset, u64 size) noexcept {
+        if (size == 0) {
+            return 0;
+        }
+        const u64 begin = offset % BUFFER_PAGE_BYTES;
+        const u64 end = begin + std::min<u64>(size, BUFFER_PAGE_BYTES - begin);
+        const u64 first_bit = begin >> BUFFER_BYTES_PER_BITSHIFT;
+        const u64 end_bit = Common::AlignUp(end, 1ULL << BUFFER_BYTES_PER_BITSHIFT) >>
+                            BUFFER_BYTES_PER_BITSHIFT;
+        return (~u64{0} << first_bit) & (~u64{0} >> (64 - end_bit));
+    }
+
     void TrackPage(u64 page, u64 offset, u64 size) noexcept {
-        const size_t offset_in_page = offset % BUFFER_PAGE_BYTES;
-        const size_t first_bit = offset_in_page >> BUFFER_BYTES_PER_BITSHIFT;
-        const size_t num_bits = std::min<size_t>(size, BUFFER_PAGE_BYTES) >> BUFFER_BYTES_PER_BITSHIFT;
-        const size_t mask = ~u64{0} >> (64 - num_bits);
-        pages[page] |= (~u64{0} & mask) << first_bit;
+        pages[page] |= PageMask(offset, size);
     }
 
     bool IsPageUsed(u64 page, u64 offset, u64 size) const noexcept {
-        const size_t offset_in_page = offset % BUFFER_PAGE_BYTES;
-        const size_t first_bit = offset_in_page >> BUFFER_BYTES_PER_BITSHIFT;
-        const size_t num_bits = std::min<size_t>(size, BUFFER_PAGE_BYTES) >> BUFFER_BYTES_PER_BITSHIFT;
-        const size_t mask = ~u64{0} >> (64 - num_bits);
-        const size_t mask2 = (~u64{0} & mask) << first_bit;
-        return (pages[page] & mask2) != 0;
+        return (pages[page] & PageMask(offset, size)) != 0;
     }
 
 private:

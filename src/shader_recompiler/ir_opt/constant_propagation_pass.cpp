@@ -666,7 +666,8 @@ void FoldFSwizzleAdd(IR::Block& block, IR::Inst& inst) {
         return;
     }
     IR::Inst* const inst2{value_1.InstRecursive()};
-    if (inst2->GetOpcode() != IR::Opcode::ShuffleButterfly) {
+    const bool is_quad_swap{inst2->GetOpcode() == IR::Opcode::QuadSwap};
+    if (!is_quad_swap && inst2->GetOpcode() != IR::Opcode::ShuffleButterfly) {
         return;
     }
     const IR::Value value_3{GetThroughCast(inst2->Arg(0).Resolve(), IR::Opcode::BitCastU32F32)};
@@ -679,23 +680,27 @@ void FoldFSwizzleAdd(IR::Block& block, IR::Inst& inst) {
         }
     }
     const IR::Value index{inst2->Arg(1)};
-    const IR::Value clamp{inst2->Arg(2)};
-    const IR::Value segmentation_mask{inst2->Arg(3)};
-    if (!index.IsImmediate() || !clamp.IsImmediate() || !segmentation_mask.IsImmediate()) {
+    if (!index.IsImmediate()) {
         return;
     }
-    if (clamp.U32() != 3 || segmentation_mask.U32() != 28) {
-        return;
+    if (!is_quad_swap) {
+        const IR::Value clamp{inst2->Arg(2)};
+        const IR::Value segmentation_mask{inst2->Arg(3)};
+        if (!clamp.IsImmediate() || !segmentation_mask.IsImmediate() || clamp.U32() != 3 ||
+            segmentation_mask.U32() != 28) {
+            return;
+        }
     }
+    const u32 xor_mask{index.U32() + static_cast<u32>(is_quad_swap)};
     if (swizzle_value == 0x99) {
         // DPdxFine
-        if (index.U32() == 1) {
+        if (xor_mask == 1) {
             IR::IREmitter ir{block, IR::Block::InstructionList::s_iterator_to(inst)};
             inst.ReplaceUsesWith(ir.DPdxFine(IR::F32{inst.Arg(1)}));
         }
     } else if (swizzle_value == 0xA5) {
         // DPdyFine
-        if (index.U32() == 2) {
+        if (xor_mask == 2) {
             IR::IREmitter ir{block, IR::Block::InstructionList::s_iterator_to(inst)};
             inst.ReplaceUsesWith(ir.DPdyFine(IR::F32{inst.Arg(1)}));
         }

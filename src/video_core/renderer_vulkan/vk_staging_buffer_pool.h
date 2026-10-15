@@ -7,6 +7,7 @@
 #pragma once
 
 #include <climits>
+#include <mutex>
 #include <vector>
 
 #include "common/common_types.h"
@@ -39,6 +40,8 @@ public:
 
     StagingBufferRef Request(size_t size, MemoryUsage usage, bool deferred = false);
     void FreeDeferred(StagingBufferRef& ref);
+    // Call only after the recorded GPU copy completes; noncoherent mappings need invalidation.
+    void InvalidateDownload(const StagingBufferRef& ref);
 
     [[nodiscard]] VkBuffer StreamBuf() const noexcept {
         return *stream_buffer;
@@ -107,6 +110,9 @@ private:
     const Device& device;
     MemoryAllocator& memory_allocator;
     Scheduler& scheduler;
+
+    // ponytail: serialize pool metadata; stable allocation handles if contention matters.
+    std::mutex mutex;
 
     vk::Buffer stream_buffer;
     VkDeviceAddress stream_buffer_address{};

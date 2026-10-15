@@ -10,6 +10,7 @@
 #include <memory>
 #include <numeric>
 
+#include "common/logging.h"
 #include "common/range_sets.inc"
 #include "video_core/buffer_cache/buffer_cache_base.h"
 #include "video_core/guest_memory.h"
@@ -190,6 +191,36 @@ void BufferCache<P>::DownloadMemory(DAddr device_addr, u64 size) {
 template <class P>
 void BufferCache<P>::ClearDownload(DAddr device_addr, u64 size) {
     async_downloads.DeleteAll(device_addr, size);
+    // A cancelled job must not publish against credits added by a later snapshot.
+    // ponytail: trim queued copies in place; use validity sets if cancellation fragmentation grows.
+    const DAddr cancelled_end = device_addr + size;
+    for (auto& downloads : pending_downloads) {
+        const size_t count = downloads.size();
+        for (size_t i = 0; i < count; ++i) {
+            auto& copy = downloads[i];
+            const DAddr start = copy.src_offset;
+            const DAddr end = start + copy.size;
+            const DAddr cut_start = std::max(start, device_addr);
+            const DAddr cut_end = std::min(end, cancelled_end);
+            if (cut_start >= cut_end) {
+                continue;
+            }
+            if (cut_start > start && cut_end < end) {
+                auto tail = copy;
+                tail.src_offset = cut_end;
+                tail.dst_offset += cut_end - start;
+                tail.size = end - cut_end;
+                copy.size = cut_start - start;
+                downloads.push_back(tail);
+            } else if (cut_start == start) {
+                copy.src_offset = cut_end;
+                copy.dst_offset += cut_end - start;
+                copy.size = end - cut_end;
+            } else {
+                copy.size = cut_start - start;
+            }
+        }
+    }
     uncommitted_gpu_modified_ranges.Subtract(device_addr, size);
     for (auto& interval_set : committed_gpu_modified_ranges) {
         interval_set.Subtract(device_addr, size);
@@ -255,9 +286,11 @@ bool BufferCache<P>::DMACopy(GPUVAddr src_address, GPUVAddr dest_address, u64 am
         }
     }
 
-    Tegra::Memory::DeviceGuestMemoryScoped<u8, Tegra::Memory::GuestMemoryFlags::UnsafeReadWrite>
-        tmp(device_memory, *cpu_src_address, amount, &tmp_buffer);
-    tmp.SetAddressAndSize(*cpu_dest_address, amount);
+    {
+        Tegra::Memory::DeviceGuestMemoryScoped<u8, Tegra::Memory::GuestMemoryFlags::UnsafeReadWrite>
+            tmp(device_memory, *cpu_src_address, amount, &tmp_buffer);
+        tmp.SetAddressAndSize(*cpu_dest_address, amount);
+    }
     return true;
 }
 
@@ -323,6 +356,7 @@ std::pair<typename P::Buffer*, u32> BufferCache<P>::ObtainCPUBuffer(
         break;
     }
 
+    buffer.MarkUsage(buffer.Offset(device_addr), size);
     return {&buffer, buffer.Offset(device_addr)};
 }
 
@@ -664,7 +698,7 @@ void BufferCache<P>::CommitAsyncFlushesHigh() {
         runtime.CopyBuffer(download_staging.buffer, buffer, copies, false);
         normalized_copies.push_back(second_copy);
     }
-    runtime.PostCopyBarrier();
+    runtime.PostDownloadBarrier();
     pending_downloads.emplace_back(std::move(normalized_copies));
     async_buffers.emplace_back(download_staging);
 }
@@ -690,9 +724,15 @@ void BufferCache<P>::PopAsyncBuffers() {
     }
     auto& downloads = pending_downloads.front();
     auto& async_buffer = async_buffers.front();
+    if constexpr (!IS_OPENGL) {
+        runtime.InvalidateDownload(*async_buffer);
+    }
     u8* base = async_buffer->mapped_span.data();
     const size_t base_offset = async_buffer->offset;
     for (const auto& copy : downloads) {
+        if (copy.size == 0) {
+            continue;
+        }
         const DAddr device_addr = static_cast<DAddr>(copy.src_offset);
         const u64 dst_offset = copy.dst_offset - base_offset;
         const u8* read_mapped_memory = base + dst_offset;
@@ -701,7 +741,28 @@ void BufferCache<P>::PopAsyncBuffers() {
                                            end - start);
         });
         async_downloads.Subtract(device_addr, copy.size, [&](DAddr start, DAddr end) {
-            gpu_modified_ranges.Subtract(start, end - start);
+            // Newer writes awaiting a snapshot still own their exact GPU ranges.
+            DAddr cursor = start;
+            // ponytail: one query per pending set per span; merge cursors if queued sets grow.
+            while (cursor < end) {
+                DAddr protected_start = end;
+                DAddr protected_end = end;
+                const auto protect_pending = [&](const Common::RangeSet<DAddr>& pending) {
+                    const auto overlap = pending.FirstOverlapInRange(cursor, end - cursor);
+                    if (overlap && overlap->first < protected_start) {
+                        protected_start = overlap->first;
+                        protected_end = overlap->second;
+                    }
+                };
+                protect_pending(uncommitted_gpu_modified_ranges);
+                for (const auto& pending : committed_gpu_modified_ranges) {
+                    protect_pending(pending);
+                }
+                if (cursor < protected_start) {
+                    gpu_modified_ranges.Subtract(cursor, protected_start - cursor);
+                }
+                cursor = protected_end;
+            }
         });
     }
     async_buffers_death_ring.emplace_back(*async_buffer);
@@ -904,6 +965,7 @@ void BufferCache<P>::BindHostDrawIndirectBuffers() {
         Buffer& buffer = slot_buffers[binding.buffer_id];
         TouchBuffer(buffer, binding.buffer_id);
         SynchronizeBuffer(buffer, binding.device_addr, binding.size);
+        buffer.MarkUsage(buffer.Offset(binding.device_addr), binding.size);
     };
     if (current_draw_indirect->include_count) {
         bind_buffer(channel_state->count_buffer_binding);
@@ -1914,8 +1976,13 @@ void BufferCache<P>::DownloadBufferMemory(Buffer& buffer, DAddr device_addr, u64
             copy.dst_offset += download_staging.offset;
             buffer.MarkUsage(copy.src_offset, copy.size);
         }
-        runtime.CopyBuffer(download_staging.buffer, buffer, copies_span, true);
+        runtime.PreCopyBarrier();
+        runtime.CopyBuffer(download_staging.buffer, buffer, copies_span, false);
+        runtime.PostDownloadBarrier();
         runtime.Finish();
+        if constexpr (!IS_OPENGL) {
+            runtime.InvalidateDownload(download_staging);
+        }
         for (const BufferCopy& copy : copies) {
             const DAddr copy_device_addr = buffer.CpuAddr() + copy.src_offset;
             // Undo the modified offset

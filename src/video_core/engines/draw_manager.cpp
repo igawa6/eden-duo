@@ -6,7 +6,6 @@
 
 #include <cstring>
 
-#include "common/settings.h"
 #include "video_core/dirty_flags.h"
 #include "video_core/engines/maxwell_3d.h"
 #include "video_core/rasterizer_interface.h"

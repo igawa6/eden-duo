@@ -38,6 +38,28 @@ It's recommended to run these scripts after almost any Android change, as they a
 - `unused-strings.sh`: Finds unused strings in `strings.xml` files.
 - `stale-translations.sh`: Finds translated strings that aren't present in the source `strings.xml` file.
 
+## Eden Duo regression checks
+
+The standalone checks in `tools/duo/` are registered with CTest when configured with
+`-DYUZU_TESTS=ON`:
+
+- `quad-derivatives-check.cpp`: native fine-derivative lowering and nonmatching quad patterns.
+- `buffer-usage-check.cpp`: unaligned, page-crossing, exact-page and empty GPU-read ranges.
+- `macro-shader-binding-check.cpp`: accelerated shader bindings and constant buffers versus
+  interpreted macro execution, including shadow-RAM replay.
+- `staging-upload-ring-check.cpp`: busy upload-ring regions surviving wrap fallback.
+- `buffer-upload-order-check.cpp`: real Vulkan upload ordering, newer GPU writes surviving old
+  readbacks, and whole/prefix/middle/suffix cancellation of queued readbacks.
+
+```sh
+cmake --build build --target shader_quad_derivative_test buffer_usage_test macro_shader_binding_test staging_upload_ring_test buffer_upload_order_test
+ctest --test-dir build --output-on-failure -R "^(shader_quad_derivative_test|buffer_usage_test|macro_shader_binding_test|staging_upload_ring_test|buffer_upload_order_test)$"
+```
+
+The Vulkan checks use a real headless device and return skip code `2` if initialization is
+unavailable. No ROM, save or external private capture is needed. For a cross-compiled Android
+build, run the executables on the target device rather than through host CTest.
+
 ## Translations
 
 - [Translation Scripts](./translations)

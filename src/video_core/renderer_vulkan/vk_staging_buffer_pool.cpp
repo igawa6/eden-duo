@@ -101,6 +101,7 @@ StagingBufferPool::StagingBufferPool(const Device& device_, MemoryAllocator& mem
 StagingBufferPool::~StagingBufferPool() = default;
 
 StagingBufferRef StagingBufferPool::Request(size_t size, MemoryUsage usage, bool deferred) {
+    std::scoped_lock lock{mutex};
     if (!deferred && usage == MemoryUsage::Upload && size <= region_size) {
         return GetStreamBuffer(size);
     }
@@ -108,6 +109,7 @@ StagingBufferRef StagingBufferPool::Request(size_t size, MemoryUsage usage, bool
 }
 
 void StagingBufferPool::FreeDeferred(StagingBufferRef& ref) {
+    std::scoped_lock lock{mutex};
     auto& entries = GetCache(ref.usage)[ref.log2_level].entries;
     const auto is_this_one = [&ref](const StagingBuffer& entry) {
         return entry.index == ref.index;
@@ -119,7 +121,19 @@ void StagingBufferPool::FreeDeferred(StagingBufferRef& ref) {
     it->deferred = false;
 }
 
+void StagingBufferPool::InvalidateDownload(const StagingBufferRef& ref) {
+    std::scoped_lock lock{mutex};
+    ASSERT(ref.usage == MemoryUsage::Download);
+    auto& entries = GetCache(ref.usage)[ref.log2_level].entries;
+    const auto it = std::find_if(entries.begin(), entries.end(), [&ref](const StagingBuffer& entry) {
+        return entry.index == ref.index;
+    });
+    ASSERT(it != entries.end());
+    it->buffer.Invalidate();
+}
+
 void StagingBufferPool::TickFrame() {
+    std::scoped_lock lock{mutex};
     current_delete_level = (current_delete_level + 1) % NUM_LEVELS;
 
     ReleaseCache(MemoryUsage::DeviceLocal);
@@ -136,20 +150,20 @@ StagingBufferRef StagingBufferPool::GetStreamBuffer(size_t size) {
     const u64 current_tick = scheduler.CurrentTick();
     std::fill(sync_ticks.begin() + Region(used_iterator), sync_ticks.begin() + Region(iterator),
               current_tick);
-    used_iterator = iterator;
-    free_iterator = (std::max)(free_iterator, iterator + size);
 
     if (iterator + size >= stream_buffer_size) {
         std::fill(sync_ticks.begin() + Region(used_iterator), sync_ticks.begin() + NUM_SYNCS,
                   current_tick);
-        used_iterator = 0;
-        iterator = 0;
-        free_iterator = size;
-
         if (AreRegionsActive(0, Region(size) + 1)) {
             // Avoid waiting for the previous usages to be free
             return GetStagingBuffer(size, MemoryUsage::Upload);
         }
+        used_iterator = 0;
+        iterator = 0;
+        free_iterator = size;
+    } else {
+        used_iterator = iterator;
+        free_iterator = (std::max)(free_iterator, iterator + size);
     }
     const size_t offset = iterator;
     iterator = Common::AlignUp(iterator + size, MAX_ALIGNMENT);

@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+- Restore native fine-derivative lowering for quad-swap shader patterns, including captured **Pokémon Legends: Z-A** material shaders.
+- Preserve all touched GPU buffer-read units across unaligned and page-crossing ranges so overlapping CPU uploads cannot be reordered ahead of those reads.
+- Preserve shadow-RAM tracking and replay in accelerated shader-binding and constant-buffer setup macros.
+- Keep busy Vulkan upload-ring regions reserved after a wrap fallback instead of overwriting in-flight geometry or shader data.
+- Track GPU usage of exported cached buffers and indirect draw arguments/counts so later CPU uploads cannot overtake their GPU consumers.
+- Preserve newer GPU-written buffer ranges when an older asynchronous readback completes, including writes awaiting their next download snapshot.
+- Cancel superseded bytes in queued asynchronous GPU readbacks so retired jobs cannot overwrite newer CPU data or consume a fresh readback's ownership.
+- Make Vulkan buffer readbacks visible to host reads before CPU publication, invalidate noncoherent mappings, and protect staging-pool metadata during asynchronous retirement.
+- Honor requested GPU-buffer preservation on NCE write faults without requiring the optional readback workaround.
+
 ## 1.2.1
 
 **Fixed**

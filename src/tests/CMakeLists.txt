@@ -58,6 +58,28 @@ endif()
 
 add_test(NAME tests COMMAND tests)
 
+add_executable(shader_quad_derivative_test ${PROJECT_SOURCE_DIR}/tools/duo/quad-derivatives-check.cpp)
+target_link_libraries(shader_quad_derivative_test PRIVATE video_core shader_recompiler)
+add_test(NAME shader_quad_derivative_test COMMAND shader_quad_derivative_test)
+
+add_executable(buffer_usage_test ${PROJECT_SOURCE_DIR}/tools/duo/buffer-usage-check.cpp)
+target_include_directories(buffer_usage_test PRIVATE ${PROJECT_SOURCE_DIR}/src)
+add_test(NAME buffer_usage_test COMMAND buffer_usage_test)
+
+add_executable(macro_shader_binding_test ${PROJECT_SOURCE_DIR}/tools/duo/macro-shader-binding-check.cpp)
+target_link_libraries(macro_shader_binding_test PRIVATE core video_core ${PLATFORM_LIBRARIES})
+add_test(NAME macro_shader_binding_test COMMAND macro_shader_binding_test)
+
+add_executable(staging_upload_ring_test ${PROJECT_SOURCE_DIR}/tools/duo/staging-upload-ring-check.cpp)
+target_link_libraries(staging_upload_ring_test PRIVATE video_core ${PLATFORM_LIBRARIES})
+add_test(NAME staging_upload_ring_test COMMAND staging_upload_ring_test)
+set_tests_properties(staging_upload_ring_test PROPERTIES SKIP_RETURN_CODE 2)
+
+add_executable(buffer_upload_order_test ${PROJECT_SOURCE_DIR}/tools/duo/buffer-upload-order-check.cpp)
+target_link_libraries(buffer_upload_order_test PRIVATE core video_core ${PLATFORM_LIBRARIES})
+add_test(NAME buffer_upload_order_test COMMAND buffer_upload_order_test)
+set_tests_properties(buffer_upload_order_test PROPERTIES SKIP_RETURN_CODE 2)
+
 # DSMod package regression goldens (core/mods/manifest_digest.cpp, core/mods/render_golden.cpp):
 # the published packages are read from these folders at test time (':'-separated, each holding
 # <Package>/dualscreen/manifest.json; EDEN_DSMOD_GOLDEN_PACKAGE_ROOTS overrides at run time, a

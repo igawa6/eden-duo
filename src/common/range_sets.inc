@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <algorithm>
 #include <limits>
 #include <utility>
 
@@ -86,6 +87,21 @@ struct RangeSet<AddressType>::RangeSetImpl {
             }
             func(inter_addr, inter_addr_end);
         }
+    }
+
+    std::optional<std::pair<AddressType, AddressType>> FirstOverlapInRange(
+        AddressType base_address, size_t size) const {
+        if (size == 0) {
+            return std::nullopt;
+        }
+        const AddressType end_address = base_address + static_cast<AddressType>(size);
+        const IntervalType search_interval{base_address, end_address};
+        const auto it = m_ranges_set.lower_bound(search_interval);
+        if (it == m_ranges_set.end() || it->lower() >= end_address) {
+            return std::nullopt;
+        }
+        return std::pair{(std::max)(base_address, it->lower()),
+                         (std::min)(end_address, it->upper())};
     }
 
     IntervalSet m_ranges_set;
@@ -234,6 +250,12 @@ template <typename Func>
 void RangeSet<AddressType>::ForEachInRange(AddressType base_address, size_t size,
                                            Func&& func) const {
     m_impl->ForEachInRange(base_address, size, std::move(func));
+}
+
+template <typename AddressType>
+std::optional<std::pair<AddressType, AddressType>> RangeSet<AddressType>::FirstOverlapInRange(
+    AddressType base_address, size_t size) const {
+    return m_impl->FirstOverlapInRange(base_address, size);
 }
 
 template <typename AddressType>

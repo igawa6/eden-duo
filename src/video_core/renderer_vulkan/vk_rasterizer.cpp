@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <map>
 #include <array>
+#include <cstring>
 #include <memory>
 #include <mutex>
 
@@ -296,8 +297,9 @@ void RasterizerVulkan::PrepareDraw(bool is_indexed, Func&& draw_func) {
     std::scoped_lock lock{buffer_cache.mutex, texture_cache.mutex};
     // update engine as channel may be different.
     pipeline->SetEngine(maxwell3d, gpu_memory);
-    if (!pipeline->Configure(is_indexed))
+    if (!pipeline->Configure(is_indexed)) {
         return;
+    }
 
     UpdateDynamicStates();
 
@@ -393,7 +395,6 @@ void RasterizerVulkan::Draw(bool is_indexed, u32 instance_count) {
         const auto& draw_state = maxwell3d->draw_manager.draw_state;
         const u32 num_instances{instance_count};
         const DrawParams draw_params{MakeDrawParams(draw_state, num_instances, is_indexed)};
-
         scheduler.Record([draw_params](vk::CommandBuffer cmdbuf) {
             if (draw_params.is_indexed) {
                 cmdbuf.DrawIndexed(draw_params.num_vertices, draw_params.num_instances,
@@ -714,6 +715,7 @@ void RasterizerVulkan::Clear(u32 layer_count) {
 void RasterizerVulkan::DispatchCompute() {
     FlushWork();
     gpu_memory->FlushCaching();
+    const auto& qmd{kepler_compute->launch_description};
 
     ComputePipeline* const pipeline{pipeline_cache.CurrentComputePipeline()};
     if (!pipeline) {
@@ -725,7 +727,6 @@ void RasterizerVulkan::DispatchCompute() {
         return;
     }
 
-    const auto& qmd{kepler_compute->launch_description};
     auto indirect_address = kepler_compute->GetIndirectComputeAddress();
     if (indirect_address) {
         // DispatchIndirect

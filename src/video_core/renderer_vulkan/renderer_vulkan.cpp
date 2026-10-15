@@ -333,7 +333,6 @@ void RendererVulkan::Composite(std::span<const Tegra::FramebufferConfig> framebu
     }
 
     Frame* frame = present_manager.GetRenderFrame();
-
     scheduler.RequestOutsideRenderPassOperationContext();
     blit_swapchain.DrawToFrame(device, rasterizer, frame, primary,
                                render_window.GetFramebufferLayout(),

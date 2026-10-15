@@ -300,21 +300,19 @@ void HLE_C713C83D8F63CCF3::Execute(Core::System& system, Engines::Maxwell3D& max
     maxwell3d.RefreshParameters();
     const u32 offset = (parameters[0] & 0x3FFFFFFF) << 2;
     const u32 address = maxwell3d.regs.shadow_scratch[24];
-    auto& const_buffer = maxwell3d.regs.const_buffer;
-    const_buffer.size = 0x7000;
-    const_buffer.address_high = (address >> 24) & 0xFF;
-    const_buffer.address_low = address << 8;
-    const_buffer.offset = offset;
+    maxwell3d.CallMethod(system, MAXWELL3D_REG_INDEX(const_buffer.size), 0x7000, true);
+    maxwell3d.CallMethod(system, MAXWELL3D_REG_INDEX(const_buffer.address_high), address >> 24, true);
+    maxwell3d.CallMethod(system, MAXWELL3D_REG_INDEX(const_buffer.address_low), address << 8, true);
+    maxwell3d.CallMethod(system, MAXWELL3D_REG_INDEX(const_buffer.offset), offset, true);
 }
 void HLE_D7333D26E0A93EDE::Execute(Core::System& system, Engines::Maxwell3D& maxwell3d, std::span<const u32> parameters, [[maybe_unused]] u32 method) {
     maxwell3d.RefreshParameters();
     const size_t index = parameters[0];
     const u32 address = maxwell3d.regs.shadow_scratch[42 + index];
     const u32 size = maxwell3d.regs.shadow_scratch[47 + index];
-    auto& const_buffer = maxwell3d.regs.const_buffer;
-    const_buffer.size = size;
-    const_buffer.address_high = (address >> 24) & 0xFF;
-    const_buffer.address_low = address << 8;
+    maxwell3d.CallMethod(system, MAXWELL3D_REG_INDEX(const_buffer.size), size, true);
+    maxwell3d.CallMethod(system, MAXWELL3D_REG_INDEX(const_buffer.address_high), address >> 24, true);
+    maxwell3d.CallMethod(system, MAXWELL3D_REG_INDEX(const_buffer.address_low), address << 8, true);
 }
 void HLE_BindShader::Execute(Core::System& system, Engines::Maxwell3D& maxwell3d, std::span<const u32> parameters, [[maybe_unused]] u32 method) {
     maxwell3d.RefreshParameters();
@@ -324,21 +322,20 @@ void HLE_BindShader::Execute(Core::System& system, Engines::Maxwell3D& maxwell3d
         return;
     }
 
-    regs.pipelines[index & 0xF].offset = parameters[2];
-    maxwell3d.dirty.flags[VideoCommon::Dirty::Shaders] = true;
-    regs.shadow_scratch[28 + index] = parameters[1];
-    regs.shadow_scratch[34 + index] = parameters[2];
-
+    // Match MME SENDs: shadow tracking/replay and register side effects apply to every write.
+    constexpr u32 first_shader_offset = MAXWELL3D_REG_INDEX(pipelines) +
+        offsetof(Maxwell3D::Regs::Pipeline, offset) / sizeof(u32);
+    maxwell3d.CallMethod(system, first_shader_offset + 0x10 * (index & 0xF), parameters[2], true);
+    maxwell3d.CallMethod(system, u32(MAXWELL3D_REG_INDEX(shadow_scratch)) + 28 + index,
+                        parameters[1], true);
+    maxwell3d.CallMethod(system, u32(MAXWELL3D_REG_INDEX(shadow_scratch)) + 34 + index,
+                        parameters[2], true);
     const u32 address = parameters[4];
-    auto& const_buffer = regs.const_buffer;
-    const_buffer.size = 0x10000;
-    const_buffer.address_high = (address >> 24) & 0xFF;
-    const_buffer.address_low = address << 8;
-
-    const size_t bind_group_id = parameters[3] & 0x7F;
-    auto& bind_group = regs.bind_groups[bind_group_id];
-    bind_group.raw_config = 0x11;
-    maxwell3d.ProcessCBBind(bind_group_id);
+    maxwell3d.CallMethod(system, MAXWELL3D_REG_INDEX(const_buffer.size), 0x10000, true);
+    maxwell3d.CallMethod(system, MAXWELL3D_REG_INDEX(const_buffer.address_high), address >> 24, true);
+    maxwell3d.CallMethod(system, MAXWELL3D_REG_INDEX(const_buffer.address_low), address << 8, true);
+    maxwell3d.CallMethod(system, u32(MAXWELL3D_REG_INDEX(bind_groups[0].raw_config)) +
+                                    8 * (parameters[3] & 0x7F), 0x11, true);
 }
 void HLE_SetRasterBoundingBox::Execute(Core::System& system, Engines::Maxwell3D& maxwell3d, std::span<const u32> parameters, [[maybe_unused]] u32 method) {
     maxwell3d.RefreshParameters();
