@@ -390,6 +390,10 @@ void BufferCacheRuntime::FreeDeferredStagingBuffer(StagingBufferRef& ref) {
     staging_pool.FreeDeferred(ref);
 }
 
+void BufferCacheRuntime::InvalidateDownload(const StagingBufferRef& ref) {
+    staging_pool.InvalidateDownload(ref);
+}
+
 u64 BufferCacheRuntime::GetDeviceLocalMemory() const {
     return device.GetDeviceLocalMemory();
 }
@@ -515,6 +519,23 @@ void BufferCacheRuntime::PostCopyBarrier() {
     scheduler.Record([](vk::CommandBuffer cmdbuf) {
         cmdbuf.PipelineBarrier(VK_PIPELINE_STAGE_TRANSFER_BIT, vk::PIPELINE_STAGE_GRAPHICS_COMPUTE,
                                0, WRITE_BARRIER);
+    });
+}
+
+void BufferCacheRuntime::PostDownloadBarrier() {
+    static constexpr VkMemoryBarrier HOST_READ_BARRIER{
+        .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
+        .pNext = nullptr,
+        .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+        .dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT |
+                         VK_ACCESS_HOST_READ_BIT,
+    };
+    scheduler.RequestOutsideRenderPassOperationContext();
+    scheduler.Record([](vk::CommandBuffer cmdbuf) {
+        // Later GPU writers must also remain behind the snapshot's transfer reads.
+        cmdbuf.PipelineBarrier(VK_PIPELINE_STAGE_TRANSFER_BIT,
+                               vk::PIPELINE_STAGE_GRAPHICS_COMPUTE | VK_PIPELINE_STAGE_HOST_BIT,
+                               0, HOST_READ_BARRIER);
     });
 }
 

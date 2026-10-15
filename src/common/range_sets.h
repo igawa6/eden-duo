@@ -4,6 +4,8 @@
 #pragma once
 
 #include <memory>
+#include <optional>
+#include <utility>
 
 #include "common/common_types.h"
 
@@ -31,6 +33,10 @@ public:
 
     template <typename Func>
     void ForEachInRange(AddressType device_addr, size_t size, Func&& func) const;
+
+    /// Return the first nonempty intersection as half-open endpoints, or nullopt.
+    [[nodiscard]] std::optional<std::pair<AddressType, AddressType>> FirstOverlapInRange(
+        AddressType base_address, size_t size) const;
 
 private:
     struct RangeSetImpl;
