@@ -111,6 +111,22 @@ public:
     /// Notify rasterizer that any caches of the specified region are desync with guest
     virtual void OnCacheInvalidation(PAddr addr, u64 size) = 0;
 
+    /// Invalidates a region the CPU overwrote as a whole (an NCE page fault), unless the buffer
+    /// cache owns GPU-written data inside it, which must be flushed first. Returns false, having
+    /// done nothing, in that case. Implementations decide and invalidate atomically, so a GPU write
+    /// recorded concurrently cannot be disowned without its download.
+    virtual bool OnCacheInvalidationIfNotGpuModified(DAddr addr, u64 size) {
+        if (MustFlushRegion(addr, size, VideoCommon::CacheType::BufferCache)) {
+            return false;
+        }
+        OnCacheInvalidation(addr, size);
+        return true;
+    }
+
+    /// The commands being parsed carry arguments the GPU wrote, and they are consumed without
+    /// waiting for the GPU. Order every earlier GPU write before the work that follows.
+    virtual void OnGpuWrittenCommandData() {}
+
     virtual bool OnCPUWrite(PAddr addr, u64 size) = 0;
 
     /// Sync memory between guest and host.

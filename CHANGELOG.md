@@ -10,6 +10,9 @@
 - Cancel superseded bytes in queued asynchronous GPU readbacks so retired jobs cannot overwrite newer CPU data or consume a fresh readback's ownership.
 - Make Vulkan buffer readbacks visible to host reads before CPU publication, invalidate noncoherent mappings, and protect staging-pool metadata during asynchronous retirement.
 - Honor requested GPU-buffer preservation on NCE write faults without requiring the optional readback workaround.
+- Reduce host-memory commitment for aligned zero-filled guest allocations on Linux/Android, preserving shared aliases and normal initialization when page discard is unavailable.
+- Stop waiting for the GPU before parsing GPU-written macro arguments (**Pokémon Legends: Z-A**'s GPU-built indirect draws): accelerated macros refresh only the arguments they read on the CPU, and guest compute writes are ordered on the GPU before the draws and dispatches that consume them. NCE page-fault invalidation now checks and invalidates atomically, so a concurrently recorded GPU write is no longer dropped. Z-A's train station on AYN Thor runs at 30 FPS instead of ~24–27.
+- Keep occlusion-query samples across command-buffer submissions. Each submit used to reset the guest sample counter, so a submit between a game's counter clear and its report read zero samples and hid the tested object for a frame (characters and NPCs vanishing in **Pokémon Legends: Z-A**).
 
 ## 1.3.1
 

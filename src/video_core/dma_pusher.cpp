@@ -74,6 +74,7 @@ bool DmaPusher::Step() {
     }
 
     if (header.size > 0) {
+        bool macro_arguments_only = false;
         if (subchannels[dma_state.subchannel] && dma_state.method_count) {
             const auto engine = subchannel_type[dma_state.subchannel];
             const bool kepler_payload = engine == Engines::EngineTypes::KeplerCompute && dma_state.method == ComputeInline && dma_state.non_incrementing;
@@ -81,10 +82,24 @@ bool DmaPusher::Step() {
             if (kepler_payload || macro_payload) {
                 const size_t words = std::min<size_t>(dma_state.method_count, header.size);
                 subchannels[dma_state.subchannel]->current_dirty = memory_manager.IsMemoryDirty(dma_state.dma_get, words * sizeof(u32));
+                // The segment holds nothing but further arguments (odd ARGS register) of a macro
+                // that is already running.
+                macro_arguments_only = macro_payload && (dma_state.method & 1) != 0 && words == header.size;
             }
         }
         const bool use_safe = Settings::IsDMALevelDefault() ? Settings::IsGPULevelHigh() : Settings::IsDMALevelSafe();
-        if (use_safe) {
+        if (use_safe && macro_arguments_only) {
+            // GPU-written macro arguments (e.g. indirect draws built by a compute pass) need no
+            // synchronous download here: the macro is marked dirty above, so HLE indirect draws
+            // read them on the GPU, and every macro that consumes them on the CPU refreshes them
+            // with a flushing read first. Query results are not covered by the dirty check.
+            memory_manager.FlushRegion(dma_state.dma_get, header.size * sizeof(u32), VideoCommon::CacheType::QueryCache);
+            if (subchannels[dma_state.subchannel]->current_dirty) {
+                rasterizer->OnGpuWrittenCommandData();
+            }
+            Tegra::Memory::GpuGuestMemory<Tegra::CommandHeader, Tegra::Memory::GuestMemoryFlags::UnsafeRead>headers(memory_manager, dma_state.dma_get, header.size, &command_headers);
+            ProcessCommands(headers);
+        } else if (use_safe) {
             Tegra::Memory::GpuGuestMemory<Tegra::CommandHeader, Tegra::Memory::GuestMemoryFlags::SafeRead>headers(memory_manager, dma_state.dma_get, header.size, &command_headers);
             ProcessCommands(headers);
         } else {

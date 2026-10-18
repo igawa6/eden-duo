@@ -107,6 +107,8 @@ public:
                           VideoCommon::CacheType which = VideoCommon::CacheType::All) override;
     void InnerInvalidation(std::span<const std::pair<DAddr, std::size_t>> sequences) override;
     void OnCacheInvalidation(DAddr addr, u64 size) override;
+    bool OnCacheInvalidationIfNotGpuModified(DAddr addr, u64 size) override;
+    void OnGpuWrittenCommandData() override;
     bool OnCPUWrite(DAddr addr, u64 size) override;
     void InvalidateGPUCache() override;
     void UnmapMemory(DAddr addr, u64 size) override;
@@ -238,6 +240,15 @@ private:
     boost::container::static_vector<VkSampler, MAX_TEXTURES> sampler_handles;
 
     u32 draw_counter = 0;
+    /// A guest compute dispatch may have written buffers that later draws read as indirect
+    /// commands, indices, vertices or shader data; barrier once before the next draw.
+    bool compute_writes_need_graphics_barrier = false;
+    /// GPU-written command arguments were parsed without waiting for the GPU (which used to make
+    /// every earlier GPU write visible); the next draw or dispatch needs a full memory barrier.
+    bool gpu_written_command_data_pending = false;
+    /// Records the barriers owed by the two flags above; dispatches only need the full one.
+    void OrderPendingGpuWrites(bool for_graphics);
+
 };
 
 } // namespace Vulkan

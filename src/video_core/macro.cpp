@@ -65,6 +65,7 @@ bool IsTopologySafe(Maxwell3D::Regs::PrimitiveTopology topology) {
 } // Anonymous namespace
 
 void HLE_DrawArraysIndirect::Execute(Core::System& system, Engines::Maxwell3D& maxwell3d, std::span<const u32> parameters, [[maybe_unused]] u32 method) {
+    maxwell3d.RefreshParametersIfDirty(0, 1);
     auto topology = static_cast<Maxwell3D::Regs::PrimitiveTopology>(parameters[0]);
     if (!maxwell3d.AnyParametersDirty() || !IsTopologySafe(topology)) {
         Fallback(system, maxwell3d, parameters);
@@ -124,6 +125,7 @@ void HLE_DrawArraysIndirect::Fallback(Core::System& system, Engines::Maxwell3D& 
 }
 
 void HLE_DrawIndexedIndirect::Execute(Core::System& system, Engines::Maxwell3D& maxwell3d, std::span<const u32> parameters, [[maybe_unused]] u32 method) {
+    maxwell3d.RefreshParametersIfDirty(0, 1);
     auto topology = static_cast<Maxwell3D::Regs::PrimitiveTopology>(parameters[0]);
     if (!maxwell3d.AnyParametersDirty() || !IsTopologySafe(topology)) {
         Fallback(system, maxwell3d, parameters);
@@ -197,6 +199,7 @@ void HLE_MultiLayerClear::Execute(Core::System& system, Engines::Maxwell3D& maxw
     maxwell3d.draw_manager.Clear(maxwell3d, num_layers);
 }
 void HLE_MultiDrawIndexedIndirectCount::Execute(Core::System& system, Engines::Maxwell3D& maxwell3d, std::span<const u32> parameters, [[maybe_unused]] u32 method) {
+    maxwell3d.RefreshParametersIfDirty(0, 4);
     const auto topology = Maxwell3D::Regs::PrimitiveTopology(parameters[2]);
     if (IsTopologySafe(topology)) {
         const u32 start_indirect = parameters[0];
@@ -271,6 +274,7 @@ void HLE_MultiDrawIndexedIndirectCount::Fallback(Core::System& system, Engines::
 void HLE_DrawIndirectByteCount::Execute(Core::System& system, Engines::Maxwell3D& maxwell3d, std::span<const u32> parameters, [[maybe_unused]] u32 method) {
     const bool force = maxwell3d.Rasterizer().HasDrawTransformFeedback();
     if (force) {
+        maxwell3d.RefreshParametersIfDirty(0, 3);
         auto topology = Maxwell3D::Regs::PrimitiveTopology(parameters[0] & 0xFFFFU);
         auto& params = maxwell3d.draw_manager.indirect_state;
         params.is_byte_count = true;

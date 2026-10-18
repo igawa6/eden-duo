@@ -3180,6 +3180,11 @@ public:
         return current_macro_dirty;
     }
 
+    /// Argument-only command segments are parsed without flushing GPU writes, so an HLE macro
+    /// that consumes words [first, first + count) on the CPU refreshes them when any of them is
+    /// still GPU-modified.
+    void RefreshParametersIfDirty(size_t first, size_t count);
+
     u32 GetMaxCurrentVertices();
 
     size_t EstimateIndexBufferSize();
