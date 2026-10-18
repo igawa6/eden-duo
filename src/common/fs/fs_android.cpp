@@ -63,70 +63,79 @@ s32 OpenContentUri(const std::string& filepath, OpenMode openmode) {
     case OpenMode::ReadWriteTruncate: mode = "rwt"; break;
     default: return -1;
     }
-    auto env = Common::Android::GetEnvForThread();
-    jstring j_filepath = Common::Android::ToJString(env, filepath);
-    jstring j_mode = Common::Android::ToJString(env, mode);
-    const auto result = env->CallStaticIntMethod(native_library, s_open_content_uri, j_filepath, j_mode);
-    env->DeleteLocalRef(j_filepath);
-    env->DeleteLocalRef(j_mode);
-    return result;
+    return WithJni([&](JNIEnv* env) {
+        jstring j_filepath = Common::Android::ToJString(env, filepath);
+        jstring j_mode = Common::Android::ToJString(env, mode);
+        const auto result =
+            env->CallStaticIntMethod(native_library, s_open_content_uri, j_filepath, j_mode);
+        env->DeleteLocalRef(j_filepath);
+        env->DeleteLocalRef(j_mode);
+        return result;
+    });
 }
 
 u64 GetSize(const std::string& filepath) {
     if (s_get_size == nullptr) {
         return 0;
     }
-    auto env = Common::Android::GetEnvForThread();
-    const auto path = Common::Android::ToJString(env, filepath);
-    const auto result = env->CallStaticLongMethod(native_library, s_get_size, path);
-    env->DeleteLocalRef(path);
-    return result;
+    return WithJni([&](JNIEnv* env) {
+        const auto path = Common::Android::ToJString(env, filepath);
+        const auto result = env->CallStaticLongMethod(native_library, s_get_size, path);
+        env->DeleteLocalRef(path);
+        return static_cast<u64>(result);
+    });
 }
 
 bool IsDirectory(const std::string& filepath) {
     if (s_is_directory == nullptr) {
         return 0;
     }
-    auto env = Common::Android::GetEnvForThread();
-    const auto path = Common::Android::ToJString(env, filepath);
-    const auto result = env->CallStaticBooleanMethod(native_library, s_is_directory, path);
-    env->DeleteLocalRef(path);
-    return result;
+    return WithJni([&](JNIEnv* env) {
+        const auto path = Common::Android::ToJString(env, filepath);
+        const auto result = env->CallStaticBooleanMethod(native_library, s_is_directory, path);
+        env->DeleteLocalRef(path);
+        return static_cast<bool>(result);
+    });
 }
 
 bool Exists(const std::string& filepath) {
     if (s_file_exists == nullptr) {
         return 0;
     }
-    auto env = Common::Android::GetEnvForThread();
-    const auto path = Common::Android::ToJString(env, filepath);
-    const auto result = env->CallStaticBooleanMethod(native_library, s_file_exists, path);
-    env->DeleteLocalRef(path);
-    return result;
+    return WithJni([&](JNIEnv* env) {
+        const auto path = Common::Android::ToJString(env, filepath);
+        const auto result = env->CallStaticBooleanMethod(native_library, s_file_exists, path);
+        env->DeleteLocalRef(path);
+        return static_cast<bool>(result);
+    });
 }
 
 std::string GetParentDirectory(const std::string& filepath) {
     if (!s_get_parent_directory) return {};
-    auto env = Common::Android::GetEnvForThread();
-    const auto path = Common::Android::ToJString(env, filepath);
-    const auto value = static_cast<jstring>(env->CallStaticObjectMethod(native_library, s_get_parent_directory, path));
-    env->DeleteLocalRef(path);
-    if (!value) return {};
-    const auto result = Common::Android::GetJString(env, value);
-    env->DeleteLocalRef(value);
-    return result;
+    return WithJni([&](JNIEnv* env) -> std::string {
+        const auto path = Common::Android::ToJString(env, filepath);
+        const auto value = static_cast<jstring>(
+            env->CallStaticObjectMethod(native_library, s_get_parent_directory, path));
+        env->DeleteLocalRef(path);
+        if (!value) return {};
+        const auto result = Common::Android::GetJString(env, value);
+        env->DeleteLocalRef(value);
+        return result;
+    });
 }
 
 std::string GetFilename(const std::string& filepath) {
     if (!s_get_filename) return {};
-    auto env = Common::Android::GetEnvForThread();
-    const auto path = Common::Android::ToJString(env, filepath);
-    const auto value = static_cast<jstring>(env->CallStaticObjectMethod(native_library, s_get_filename, path));
-    env->DeleteLocalRef(path);
-    if (!value) return {};
-    const auto result = Common::Android::GetJString(env, value);
-    env->DeleteLocalRef(value);
-    return result;
+    return WithJni([&](JNIEnv* env) -> std::string {
+        const auto path = Common::Android::ToJString(env, filepath);
+        const auto value = static_cast<jstring>(
+            env->CallStaticObjectMethod(native_library, s_get_filename, path));
+        env->DeleteLocalRef(path);
+        if (!value) return {};
+        const auto result = Common::Android::GetJString(env, value);
+        env->DeleteLocalRef(value);
+        return result;
+    });
 }
 
 } // namespace Common::FS::Android

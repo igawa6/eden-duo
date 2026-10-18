@@ -108,7 +108,7 @@ namespace Common::Android {
     // current stack pointer as the top of the thread's stack when it attaches a thread and
     // madvise(MADV_DONTNEED)s from the stack's bottom up to it, so an attach from a fiber's heap
     // stack zeroes every thread stack above (the cold front-end launch crash in 1.3.0-beta.8).
-    static bool IsOnOwnThreadStack() {
+    bool IsOnOwnThreadStack() {
         pthread_attr_t attr;
         if (pthread_getattr_np(pthread_self(), &attr) != 0) {
             return true;
