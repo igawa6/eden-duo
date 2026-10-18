@@ -72,10 +72,13 @@ void ServiceFrameworkBase::ReportUnimplementedFunction(HLERequestContext& ctx, c
 }
 
 [[nodiscard]] static bool VersionGateCheck(Core::System& system, u32 vg) {
-    u32 const c_maj = FirmwareManager::GetFirmwareVersion(system).first.major;
-    u32 const c_min = FirmwareManager::GetFirmwareVersion(system).first.minor;
-    u32 const c_pat = FirmwareManager::GetFirmwareVersion(system).first.micro;
-    u32 const cg = (c_pat << 0) | (c_min << 4) | (c_maj << 8);
+    // Every IPC request passes through here and reading the firmware version re-opens its
+    // SystemVersion archive (NAND lookup, NCA decryption), so only do it for gated functions.
+    if (vg == 0) {
+        return true;
+    }
+    const auto version = FirmwareManager::GetFirmwareVersion(system).first;
+    u32 const cg = (version.micro << 0) | (version.minor << 4) | (version.major << 8);
     u32 const sg = (vg >> 16) & 0xffff;
     u32 const ug = vg & 0xffff;
     // feature available after current
