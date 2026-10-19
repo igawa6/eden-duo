@@ -6,6 +6,8 @@
 
 package org.yuzu.yuzu_emu.features.settings.ui
 
+import android.app.Activity
+import android.app.Application
 import android.content.Context
 import org.yuzu.yuzu_emu.YuzuApplication
 import android.os.Bundle
@@ -24,6 +26,7 @@ import com.google.android.material.color.MaterialColors
 import org.yuzu.yuzu_emu.NativeLibrary
 import java.io.IOException
 import org.yuzu.yuzu_emu.R
+import org.yuzu.yuzu_emu.activities.EmulationActivity
 import org.yuzu.yuzu_emu.databinding.ActivitySettingsBinding
 import org.yuzu.yuzu_emu.features.input.NativeInput
 import org.yuzu.yuzu_emu.features.settings.utils.SettingsFile
@@ -157,17 +160,29 @@ class SettingsActivity : AppCompatActivity() {
                     NativeLibrary.applySettings()
                 }
             }
-
-            if (settingsViewModel.shouldRecreateForLanguageChange.value) {
-                settingsViewModel.setShouldRecreateForLanguageChange(false)
-                val relaunchIntent = packageManager?.getLaunchIntentForPackage(packageName)
-                if (relaunchIntent != null) {
-                    relaunchIntent.addFlags(android.content.Intent.FLAG_ACTIVITY_CLEAR_TASK or android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
-                    startActivity(relaunchIntent)
-                    android.os.Process.killProcess(android.os.Process.myPid())
-                }
-            }
         }
+    }
+
+    // Calamansi: the process may belong to a host that owns its session, so a language change
+    // recreates the screen below in place instead of relaunching the package and killing the
+    // process. Registered while finishing, before that screen resumes; a running game keeps going.
+    override fun onPause() {
+        super.onPause()
+        if (!isFinishing || !settingsViewModel.shouldRecreateForLanguageChange.value) return
+        settingsViewModel.setShouldRecreateForLanguageChange(false)
+        application.registerActivityLifecycleCallbacks(object : Application.ActivityLifecycleCallbacks {
+            override fun onActivityResumed(activity: Activity) {
+                activity.application.unregisterActivityLifecycleCallbacks(this)
+                if (activity !is EmulationActivity) activity.recreate()
+            }
+
+            override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) {}
+            override fun onActivityStarted(activity: Activity) {}
+            override fun onActivityPaused(activity: Activity) {}
+            override fun onActivityStopped(activity: Activity) {}
+            override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) {}
+            override fun onActivityDestroyed(activity: Activity) {}
+        })
     }
 
     fun onSettingsReset() {
