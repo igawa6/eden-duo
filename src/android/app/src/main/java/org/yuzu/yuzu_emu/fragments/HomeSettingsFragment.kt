@@ -75,7 +75,8 @@ class HomeSettingsFragment : Fragment() {
         homeViewModel.setStatusBarShadeVisibility(visible = false)
         mainActivity = requireActivity() as MainActivity
         binding.toolbarHomeSettings.setNavigationOnClickListener {
-            findNavController().popBackStack()
+            // Calamansi: opened as the start destination, back leaves the activity.
+            if (!findNavController().popBackStack()) requireActivity().finish()
         }
         binding.toolbarHomeSettings.title = getString(R.string.preferences_settings)
 

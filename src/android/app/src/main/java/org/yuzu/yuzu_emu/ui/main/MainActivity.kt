@@ -321,6 +321,16 @@ class MainActivity : AppCompatActivity(), ThemeProvider {
     }
 
     private fun setUpNavigation(navController: NavController) {
+        // Calamansi: a host opens the settings home directly; the game list is never shown.
+        if (intent.getStringExtra("calamansi.destination") == "homeSettingsFragment") {
+            if (navController.graph.startDestinationId != R.id.homeSettingsFragment) {
+                val graph = navController.navInflater.inflate(R.navigation.home_navigation)
+                graph.setStartDestination(R.id.homeSettingsFragment)
+                navController.setGraph(graph, null)
+            }
+            return
+        }
+
         val firstTimeSetup = PreferenceManager.getDefaultSharedPreferences(applicationContext)
             .getBoolean(Settings.PREF_FIRST_APP_LAUNCH, true)
 
