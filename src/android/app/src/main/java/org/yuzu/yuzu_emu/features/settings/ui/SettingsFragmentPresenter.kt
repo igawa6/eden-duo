@@ -556,6 +556,7 @@ class SettingsFragmentPresenter(
             add(BooleanSetting.SKIP_CPU_INNER_INVALIDATION.key)
             add(BooleanSetting.NCE_RUNTIME_NRO_PATCH.key)
             add(BooleanSetting.FIX_BLOOM_EFFECTS.key)
+            add(BooleanSetting.FIX_FP16_DENORMALS.key)
             add(BooleanSetting.EMULATE_BGR565.key)
             add(BooleanSetting.RENDERER_ASYNCHRONOUS_SHADERS.key)
             add(IntSetting.ANDROID_PIPELINE_WORKERS.key)

@@ -123,6 +123,7 @@ void LoadOverrides(std::uint64_t program_id, const VideoCore::RendererBase& rend
     const auto env = DetectEnvironment(renderer);
 
     Settings::values.delay_fence_reports_by_title = false;
+    Settings::values.fix_fp16_denormals_by_title = false;
     switch (static_cast<TitleID>(program_id)) {
         case TitleID::NinjaGaidenRagebound:
             Settings::values.use_squashed_iterated_blend = true;
@@ -132,6 +133,11 @@ void LoadOverrides(std::uint64_t program_id, const VideoCore::RendererBase& rend
             // signals. Released on the CPU, the fence signals before the GPU has written them,
             // so stale results cull visible buildings and props for single frames.
             Settings::values.delay_fence_reports_by_title = true;
+            break;
+        case TitleID::FireEmblemEngage:
+            // Its engage attacks divide by an fp16 subnormal; flushed to zero it turns the
+            // bloom NaN and the screen white.
+            Settings::values.fix_fp16_denormals_by_title = true;
             break;
         default:
             break;

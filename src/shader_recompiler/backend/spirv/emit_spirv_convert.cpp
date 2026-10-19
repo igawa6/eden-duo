@@ -4,6 +4,7 @@
 // SPDX-FileCopyrightText: Copyright 2021 yuzu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include "common/settings.h"
 #include "shader_recompiler/backend/spirv/emit_spirv_instructions.h"
 #include "shader_recompiler/backend/spirv/spirv_emit_context.h"
 
@@ -39,6 +40,15 @@ Id ExtractS8(EmitContext& ctx, Id value) {
     } else {
         return ctx.OpBitFieldSExtract(ctx.U32[1], value, ctx.u32_zero_value, ctx.Const(8u));
     }
+}
+
+// Maxwell keeps fp16 denormals and games depend on them (Fire Emblem Engage's engage attacks
+// divide by an fp16 subnormal). Hosts that cannot preserve them (Adreno before A8xx) flush such
+// values to zero. With fix_fp16_denormals on (by default only for Engage), that range is
+// converted by hand; normal values, infinities and NaN still use the hardware conversion. It
+// costs a few instructions per conversion, which is why it is not on for every game.
+bool ConvertFp16DenormalsByHand(const EmitContext& ctx) {
+    return !ctx.profile.support_fp16_denorm_preserve && Settings::IsFp16DenormalFixEnabled();
 }
 } // Anonymous namespace
 
@@ -150,10 +160,7 @@ Id EmitConvertU32U64(EmitContext& ctx, Id value) {
     return ctx.OpUConvert(ctx.U32[1], value);
 }
 
-// Maxwell keeps fp16 denormals and games depend on them (Fire Emblem Engage's engage attacks
-// divide by an fp16 subnormal). Hosts that cannot preserve them (Adreno before A8xx) would flush
-// such values to zero, so that range is converted by hand there. Normal values, infinities and
-// NaN still go through the hardware conversion.
+// See ConvertFp16DenormalsByHand.
 Id EmitConvertF16F32(EmitContext& ctx, Id value) {
 #ifdef __ANDROID__
     const Id result{ctx.OpFConvert(ctx.F16[1], value)};
@@ -163,7 +170,7 @@ Id EmitConvertF16F32(EmitContext& ctx, Id value) {
     const Id result{
         ctx.OpSelect(ctx.F16[1], isOverflowing, ctx.Constant(ctx.F16[1], 0), converted)};
 #endif
-    if (ctx.profile.support_fp16_denorm_preserve) {
+    if (!ConvertFp16DenormalsByHand(ctx)) {
         return result;
     }
     // Below 2^-14 an fp16 is sign | round(|x| * 2^24). A mantissa that rounds up to 1024 is
@@ -183,7 +190,7 @@ Id EmitConvertF16F32(EmitContext& ctx, Id value) {
 
 Id EmitConvertF32F16(EmitContext& ctx, Id value) {
     const Id result{ctx.OpFConvert(ctx.F32[1], value)};
-    if (ctx.profile.support_fp16_denorm_preserve) {
+    if (!ConvertFp16DenormalsByHand(ctx)) {
         return result;
     }
     // An fp16 with a zero exponent is sign * mantissa * 2^-24, exact in fp32.
