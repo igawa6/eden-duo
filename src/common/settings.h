@@ -946,6 +946,9 @@ struct Values {
 
     // Per-game overrides
     bool use_squashed_iterated_blend;
+    // Release the running title's semaphore fence reports only once the GPU has run the work
+    // and written the query reports issued before them (set at load, never saved).
+    bool delay_fence_reports_by_title{};
 
 };
 
