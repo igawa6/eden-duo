@@ -1,0 +1,78 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Calamansi <calamansi@localhost>
+Date: Tue, 20 Oct 2026 03:27:04 +0800
+Subject: [PATCH] rename hook libraries for Calamansi
+
+---
+ src/driver.cpp          | 4 ++--
+ src/hook/CMakeLists.txt | 6 ++++++
+ src/hook/hook_impl.cpp  | 6 +++---
+ 3 files changed, 11 insertions(+), 5 deletions(-)
+
+diff --git a/src/driver.cpp b/src/driver.cpp
+index 17f0a52..a2cd9ae 100644
+--- a/src/driver.cpp
++++ b/src/driver.cpp
+@@ -71,7 +71,7 @@ void *adrenotools_open_libvulkan(int dlopenFlags, int featureFlags, const char *
+         return nullptr;
+ 
+     // Preload the hook implementation, otherwise we get a weird issue where despite being in NEEDED of the hook lib the hook's symbols will overwrite ours and cause an infinite loop
+-    auto hookImpl{linkernsbypass_namespace_dlopen("libhook_impl.so", RTLD_NOW, hookNs)};
++    auto hookImpl{linkernsbypass_namespace_dlopen("libcalamansi_switch_hook_impl.so", RTLD_NOW, hookNs)};
+     if (!hookImpl)
+         return nullptr;
+ 
+@@ -95,7 +95,7 @@ void *adrenotools_open_libvulkan(int dlopenFlags, int featureFlags, const char *
+     initHookParam(new HookImplParams(featureFlags, tmpLibDir, hookLibDir, customDriverDir, customDriverName, fileRedirectDir, importMapping));
+ 
+     // Load the libvulkan hook into the isolated namespace
+-    if (!linkernsbypass_namespace_dlopen("libmain_hook.so", RTLD_GLOBAL, hookNs))
++    if (!linkernsbypass_namespace_dlopen("libcalamansi_switch_main_hook.so", RTLD_GLOBAL, hookNs))
+         return nullptr;
+ 
+     return linkernsbypass_namespace_dlopen_unique("/system/lib64/libvulkan.so", tmpLibDir, dlopenFlags, hookNs);
+diff --git a/src/hook/CMakeLists.txt b/src/hook/CMakeLists.txt
+index ebff063..6385697 100644
+--- a/src/hook/CMakeLists.txt
++++ b/src/hook/CMakeLists.txt
+@@ -25,3 +25,9 @@ target_compile_options(gsl_alloc_hook PRIVATE -Wall -Wextra)
+ target_link_options(gsl_alloc_hook PRIVATE -z global)
+ target_link_libraries(gsl_alloc_hook hook_impl)
+ set_target_properties(gsl_alloc_hook PROPERTIES CXX_VISIBILITY_PRESET hidden)
++
++# Calamansi packages several engines; their driver hooks must have distinct SONAMEs.
++set_target_properties(hook_impl PROPERTIES OUTPUT_NAME calamansi_switch_hook_impl)
++set_target_properties(main_hook PROPERTIES OUTPUT_NAME calamansi_switch_main_hook)
++set_target_properties(file_redirect_hook PROPERTIES OUTPUT_NAME calamansi_switch_file_redirect_hook)
++set_target_properties(gsl_alloc_hook PROPERTIES OUTPUT_NAME calamansi_switch_gsl_alloc_hook)
+diff --git a/src/hook/hook_impl.cpp b/src/hook/hook_impl.cpp
+index 1297911..e7b458c 100644
+--- a/src/hook/hook_impl.cpp
++++ b/src/hook/hook_impl.cpp
+@@ -73,7 +73,7 @@ __attribute__((visibility("default"))) void *hook_android_dlopen_ext(const char
+ 
+     // Preload ourself, a new instance will be created since we have different linker ancestory
+     // If we don't preload we get a weird issue where despite being in NEEDED of the hook lib the hook's symbols will overwrite ours and cause an infinite loop
+-    auto hookImpl{linkernsbypass_namespace_dlopen("libhook_impl.so", RTLD_NOW, driverNs)};
++    auto hookImpl{linkernsbypass_namespace_dlopen("libcalamansi_switch_hook_impl.so", RTLD_NOW, driverNs)};
+     if (!hookImpl)
+         return nullptr;
+ 
+@@ -85,7 +85,7 @@ __attribute__((visibility("default"))) void *hook_android_dlopen_ext(const char
+     initHookParam(hook_params);
+ 
+     if (hook_params->featureFlags & ADRENOTOOLS_DRIVER_FILE_REDIRECT) {
+-        if (!linkernsbypass_namespace_dlopen("libfile_redirect_hook.so", RTLD_GLOBAL, driverNs)) {
++        if (!linkernsbypass_namespace_dlopen("libcalamansi_switch_file_redirect_hook.so", RTLD_GLOBAL, driverNs)) {
+             LOGI("hook_android_dlopen_ext: hook failed: failed to apply libfopen_redirect_hook!");
+             return fallback();
+         }
+@@ -98,7 +98,7 @@ __attribute__((visibility("default"))) void *hook_android_dlopen_ext(const char
+     newExtinfo.library_namespace = driverNs;
+ 
+     if (hook_params->featureFlags & ADRENOTOOLS_DRIVER_GPU_MAPPING_IMPORT) {
+-        if (!linkernsbypass_namespace_dlopen("libgsl_alloc_hook.so", RTLD_GLOBAL, driverNs)) {
++        if (!linkernsbypass_namespace_dlopen("libcalamansi_switch_gsl_alloc_hook.so", RTLD_GLOBAL, driverNs)) {
+             LOGI("hook_android_dlopen_ext: hook failed: failed to apply libgsl_alloc_hook!");
+             return fallback();
+         }
