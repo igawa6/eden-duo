@@ -118,6 +118,16 @@ class AboutFragment : Fragment() {
         binding.buttonX.setOnClickListener { openLink(getString(R.string.x_link)) }
         binding.buttonWebsite.setOnClickListener { openLink(getString(R.string.website_link)) }
         binding.buttonGithub.setOnClickListener { openLink(getString(R.string.github_link)) }
+        // Calamansi: community links are hidden; licenses and the source code links stay.
+        listOf(
+            binding.buttonDuoDiscord,
+            binding.buttonDuoKofi,
+            binding.buttonDuoPoll,
+            binding.buttonDiscord,
+            binding.buttonStoat,
+            binding.buttonX,
+            binding.buttonWebsite
+        ).forEach { it.visibility = View.GONE }
 
         setInsets()
     }
