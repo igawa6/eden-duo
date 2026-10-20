@@ -348,6 +348,9 @@ class HomeSettingsFragment : Fragment() {
             )
         }
 
+        // Calamansi: the host's game list owns game folders.
+        optionsList.removeAll { it.titleId == R.string.manage_game_folders }
+
         binding.homeSettingsList.apply {
             layoutManager =
                 GridLayoutManager(requireContext(), resources.getInteger(R.integer.grid_columns))

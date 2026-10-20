@@ -82,7 +82,7 @@ class InstallableFragment : Fragment() {
         }
 
         val installables = listOf(
-            org.yuzu.yuzu_emu.duo.EmulatorImportEntry.installable(this),
+            // Calamansi: no import from other emulators; it stages files outside the engine's folder.
             Installable(
                 R.string.user_data,
                 R.string.user_data_description,
@@ -164,7 +164,6 @@ class InstallableFragment : Fragment() {
                 requireContext(),
                 resources.getInteger(R.integer.grid_columns)
             )
-            .apply { org.yuzu.yuzu_emu.duo.EmulatorImportEntry.spanFirstRow(this) }
             adapter = InstallableAdapter(installables)
         }
 
