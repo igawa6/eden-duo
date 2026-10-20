@@ -178,6 +178,11 @@ bool IsGPUFenceBehaviorAccurate() {
     return values.gpu_fence_behavior.GetValue() == GpuFenceBehavior::Accurate;
 }
 
+bool IsFp16DenormalFixEnabled() {
+    return values.fix_fp16_denormals.GetValue() ||
+           (values.fix_fp16_denormals.UsingGlobal() && values.fix_fp16_denormals_by_title);
+}
+
 bool IsFastmemEnabled() {
     if (values.cpu_accuracy.GetValue() == Settings::CpuAccuracy::Debugging)
         return bool(values.cpuopt_fastmem);

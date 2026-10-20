@@ -274,6 +274,10 @@ std::unique_ptr<TranslationMap> InitializeTranslations(QObject* parent) {
            tr("Enables access to previous buffer states.\nThis option may improve rendering "
               "quality and performance consistency in some games."));
     INSERT(Settings, fix_bloom_effects, tr("Fix bloom effects"), tr("Removes bloom in Burnout."));
+    INSERT(Settings, fix_fp16_denormals, tr("Fix FP16 denormals"),
+           tr("Keeps tiny half-precision values on GPUs that flush them to zero.\nFixes white, "
+              "blown-out characters and effects in Fire Emblem Engage and Dragon Quest VII "
+              "Reimagined, where it is on automatically."));
 
     // Renderer (Extensions)
     INSERT(Settings, dyna_state, tr("Extended Dynamic State"),

@@ -875,6 +875,13 @@ abstract class SettingsItem(
             )
             put(
                 SwitchSetting(
+                    BooleanSetting.FIX_FP16_DENORMALS,
+                    titleId = R.string.fix_fp16_denormals,
+                    descriptionId = R.string.fix_fp16_denormals_description
+                )
+            )
+            put(
+                SwitchSetting(
                     BooleanSetting.RESCALE_HACK,
                     titleId = R.string.rescale_hack,
                     descriptionId = R.string.rescale_hack_description
