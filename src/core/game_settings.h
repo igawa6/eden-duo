@@ -47,6 +47,7 @@ enum class TitleID : std::uint64_t {
     NinjaGaidenRagebound = 0x0100781020710000ULL,
     DoubleDragonRevive = 0x01006AE02236C000ULL,
     FireEmblemEngage = 0x0100A6301214E000ULL,
+    DragonQuestVIIReimagined = 0x0100A9D01C446000ULL,
 };
 
 struct EnvironmentInfo {

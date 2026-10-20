@@ -44,9 +44,10 @@ Id ExtractS8(EmitContext& ctx, Id value) {
 
 // Maxwell keeps fp16 denormals and games depend on them (Fire Emblem Engage's engage attacks
 // divide by an fp16 subnormal). Hosts that cannot preserve them (Adreno before A8xx) flush such
-// values to zero. With fix_fp16_denormals on (by default only for Engage), that range is
-// converted by hand; normal values, infinities and NaN still use the hardware conversion. It
-// costs a few instructions per conversion, which is why it is not on for every game.
+// values to zero. With fix_fp16_denormals on (by default only for the titles listed in
+// game_settings.cpp), that range is converted by hand; normal values, infinities and NaN still
+// use the hardware conversion. It costs a few instructions per conversion, which is why it is
+// not on for every game.
 bool ConvertFp16DenormalsByHand(const EmitContext& ctx) {
     return !ctx.profile.support_fp16_denorm_preserve && Settings::IsFp16DenormalFixEnabled();
 }
