@@ -122,9 +122,23 @@ EnvironmentInfo DetectEnvironment(const VideoCore::RendererBase& renderer) {
 void LoadOverrides(std::uint64_t program_id, const VideoCore::RendererBase& renderer) {
     const auto env = DetectEnvironment(renderer);
 
+    Settings::values.delay_fence_reports_by_title = false;
+    Settings::values.fix_fp16_denormals_by_title = false;
     switch (static_cast<TitleID>(program_id)) {
         case TitleID::NinjaGaidenRagebound:
             Settings::values.use_squashed_iterated_blend = true;
+            break;
+        case TitleID::DoubleDragonRevive:
+            // Its Unreal occlusion culling reads the query reports once the frame's fence
+            // signals. Released on the CPU, the fence signals before the GPU has written them,
+            // so stale results cull visible buildings and props for single frames.
+            Settings::values.delay_fence_reports_by_title = true;
+            break;
+        case TitleID::FireEmblemEngage:
+        case TitleID::DragonQuestVIIReimagined:
+            // Their effect shaders divide by fp16 subnormals; flushed to zero the result goes
+            // inf/NaN and the bloom blows characters and lights out to white.
+            Settings::values.fix_fp16_denormals_by_title = true;
             break;
         default:
             break;

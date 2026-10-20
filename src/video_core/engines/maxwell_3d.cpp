@@ -238,6 +238,19 @@ void Maxwell3D::RefreshParametersImpl() {
     }
 }
 
+void Maxwell3D::RefreshParametersIfDirty(size_t first, size_t count) {
+    if (!current_macro_dirty) {
+        return;
+    }
+    for (size_t index = first; index < first + count && index < macro_params.size(); ++index) {
+        const GPUVAddr address = GetMacroAddress(index);
+        if (address != 0 && memory_manager.IsMemoryDirty(address, sizeof(u32))) {
+            RefreshParametersImpl();
+            return;
+        }
+    }
+}
+
 u32 Maxwell3D::GetMaxCurrentVertices() {
     u32 num_vertices = 0;
     for (size_t index = 0; index < Regs::NumVertexArrays; ++index) {

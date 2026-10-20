@@ -194,10 +194,6 @@ std::unique_ptr<TranslationMap> InitializeTranslations(QObject* parent) {
     INSERT(Settings, skip_cpu_inner_invalidation, tr("Skip CPU Inner Invalidation"),
            tr("Skips certain cache invalidations during memory updates, reducing CPU usage and "
               "improving latency. This may cause soft-crashes."));
-    INSERT(Settings, nce_invalidation_gpu_readback,
-           tr("GPU Readback Before NCE Invalidation"),
-           tr("Flushes GPU buffer data back to guest memory before NCE invalidates the whole "
-              "guest page, preserving it while the CPU store proceeds."));
     INSERT(Settings, nce_runtime_nro_patch,
            tr("Patch Runtime NROs for NCE"),
            tr("Applies NCE code patches to runtime-loaded NRO modules."
@@ -278,6 +274,10 @@ std::unique_ptr<TranslationMap> InitializeTranslations(QObject* parent) {
            tr("Enables access to previous buffer states.\nThis option may improve rendering "
               "quality and performance consistency in some games."));
     INSERT(Settings, fix_bloom_effects, tr("Fix bloom effects"), tr("Removes bloom in Burnout."));
+    INSERT(Settings, fix_fp16_denormals, tr("Fix FP16 denormals"),
+           tr("Keeps tiny half-precision values on GPUs that flush them to zero.\nFixes white, "
+              "blown-out characters and effects in Fire Emblem Engage and Dragon Quest VII "
+              "Reimagined, where it is on automatically."));
 
     // Renderer (Extensions)
     INSERT(Settings, dyna_state, tr("Extended Dynamic State"),

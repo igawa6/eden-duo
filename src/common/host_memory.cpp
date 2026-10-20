@@ -793,6 +793,15 @@ void HostMemory::Protect(size_t virtual_offset, size_t length, MemoryPermission 
 }
 
 void HostMemory::ClearBackingRegion(size_t physical_offset, size_t length, u32 fill_value) {
+#if defined(__linux__)
+    // Remove shared backing pages, not just this mapping's view of their contents.
+    // Unaligned clears fall back to memset; split off the edge bytes if a caller needs this fast.
+    if (fill_value == 0 && length >= PageAlignment &&
+        IsAligned(physical_offset, PageAlignment) && IsAligned(length, PageAlignment) &&
+        madvise(backing_base + physical_offset, length, MADV_REMOVE) == 0) {
+        return;
+    }
+#endif
     std::memset(backing_base + physical_offset, fill_value, length);
 }
 

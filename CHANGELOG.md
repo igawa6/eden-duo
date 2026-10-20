@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased
+
+- Preserve all touched GPU buffer-read units across unaligned and page-crossing ranges so overlapping CPU uploads cannot be reordered ahead of those reads.
+- Preserve shadow-RAM tracking and replay in accelerated shader-binding and constant-buffer setup macros.
+- Keep busy Vulkan upload-ring regions reserved after a wrap fallback instead of overwriting in-flight geometry or shader data.
+- Track GPU usage of exported cached buffers and indirect draw arguments/counts so later CPU uploads cannot overtake their GPU consumers.
+- Preserve newer GPU-written buffer ranges when an older asynchronous readback completes, including writes awaiting their next download snapshot.
+- Cancel superseded bytes in queued asynchronous GPU readbacks so retired jobs cannot overwrite newer CPU data or consume a fresh readback's ownership.
+- Make Vulkan buffer readbacks visible to host reads before CPU publication, invalidate noncoherent mappings, and protect staging-pool metadata during asynchronous retirement.
+- Honor requested GPU-buffer preservation on NCE write faults without requiring the optional readback workaround.
+- Reduce host-memory commitment for aligned zero-filled guest allocations on Linux/Android, preserving shared aliases and normal initialization when page discard is unavailable.
+- Stop waiting for the GPU before parsing GPU-written macro arguments (**Pokémon Legends: Z-A**'s GPU-built indirect draws): accelerated macros refresh only the arguments they read on the CPU, and guest compute writes are ordered on the GPU before the draws and dispatches that consume them. NCE page-fault invalidation now checks and invalidates atomically, so a concurrently recorded GPU write is no longer dropped. Z-A's train station on AYN Thor runs at 30 FPS instead of ~24–27.
+- Keep occlusion-query samples across command-buffer submissions. Each submit used to reset the guest sample counter, so a submit between a game's counter clear and its report read zero samples and hid the tested object for a frame (characters and NPCs vanishing in **Pokémon Legends: Z-A**). On Adreno and Mali drivers the samples counted so far are carried over at each submit instead of extending one host query indefinitely, which would have made every draw with counting enabled slower over time.
+- Fix a crash at game start when update/DLC files sit next to the game in a shared folder (seen with **Super Smash Bros. Ultimate** on a Retroid Pocket Flip 2): emulated services opening those files called into Java from a fiber stack, which corrupts the thread's Java references; such calls now run on a real thread.
+- Stop re-reading the installed firmware's version on every emulated service request. Each request checked its version gate by opening the SystemVersion archive three times (NAND lookup and NCA decryption), even for the functions that have no gate; with firmware installed this kept the service threads busy and delayed every request. **Super Smash Bros. Ultimate** battles on a Retroid Pocket Flip 2 run at 59–60 FPS instead of 44–50.
+- Fix **Fire Emblem Engage**'s engage attacks (Lodestar Rush and others) turning every character and effect into flat white shapes on black on Adreno 6xx/7xx (AYN Thor, Odin 2). The game's effect shaders divide by fp16 subnormals; Maxwell keeps those, but these GPUs flush every fp16 subnormal to zero, so the division gave infinity and then NaN, which the bloom spread over the whole frame. The new **Fix FP16 Denormals** option (Graphics → Hacks) handles the subnormal range of fp32↔fp16 conversions in integer math on GPUs that cannot keep them. It is on automatically for Fire Emblem Engage and off for every other game, since it costs a few GPU instructions per conversion.
+- Fix characters, lights and pillars glowing as white blobs in **Dragon Quest VII Reimagined** on Adreno 6xx/7xx (seen in the ship's hold at the start). Same cause as Fire Emblem Engage; **Fix FP16 Denormals** is now on automatically for it too.
+- Fix buildings, signs and props blinking in and out in **Double Dragon Revive** (stage 1 right after starting a new game). Its Unreal renderer culls objects with occlusion queries and reads their results once the frame's fence signals; at the default fence behavior that fence was released on the CPU before the GPU had written the results, so visible objects read as occluded for a frame. For this game the fence report now waits until the GPU has run the work and the query results are in memory.
+
 ## 1.3.1
 
 **Fixed**

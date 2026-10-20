@@ -166,6 +166,10 @@ public:
         return render_targets.color_buffer_ids[index];
     }
 
+    [[nodiscard]] ImageViewId GetDepthBufferId() const noexcept {
+        return render_targets.depth_buffer_id;
+    }
+
     /// The image behind a view. Needed to read a render target back off the GPU: DownloadMemory
     /// lives on Image and handles the layout transitions the texture cache is already tracking.
     [[nodiscard]] Image& GetImage(ImageId id) noexcept {

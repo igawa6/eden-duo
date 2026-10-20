@@ -639,8 +639,6 @@ struct Values {
                                                         Specialization::Default,
                                                         true,
                                                         true};
-    SwitchableSetting<bool> nce_invalidation_gpu_readback{
-        linkage, false, "nce_invalidation_gpu_readback", Category::RendererHacks};
     SwitchableSetting<bool> nce_runtime_nro_patch{
         linkage, false, "nce_runtime_nro_patch", Category::RendererHacks};
     SwitchableSetting<bool> async_presentation{linkage,
@@ -653,6 +651,9 @@ struct Values {
 
     SwitchableSetting<bool> fix_bloom_effects{linkage, false, "fix_bloom_effects",
                                                      Category::RendererHacks};
+
+    SwitchableSetting<bool> fix_fp16_denormals{linkage, false, "fix_fp16_denormals",
+                                               Category::RendererHacks};
 
     SwitchableSetting<bool> emulate_bgr565{linkage, false, "emulate_bgr565",
                                             Category::RendererHacks};
@@ -948,6 +949,12 @@ struct Values {
 
     // Per-game overrides
     bool use_squashed_iterated_blend;
+    // Release the running title's semaphore fence reports only once the GPU has run the work
+    // and written the query reports issued before them (set at load, never saved).
+    bool delay_fence_reports_by_title{};
+    // Turn fix_fp16_denormals on for the running title unless the player set it for that game
+    // (set at load, never saved).
+    bool fix_fp16_denormals_by_title{};
 
 };
 
@@ -973,6 +980,7 @@ bool IsDMALevelSafe();
 bool IsGPUFenceBehaviorDefault();
 bool IsGPUFenceBehaviorBalanced();
 bool IsGPUFenceBehaviorAccurate();
+bool IsFp16DenormalFixEnabled();
 
 bool IsFastmemEnabled();
 void SetNceEnabled(bool is_64bit);

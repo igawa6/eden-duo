@@ -136,6 +136,8 @@ public:
 
     void FreeDeferredStagingBuffer(StagingBufferRef& ref);
 
+    void InvalidateDownload(const StagingBufferRef& ref);
+
     void PreCopyBarrier();
 
     void CopyBuffer(VkBuffer dst_buffer, VkBuffer src_buffer,
@@ -143,6 +145,8 @@ public:
                     bool can_reorder_upload = false);
 
     void PostCopyBarrier();
+
+    void PostDownloadBarrier();
 
     void ClearBuffer(VkBuffer dest_buffer, u32 offset, size_t size, u32 value);
 

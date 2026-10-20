@@ -145,6 +145,10 @@ public:
         amend_value = 0;
         accumulation_value = 0;
         queries_prefix_scan_pass.emplace(device, scheduler, descriptor_pool, compute_pass_descriptor_queue);
+        const auto driver_id = device.GetDriverID();
+        resolves_on_cpu = driver_id == VK_DRIVER_ID_QUALCOMM_PROPRIETARY ||
+                          driver_id == VK_DRIVER_ID_ARM_PROPRIETARY ||
+                          driver_id == VK_DRIVER_ID_MESA_TURNIP;
 
         const VkBufferCreateInfo buffer_ci = {
             .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
@@ -211,6 +215,16 @@ public:
 
     void CloseCounter() override {
         PauseCounter();
+        // Called at every submit. Where results are read back on the CPU, nothing else ends the
+        // host query until the guest resets the counter, so it would grow by a slot per render
+        // pass and every StartCounter would walk all of its banks. Fold the samples counted so
+        // far into amend_value instead, keeping the guest-visible count intact.
+        if (!resolves_on_cpu || !current_query) {
+            return;
+        }
+        ReplicateCurrentQuery();
+        rasterizer->SyncOperation([this] { amend_value = accumulation_value; });
+        AbandonCurrentQuery();
     }
 
     bool HasPendingSync() const override {
@@ -235,9 +249,7 @@ public:
             return;
         }
         PauseCounter();
-        const auto driver_id = device.GetDriverID();
-        if (driver_id == VK_DRIVER_ID_QUALCOMM_PROPRIETARY ||
-            driver_id == VK_DRIVER_ID_ARM_PROPRIETARY || driver_id == VK_DRIVER_ID_MESA_TURNIP) {
+        if (resolves_on_cpu) {
             pending_sync.clear();
             sync_values_stash.clear();
             return;
@@ -518,6 +530,10 @@ private:
         if (pending_sync.empty()) {
             return;
         }
+        ReplicateCurrentQuery();
+    }
+
+    void ReplicateCurrentQuery() {
         if (!current_query) {
             return;
         }
@@ -607,6 +623,7 @@ private:
     bool accumulation_since_last_sync{};
     VideoCommon::HostQueryBase* current_query;
     bool has_started{};
+    bool resolves_on_cpu{};
     std::mutex flush_guard;
     std::optional<QueriesPrefixScanPass> queries_prefix_scan_pass;
 };

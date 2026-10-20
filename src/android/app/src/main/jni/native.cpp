@@ -1426,13 +1426,22 @@ void Java_org_yuzu_yuzu_1emu_NativeLibrary_logDeviceInfo(JNIEnv* env, jclass cla
 
 void Java_org_yuzu_yuzu_1emu_NativeLibrary_submitInlineKeyboardText(JNIEnv* env, jclass clazz,
                                                                     jstring j_text) {
-    const std::u16string input = Common::UTF8ToUTF16(Common::Android::GetJString(env, j_text));
-    EmulationSession::GetInstance().SoftwareKeyboard()->SubmitInlineKeyboardText(input);
+    // EmulationActivity forwards every key press here, including ones that arrive before the
+    // first game of this process has created the keyboard applet.
+    auto* const keyboard = EmulationSession::GetInstance().SoftwareKeyboard();
+    if (keyboard == nullptr) {
+        return;
+    }
+    keyboard->SubmitInlineKeyboardText(Common::UTF8ToUTF16(Common::Android::GetJString(env, j_text)));
 }
 
 void Java_org_yuzu_yuzu_1emu_NativeLibrary_submitInlineKeyboardInput(JNIEnv* env, jclass clazz,
                                                                      jint j_key_code) {
-    EmulationSession::GetInstance().SoftwareKeyboard()->SubmitInlineKeyboardInput(j_key_code);
+    auto* const keyboard = EmulationSession::GetInstance().SoftwareKeyboard();
+    if (keyboard == nullptr) {
+        return;
+    }
+    keyboard->SubmitInlineKeyboardInput(j_key_code);
 }
 
 void Java_org_yuzu_yuzu_1emu_NativeLibrary_initializeEmptyUserDirectory(JNIEnv* env,

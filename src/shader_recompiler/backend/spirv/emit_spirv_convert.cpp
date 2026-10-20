@@ -4,6 +4,7 @@
 // SPDX-FileCopyrightText: Copyright 2021 yuzu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include "common/settings.h"
 #include "shader_recompiler/backend/spirv/emit_spirv_instructions.h"
 #include "shader_recompiler/backend/spirv/spirv_emit_context.h"
 
@@ -39,6 +40,16 @@ Id ExtractS8(EmitContext& ctx, Id value) {
     } else {
         return ctx.OpBitFieldSExtract(ctx.U32[1], value, ctx.u32_zero_value, ctx.Const(8u));
     }
+}
+
+// Maxwell keeps fp16 denormals and games depend on them (Fire Emblem Engage's engage attacks
+// divide by an fp16 subnormal). Hosts that cannot preserve them (Adreno before A8xx) flush such
+// values to zero. With fix_fp16_denormals on (by default only for the titles listed in
+// game_settings.cpp), that range is converted by hand; normal values, infinities and NaN still
+// use the hardware conversion. It costs a few instructions per conversion, which is why it is
+// not on for every game.
+bool ConvertFp16DenormalsByHand(const EmitContext& ctx) {
+    return !ctx.profile.support_fp16_denorm_preserve && Settings::IsFp16DenormalFixEnabled();
 }
 } // Anonymous namespace
 
@@ -150,18 +161,52 @@ Id EmitConvertU32U64(EmitContext& ctx, Id value) {
     return ctx.OpUConvert(ctx.U32[1], value);
 }
 
+// See ConvertFp16DenormalsByHand.
 Id EmitConvertF16F32(EmitContext& ctx, Id value) {
 #ifdef __ANDROID__
-    return ctx.OpFConvert(ctx.F16[1], value);
+    const Id result{ctx.OpFConvert(ctx.F16[1], value)};
 #else
-    const auto result = ctx.OpFConvert(ctx.F16[1], value);
-    const auto isOverflowing = ctx.OpIsNan(ctx.U1, result);
-    return ctx.OpSelect(ctx.F16[1], isOverflowing, ctx.Constant(ctx.F16[1], 0), result);
+    const auto converted = ctx.OpFConvert(ctx.F16[1], value);
+    const auto isOverflowing = ctx.OpIsNan(ctx.U1, converted);
+    const Id result{
+        ctx.OpSelect(ctx.F16[1], isOverflowing, ctx.Constant(ctx.F16[1], 0), converted)};
 #endif
+    if (!ConvertFp16DenormalsByHand(ctx)) {
+        return result;
+    }
+    // Below 2^-14 an fp16 is sign | round(|x| * 2^24). A mantissa that rounds up to 1024 is
+    // exactly the encoding of the smallest normal, so the boundary needs no special case.
+    const Id abs{ctx.OpFAbs(ctx.F32[1], value)};
+    const Id subnormal{ctx.OpFOrdLessThan(ctx.U1, abs, ctx.Const(0x1p-14f))};
+    const Id mantissa{ctx.OpConvertFToU(
+        ctx.U32[1], ctx.OpRoundEven(ctx.F32[1], ctx.OpFMul(ctx.F32[1], abs, ctx.Const(0x1p24f))))};
+    const Id sign{ctx.OpBitwiseAnd(
+        ctx.U32[1],
+        ctx.OpShiftRightLogical(ctx.U32[1], ctx.OpBitcast(ctx.U32[1], value), ctx.Const(16u)),
+        ctx.Const(0x8000u))};
+    const Id bits{ctx.OpBitwiseOr(ctx.U32[1], sign, mantissa)};
+    const Id half{ctx.OpCompositeExtract(ctx.F16[1], ctx.OpBitcast(ctx.F16[2], bits), 0u)};
+    return ctx.OpSelect(ctx.F16[1], subnormal, half, result);
 }
 
 Id EmitConvertF32F16(EmitContext& ctx, Id value) {
-    return ctx.OpFConvert(ctx.F32[1], value);
+    const Id result{ctx.OpFConvert(ctx.F32[1], value)};
+    if (!ConvertFp16DenormalsByHand(ctx)) {
+        return result;
+    }
+    // An fp16 with a zero exponent is sign * mantissa * 2^-24, exact in fp32.
+    const Id bits{ctx.OpBitcast(ctx.U32[1], ctx.OpCompositeConstruct(ctx.F16[2], value, value))};
+    const Id subnormal{ctx.OpIEqual(ctx.U1, ctx.OpBitwiseAnd(ctx.U32[1], bits, ctx.Const(0x7c00u)),
+                                    ctx.u32_zero_value)};
+    const Id magnitude{ctx.OpFMul(
+        ctx.F32[1],
+        ctx.OpConvertUToF(ctx.F32[1], ctx.OpBitwiseAnd(ctx.U32[1], bits, ctx.Const(0x3ffu))),
+        ctx.Const(0x1p-24f))};
+    const Id negative{ctx.OpINotEqual(
+        ctx.U1, ctx.OpBitwiseAnd(ctx.U32[1], bits, ctx.Const(0x8000u)), ctx.u32_zero_value)};
+    const Id signed_magnitude{
+        ctx.OpSelect(ctx.F32[1], negative, ctx.OpFNegate(ctx.F32[1], magnitude), magnitude)};
+    return ctx.OpSelect(ctx.F32[1], subnormal, signed_magnitude, result);
 }
 
 Id EmitConvertF32F64(EmitContext& ctx, Id value) {
