@@ -299,10 +299,17 @@ struct Memory::Impl {
     }
 
     [[nodiscard]] inline const u8* GetSpan(const VAddr addr, const std::size_t size) const noexcept {
-        return (current_page_table->entries[addr >> YUZU_PAGEBITS].Block() == current_page_table->entries[(addr + size) >> YUZU_PAGEBITS].Block()) ? GetPointerSilent(addr) : nullptr;
+        return IsLinearSpan(addr, size) ? GetPointerSilent(addr) : nullptr;
     }
     [[nodiscard]] inline u8* GetSpan(const VAddr addr, const std::size_t size) noexcept {
-        return (current_page_table->entries[addr >> YUZU_PAGEBITS].Block() == current_page_table->entries[(addr + size) >> YUZU_PAGEBITS].Block()) ? GetPointerSilent(addr) : nullptr;
+        return IsLinearSpan(addr, size) ? GetPointerSilent(addr) : nullptr;
+    }
+
+    // Each page stores host - guest, so equal values mean one linear host range. The 16-bit block
+    // id wraps after 65535 mappings and then matches unrelated mappings (Infinity Strash videos).
+    [[nodiscard]] bool IsLinearSpan(const VAddr addr, const std::size_t size) const noexcept {
+        return current_page_table->entries[addr >> YUZU_PAGEBITS].Pointer(true) ==
+               current_page_table->entries[(addr + size) >> YUZU_PAGEBITS].Pointer(true);
     }
 
     bool WriteBlockImpl(const Common::ProcessAddress addr, const void* buffer, const std::size_t size, bool unsafe) {
@@ -547,8 +554,8 @@ struct Memory::Impl {
 
             page_table.entries.ZeroRegion(base, end);
         } else {
+            // Wrapping is harmless: GetSpan compares host pointers, not block ids.
             auto current_block = block_count.fetch_add(1, std::memory_order_relaxed);
-            ASSERT(current_block != 65535);
 
             page_table.entries.CommitRegion(base, end);
             while (base != end) {
