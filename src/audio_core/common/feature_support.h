@@ -16,7 +16,9 @@
 #include <ranges>
 
 namespace AudioCore {
-constexpr u32 CurrentRevision = 15;
+// REV16 (22.0.0+) only adds IsVoiceBiquadFilterCrossFadeCurveEnabled (switchbrew), which is not
+// emulated; REV16 users otherwise behave like REV15.
+constexpr u32 CurrentRevision = 16;
 
 enum class SupportTags {
     CommandProcessingTimeEstimatorVersion4,
