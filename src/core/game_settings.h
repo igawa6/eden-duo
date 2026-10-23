@@ -48,6 +48,7 @@ enum class TitleID : std::uint64_t {
     DoubleDragonRevive = 0x01006AE02236C000ULL,
     FireEmblemEngage = 0x0100A6301214E000ULL,
     DragonQuestVIIReimagined = 0x0100A9D01C446000ULL,
+    FinalFantasyResonance = 0x0100606026F12000ULL,
 };
 
 struct EnvironmentInfo {
@@ -59,5 +60,9 @@ struct EnvironmentInfo {
 EnvironmentInfo DetectEnvironment(const VideoCore::RendererBase& renderer);
 
 void LoadOverrides(std::uint64_t program_id, const VideoCore::RendererBase& renderer);
+
+/// Per-title defaults for settings read while the GPU is created, so they run before it. A value
+/// the user set for the game is kept; RestoreGlobalState undoes these when the game stops.
+void LoadBootOverrides(std::uint64_t program_id);
 
 } // namespace Core::GameSettings

@@ -119,6 +119,33 @@ EnvironmentInfo DetectEnvironment(const VideoCore::RendererBase& renderer) {
     return env;
 }
 
+namespace {
+template <typename T, typename Setting>
+void DefaultForTitle(Setting& setting, T value) {
+    if (setting.UsingGlobal()) {
+        setting.SetGlobal(false);
+        setting.SetValue(value);
+    }
+}
+} // namespace
+
+void LoadBootOverrides(std::uint64_t program_id) {
+    switch (static_cast<TitleID>(program_id)) {
+        case TitleID::FinalFantasyResonance:
+            // Its CPU builds draw data from GPU results; with the GPU thread running behind
+            // (Adreno), it reads them before they land and the HUD blinks, then garbage commands
+            // crash the driver. Baked vertex formats from those commands are invalid too.
+            DefaultForTitle(Settings::values.use_asynchronous_gpu_emulation, false);
+            DefaultForTitle(Settings::values.vertex_input_dynamic_state, true);
+            LOG_INFO(Core, "Title defaults: async GPU {}, vertex input dynamic state {}",
+                     Settings::values.use_asynchronous_gpu_emulation.GetValue(),
+                     Settings::values.vertex_input_dynamic_state.GetValue());
+            break;
+        default:
+            break;
+    }
+}
+
 void LoadOverrides(std::uint64_t program_id, const VideoCore::RendererBase& renderer) {
     const auto env = DetectEnvironment(renderer);
 
