@@ -223,6 +223,11 @@ public:
 
     void BindTextureBuffer(Buffer& buffer, u32 offset, u32 size,
                            VideoCore::Surface::PixelFormat format) {
+        if (size == 0 || format == VideoCore::Surface::PixelFormat::Invalid) [[unlikely]] {
+            // Null binding: unmapped address or zero size, e.g. an out-of-range TIC handle
+            BindNullTexelBuffer();
+            return;
+        }
         guest_descriptor_queue.AddTexelBuffer(buffer.View(offset, size, format),
                                               buffer.DeviceAddress(), offset, size,
                                               TexelBufferFormat(format));
@@ -248,6 +253,8 @@ private:
 
     VkFormat TexelBufferFormat(VideoCore::Surface::PixelFormat format) const;
 
+    void BindNullTexelBuffer();
+
     void ReserveNullBuffer();
     vk::Buffer CreateNullBuffer();
 
@@ -261,6 +268,7 @@ private:
     std::shared_ptr<QuadStripIndexBuffer> quad_strip_index_buffer;
 
     vk::Buffer null_buffer;
+    vk::BufferView null_texel_buffer_view;
 
     std::unique_ptr<Uint8Pass> uint8_pass;
     QuadIndexedPass quad_index_pass;
