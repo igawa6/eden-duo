@@ -22,6 +22,7 @@ enum class Errno : u32 {
     INVAL = 22,
     MFILE = 24,
     PIPE = 32,
+    NOTSOCK = 88,
     MSGSIZE = 90,
     CONNABORTED = 103,
     CONNRESET = 104,
