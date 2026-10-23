@@ -8,6 +8,7 @@
 
 #include "common/algorithm.h"
 #include "common/assert.h"
+#include "common/literals.h"
 #include "video_core/engines/engine_upload.h"
 #include "video_core/guest_memory.h"
 #include "video_core/memory_manager.h"
@@ -15,6 +16,8 @@
 #include "video_core/textures/decoders.h"
 
 namespace Tegra::Engines::Upload {
+
+using namespace Common::Literals;
 
 State::State(MemoryManager& memory_manager_, Registers& regs_)
     : regs{regs_}, memory_manager{memory_manager_} {}
@@ -48,13 +51,14 @@ void State::ProcessData(const u32* data, size_t num_data) {
 }
 
 void State::ProcessData(std::span<const u8> read_buffer) {
-    // Copy only the lines the supplied data covers. Garbage registers (FINAL FANTASY RESONANCE)
-    // otherwise loop over billions of lines and read far past the buffer.
-    if (regs.line_length_in == 0) {
+    // Inline data arrives in the command stream, so a real upload is small. Garbage registers
+    // (FINAL FANTASY RESONANCE) ask for billions of lines and would loop for hours. The data may
+    // span several pushbuffer segments that sit back to back, so don't bound it by this chunk.
+    const u64 total_size = u64{regs.line_length_in} * regs.line_count;
+    if (total_size == 0 || total_size > 64_MiB) [[unlikely]] {
         return;
     }
-    const u32 line_count = static_cast<u32>(
-        (std::min<size_t>)(regs.line_count, read_buffer.size() / regs.line_length_in));
+    const u32 line_count = regs.line_count;
     const GPUVAddr address{regs.dest.Address()};
     if (is_linear) {
         for (size_t line = 0; line < line_count; ++line) {
