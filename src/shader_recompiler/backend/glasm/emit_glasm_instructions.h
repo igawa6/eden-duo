@@ -464,6 +464,8 @@ void EmitGlobalAtomicAnd32(EmitContext& ctx);
 void EmitGlobalAtomicOr32(EmitContext& ctx);
 void EmitGlobalAtomicXor32(EmitContext& ctx);
 void EmitGlobalAtomicExchange32(EmitContext& ctx);
+void EmitGlobalAtomicCompareExchange32(EmitContext& ctx);
+void EmitStorageAtomicCompareExchange32(EmitContext& ctx);
 void EmitGlobalAtomicIAdd64(EmitContext& ctx);
 void EmitGlobalAtomicSMin64(EmitContext& ctx);
 void EmitGlobalAtomicUMin64(EmitContext& ctx);

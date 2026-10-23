@@ -552,6 +552,15 @@ void EmitGlobalAtomicXor32(EmitContext&) {
     throw NotImplementedException("GLASM instruction");
 }
 
+void EmitGlobalAtomicCompareExchange32(EmitContext&) {
+    throw NotImplementedException("GLASM instruction");
+}
+
+// ponytail: no GLASM CAS (desktop NVIDIA GL only); add ATOM.CAS with a {cmp,value} vector if needed
+void EmitStorageAtomicCompareExchange32(EmitContext&) {
+    throw NotImplementedException("GLASM instruction");
+}
+
 void EmitGlobalAtomicExchange32(EmitContext&) {
     throw NotImplementedException("GLASM instruction");
 }
