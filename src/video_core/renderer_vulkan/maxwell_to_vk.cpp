@@ -4,6 +4,9 @@
 // SPDX-FileCopyrightText: Copyright 2019 yuzu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <algorithm>
+#include <array>
+#include <atomic>
 #include <iterator>
 
 #include "common/assert.h"
@@ -239,7 +242,18 @@ FormatInfo SurfaceFormat(const Device& device, FormatType format_type, bool with
     SURFACE_FORMAT_ELEM(VK_FORMAT_D32_SFLOAT_S8_UINT, usage_attachable, D32_FLOAT_S8_UINT)
 #define SURFACE_FORMAT_ELEM(res, usage, pixel) case PixelFormat::pixel: tuple = {res, usage}; break;
     SURFACE_FORMAT_LIST
-    default: UNREACHABLE_MSG("unknown format {}", pixel_format);
+    default: {
+        // Null texel buffer bindings (unmapped address or zero size, e.g. from a garbage TIC)
+        // carry PixelFormat::Invalid. Their format is irrelevant, so degrade instead of aborting.
+        static std::array<std::atomic_bool, 256> logged{};
+        if (!logged[(std::min)(static_cast<u32>(pixel_format), 255u)].exchange(true)) {
+            LOG_ERROR(Render_Vulkan, "Unknown pixel format {} used as {}, using A8B8G8R8_UNORM",
+                      static_cast<u32>(pixel_format), static_cast<u32>(format_type));
+        }
+        pixel_format = PixelFormat::A8B8G8R8_UNORM;
+        tuple = {VK_FORMAT_A8B8G8R8_UNORM_PACK32, usage_attachable | usage_storage};
+        break;
+    }
 #undef SURFACE_FORMAT_ELEM
 #undef SURFACE_FORMAT_LIST
     }
