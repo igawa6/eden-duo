@@ -27,6 +27,8 @@ class Socket;
 
 namespace Service::Sockets {
 
+struct EventFdCounter;
+
 class BSD_USA final : public ServiceFramework<BSD_USA> {
 public:
     explicit BSD_USA(Core::System& system_, const char* name, bool is_user);
@@ -47,6 +49,8 @@ private:
         std::shared_ptr<Network::SocketBase> socket;
         s32 flags = 0;
         bool is_connection_based = false;
+        /// Set instead of socket when the descriptor was created by EventFd
+        std::shared_ptr<EventFdCounter> event_fd;
     };
 
     struct PollWork {
@@ -157,6 +161,8 @@ private:
 
     std::pair<s32, Errno> SocketImpl(Domain domain, Type type, Protocol protocol);
     std::pair<s32, Errno> PollImpl(std::vector<u8>& write_buffer, std::span<const u8> read_buffer, s32 nfds, s32 timeout);
+    std::pair<s32, Errno> PollWithEventFdImpl(std::vector<PollFD>& fds, std::vector<u8>& write_buffer,
+                                              s32 timeout);
     std::pair<s32, Errno> AcceptImpl(s32 fd, std::vector<u8>& write_buffer);
     Errno BindImpl(s32 fd, std::span<const u8> addr);
     Errno ConnectImpl(s32 fd, std::span<const u8> addr);
@@ -176,6 +182,8 @@ private:
 
     s32 FindFreeFileDescriptorHandle() noexcept;
     bool IsFileDescriptorValid(s32 fd) const noexcept;
+    bool IsEventFd(s32 fd) const noexcept;
+    Errno CheckSocket(s32 fd) const noexcept;
 
     void BuildErrnoResponse(HLERequestContext& ctx, Errno bsd_errno) const noexcept;
 
