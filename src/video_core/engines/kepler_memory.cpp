@@ -55,7 +55,7 @@ void KeplerMemory::CallMethod(Core::System& system, u32 method, u32 method_argum
 void KeplerMemory::CallMultiMethod(Core::System& system, u32 method, const u32* base_start, u32 amount, u32 methods_pending) {
     switch (method) {
     case KEPLERMEMORY_REG_INDEX(data):
-        upload_state.ProcessData(base_start, amount);
+        upload_state.ProcessData(base_start, amount, amount == methods_pending);
         return;
     default:
         for (u32 i = 0; i < amount; i++) {

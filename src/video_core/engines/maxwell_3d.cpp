@@ -450,8 +450,7 @@ void Maxwell3D::CallMultiMethod(Core::System& system, u32 method, const u32* bas
         ProcessCBMultiData(base_start, amount);
         break;
     case MAXWELL3D_REG_INDEX(inline_data): {
-        ASSERT(methods_pending == amount);
-        upload_state.ProcessData(base_start, amount);
+        upload_state.ProcessData(base_start, amount, amount == methods_pending);
         return;
     }
     case MAXWELL3D_REG_INDEX(draw_inline_index):

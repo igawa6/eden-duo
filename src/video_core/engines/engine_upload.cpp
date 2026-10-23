@@ -45,9 +45,20 @@ void State::ProcessData(const u32 data, const bool is_last_call) {
     ProcessData(inner_buffer);
 }
 
-void State::ProcessData(const u32* data, size_t num_data) {
+void State::ProcessData(const u32* data, size_t num_data, bool is_last_call) {
     std::span<const u8> read_buffer(reinterpret_cast<const u8*>(data), num_data * sizeof(u32));
-    ProcessData(read_buffer);
+    if (write_offset == 0 && is_last_call) {
+        ProcessData(read_buffer);
+        return;
+    }
+    // The data spans several pushbuffer segments (FINAL FANTASY RESONANCE): gather it and copy
+    // once, or each segment would land at the start of the destination.
+    const size_t sub_copy_size = (std::min)(read_buffer.size(), size_t{copy_size} - write_offset);
+    std::memcpy(&inner_buffer[write_offset], read_buffer.data(), sub_copy_size);
+    write_offset += u32(sub_copy_size);
+    if (is_last_call) {
+        ProcessData(inner_buffer);
+    }
 }
 
 void State::ProcessData(std::span<const u8> read_buffer) {
@@ -55,7 +66,7 @@ void State::ProcessData(std::span<const u8> read_buffer) {
     // (FINAL FANTASY RESONANCE) ask for billions of lines and would loop for hours. The data may
     // span several pushbuffer segments that sit back to back, so don't bound it by this chunk.
     const u64 total_size = u64{regs.line_length_in} * regs.line_count;
-    if (total_size == 0 || total_size > 64_MiB) [[unlikely]] {
+    if (total_size == 0 || total_size > 64_MiB || total_size > read_buffer.size()) [[unlikely]] {
         return;
     }
     const u32 line_count = regs.line_count;

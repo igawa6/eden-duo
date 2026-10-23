@@ -90,7 +90,7 @@ void KeplerCompute::CallMultiMethod(Core::System& system, u32 method, const u32*
         upload_address = current_dma_segment;
         upload_dirty = current_dirty;
         current_dirty = false;
-        upload_state.ProcessData(base_start, amount);
+        upload_state.ProcessData(base_start, amount, amount == methods_pending);
         return;
     default:
         for (u32 i = 0; i < amount; i++) {
