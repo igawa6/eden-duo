@@ -105,9 +105,9 @@ public:
                 return;
             }
         }
-        const bool far = horizontal ? std::llabs(dx) >= need_px && Dominant(dx, dy)
+        const bool far_enough = horizontal ? std::llabs(dx) >= need_px && Dominant(dx, dy)
                                     : std::llabs(dy) >= need_px && Dominant(dy, dx);
-        if (!reached && far) {
+        if (!reached && far_enough) {
             if (now_ms - lock_ms > SwipeMaxMs) {
                 armed = false; // too slow: a drag, not a swipe
                 return;
