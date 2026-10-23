@@ -243,8 +243,8 @@ FormatInfo SurfaceFormat(const Device& device, FormatType format_type, bool with
 #define SURFACE_FORMAT_ELEM(res, usage, pixel) case PixelFormat::pixel: tuple = {res, usage}; break;
     SURFACE_FORMAT_LIST
     default: {
-        // Null texel buffer bindings (unmapped address or zero size, e.g. from a garbage TIC)
-        // carry PixelFormat::Invalid. Their format is irrelevant, so degrade instead of aborting.
+        // Last resort: null texel buffers are bound as null descriptors before reaching here
+        // (BufferCacheRuntime::BindTextureBuffer). Degrade instead of aborting on anything else.
         static std::array<std::atomic_bool, 256> logged{};
         if (!logged[(std::min)(static_cast<u32>(pixel_format), 255u)].exchange(true)) {
             LOG_ERROR(Render_Vulkan, "Unknown pixel format {} used as {}, using A8B8G8R8_UNORM",

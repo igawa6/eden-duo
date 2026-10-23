@@ -743,6 +743,31 @@ void BufferCacheRuntime::BindTransformFeedbackBuffers(VideoCommon::HostBindings<
     });
 }
 
+void BufferCacheRuntime::BindNullTexelBuffer() {
+    if (device.HasNullDescriptor()) {
+        guest_descriptor_queue.AddTexelBuffer(VK_NULL_HANDLE, 0, 0, 0, VK_FORMAT_UNDEFINED);
+        return;
+    }
+    // No nullDescriptor: one texel of the zero-filled 4-byte null buffer
+    static constexpr VkFormat format = VK_FORMAT_A8B8G8R8_UNORM_PACK32;
+    ReserveNullBuffer();
+    if (!null_texel_buffer_view) {
+        null_texel_buffer_view = device.GetLogical().CreateBufferView({
+            .sType = VK_STRUCTURE_TYPE_BUFFER_VIEW_CREATE_INFO,
+            .pNext = nullptr,
+            .flags = 0,
+            .buffer = *null_buffer,
+            .format = format,
+            .offset = 0,
+            .range = VK_WHOLE_SIZE,
+        });
+    }
+    const VkDeviceAddress address = device.IsBufferDeviceAddressSupported()
+                                        ? device.GetLogical().GetBufferDeviceAddress(*null_buffer)
+                                        : 0;
+    guest_descriptor_queue.AddTexelBuffer(*null_texel_buffer_view, address, 0, 4, format);
+}
+
 void BufferCacheRuntime::ReserveNullBuffer() {
     if (!null_buffer) {
         null_buffer = CreateNullBuffer();
@@ -756,7 +781,9 @@ vk::Buffer BufferCacheRuntime::CreateNullBuffer() {
         .flags = 0,
         .size = 4,
         .usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT |
-                 VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT,
+                 VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT |
+                 VK_BUFFER_USAGE_UNIFORM_TEXEL_BUFFER_BIT |
+                 VK_BUFFER_USAGE_STORAGE_TEXEL_BUFFER_BIT,
         .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
         .queueFamilyIndexCount = 0,
         .pQueueFamilyIndices = nullptr,
