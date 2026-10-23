@@ -201,6 +201,36 @@ void TranslatorVisitor::ATOM(u64 insn) {
     GlobalAtomic(*this, atom.dest_reg, atom.operand_reg, offset, atom.size, atom.op, true);
 }
 
+void TranslatorVisitor::ATOM_cas(u64 insn) {
+    union {
+        u64 raw;
+        BitField<0, 8, IR::Reg> dest_reg;
+        BitField<20, 8, IR::Reg> operand_reg;
+        BitField<49, 3, u64> size;
+    } const atom{insn};
+    const IR::U64 offset{AtomOffset(*this, insn)};
+    // Rb holds the comparator and the register (pair) right after it holds the new value
+    switch (atom.size) {
+    case 0:
+        X(atom.dest_reg, ir.GlobalAtomicCompareExchange(offset, X(atom.operand_reg),
+                                                        X(atom.operand_reg + 1)));
+        break;
+    case 1: {
+        // ponytail: 64-bit CAS is not atomic, same as the 32x2 fallback hosts without int64
+        // atomics (Adreno) already use; add a 64-bit CAS IR op if a game needs true atomicity
+        const IR::U64 old_value{ir.PackUint2x32(ir.LoadGlobal64(offset))};
+        const IR::U64 comparator{L(atom.operand_reg)};
+        const IR::U64 value{L(atom.operand_reg + 2)};
+        const IR::U64 new_value{ir.Select(ir.IEqual(old_value, comparator), value, old_value)};
+        ir.WriteGlobal64(offset, ir.UnpackUint2x32(new_value));
+        L(atom.dest_reg, old_value);
+        break;
+    }
+    default:
+        throw NotImplementedException("ATOM.CAS size {}", atom.size.Value());
+    }
+}
+
 void TranslatorVisitor::RED(u64 insn) {
     union {
         u64 raw;
