@@ -10,6 +10,7 @@
 
 #include "common/alignment.h"
 #include "common/assert.h"
+#include "common/logging.h"
 #include "video_core/host1x/codecs/vp9.h"
 #include "video_core/host1x/host1x.h"
 #include "video_core/memory_manager.h"
@@ -135,7 +136,7 @@ static constexpr Vp9EntropyProbs default_probs{
         66, 0,   8,  64, 46, 0,   17, 81, 31, 0,   25, 29, 30, 0,
     },
     .intra_inter_prob{9, 102, 187, 225},
-    .comp_inter_prob{9, 102, 187, 225, 0},
+    .comp_inter_prob{239, 183, 119, 96, 41},
     .single_ref_prob{33, 16, 77, 74, 142, 142, 172, 170, 238, 247},
     .comp_ref_prob{50, 126, 123, 221, 226},
     .tx_32x32_prob{3, 136, 37, 5, 52, 13},
@@ -204,6 +205,17 @@ static constexpr Vp9EntropyProbs default_probs{
         ? u8((std::max)(0, RecenterNonNeg(new_prob, old_prob) - 1))
         : u8((std::max)(0, RecenterNonNeg(0xff - 1 - new_prob, 0xff - 1 - old_prob) - 1));
     return s32((i + 7) % 13 == 0 ? (i + 7) / 13 - 1 : i + 20 - (i + 7) / 13);
+}
+
+void PatchBits(std::vector<u8>& bytes, size_t bit_pos, u32 value, u32 bit_count) {
+    for (u32 i = 0; i < bit_count; ++i, ++bit_pos) {
+        const u8 mask = static_cast<u8>(0x80 >> (bit_pos % 8));
+        if ((value >> (bit_count - 1 - i)) & 1) {
+            bytes[bit_pos / 8] |= mask;
+        } else {
+            bytes[bit_pos / 8] &= static_cast<u8>(~mask);
+        }
+    }
 }
 } // Anonymous namespace
 
@@ -652,6 +664,7 @@ VpxBitStreamWriter VP9::ComposeUncompressedHeader() {
         loop_filter_ref_deltas.fill(0);
         loop_filter_mode_deltas.fill(0);
         frame_ctxs.fill(default_probs);
+        reverted_ctxs.fill(default_probs);
 
         // intra only, meaning the frame can be recreated with no other references
         current_frame_info.intra_only = true;
@@ -717,19 +730,20 @@ VpxBitStreamWriter VP9::ComposeUncompressedHeader() {
         }
     }
 
-    if (!current_frame_info.error_resilient_mode) {
+    parallel_mode_bit.reset();
+    if (current_frame_info.error_resilient_mode) {
+        // Error resilient frames start from default probabilities and refresh no context
+        frame_ctxs.fill(default_probs);
+        reverted_ctxs.fill(default_probs);
+    } else {
         uncomp_writer.WriteBit(true); // Refresh frame context. where do i get this info from?
-        uncomp_writer.WriteBit(true); // Frame parallel decoding mode.
+        // Frame parallel decoding mode, set per adaptation mode in ComposeFrame
+        parallel_mode_bit = uncomp_writer.GetBitPosition();
+        uncomp_writer.WriteBit(true);
     }
 
-    int frame_ctx_idx = 0;
-    if (!current_frame_info.show_frame) {
-        frame_ctx_idx = 1;
-    }
-
-    uncomp_writer.WriteU(frame_ctx_idx, 2);       // Frame context index.
-    prev_frame_probs = frame_ctxs[frame_ctx_idx]; // reference probabilities for compressed header
-    frame_ctxs[frame_ctx_idx] = current_frame_info.entropy;
+    current_frame_ctx_idx = current_frame_info.show_frame ? 0 : 1;
+    uncomp_writer.WriteU(current_frame_ctx_idx, 2); // Frame context index.
 
     uncomp_writer.WriteU(current_frame_info.first_level, 6);
     uncomp_writer.WriteU(current_frame_info.sharpness_level, 3);
@@ -844,21 +858,112 @@ std::span<const u8> VP9::ComposeFrame() {
         SetFrameDimensions(current_frame_info.frame_size.width, current_frame_info.frame_size.height);
         bitstream = std::move(curr_frame.bit_stream);
     }
-    // The uncompressed header routine sets PrevProb parameters needed for the compressed header
     auto uncomp_writer = ComposeUncompressedHeader();
-    std::vector<u8> compressed_header = ComposeCompressedHeader();
-
-    uncomp_writer.WriteU(static_cast<s32>(compressed_header.size()), 16);
+    const size_t header_size_bit = uncomp_writer.GetBitPosition();
+    uncomp_writer.WriteU(0, 16); // Compressed header size, patched in build below
     uncomp_writer.Flush();
-    std::vector<u8> uncompressed_header = uncomp_writer.GetByteArray();
+    const std::vector<u8>& uncompressed_header = uncomp_writer.GetByteArray();
 
-    // Write headers and frame to buffer
-    frame_scratch.resize(uncompressed_header.size() + compressed_header.size() + bitstream.size());
-    std::copy(uncompressed_header.begin(), uncompressed_header.end(), frame_scratch.begin());
-    std::copy(compressed_header.begin(), compressed_header.end(), frame_scratch.begin() + uncompressed_header.size());
-    std::copy(bitstream.begin(), bitstream.end(), frame_scratch.begin() + uncompressed_header.size() + compressed_header.size());
+    if (current_frame_info.is_key_frame) {
+        replay_frames.clear();
+    } else if (adaptation == Adaptation::Unknown && !current_frame_info.intra_only) {
+        adaptation = DetectAdaptation();
+        if (adaptation == Adaptation::Forward) {
+            ReplayForwardAdaptation();
+        }
+    }
+
+    const auto build = [&](Adaptation mode) {
+        // NVDEC's tables were built on the driver's contexts, so delta-code against those
+        prev_frame_probs =
+            (mode == Adaptation::Forward ? frame_ctxs : reverted_ctxs)[current_frame_ctx_idx];
+        const std::vector<u8> compressed_header = ComposeCompressedHeader();
+        std::vector<u8> frame = uncompressed_header;
+        PatchBits(frame, header_size_bit, static_cast<u32>(compressed_header.size()), 16);
+        if (parallel_mode_bit) {
+            PatchBits(frame, *parallel_mode_bit, mode == Adaptation::Forward ? 1 : 0, 1);
+        }
+        frame.insert(frame.end(), compressed_header.begin(), compressed_header.end());
+        frame.insert(frame.end(), bitstream.begin(), bitstream.end());
+        return frame;
+    };
+
+    // Until the stream shows which kind it is, assume backward adaptation (libvpx's encoder
+    // default) and keep the forward-adaptation frames since the key frame for a replay.
+    const std::vector<u8> frame =
+        build(adaptation == Adaptation::Forward ? Adaptation::Forward : Adaptation::Backward);
+    constexpr size_t max_replay_frames = 64;
+    if (adaptation == Adaptation::Unknown && replay_frames.size() < max_replay_frames) {
+        replay_frames.push_back({build(Adaptation::Forward), WasFrameHidden()});
+    }
+    UpdateFrameContexts();
+
+    frame_scratch.resize(frame.size());
+    std::copy(frame.begin(), frame.end(), frame_scratch.begin());
     vp9_hidden_frame = WasFrameHidden();
     return GetFrameBytes();
+}
+
+void VP9::UpdateFrameContexts() {
+    // NVDEC adapts its contexts from symbol counts the decoder writes back, which FFmpeg can't
+    // provide. Track what the driver then holds for both kinds of stream:
+    // - no backward adaptation (frame_parallel_decoding_mode = 1): the forward updates stay;
+    // - backward adaptation: with zero counts every adapted probability reverts to the context
+    //   before the frame. Intra frames only adapt coefficients, so tx and skip updates stay.
+    // ponytail: refresh_frame_context is assumed set, NVDEC doesn't report it.
+    if (current_frame_info.error_resilient_mode) {
+        return;
+    }
+    frame_ctxs[current_frame_ctx_idx] = current_frame_info.entropy;
+    if (current_frame_info.intra_only) {
+        auto& ctx = reverted_ctxs[current_frame_ctx_idx];
+        ctx.skip_probs = current_frame_info.entropy.skip_probs;
+        if (current_frame_info.transform_mode == 4) {
+            ctx.tx_8x8_prob = current_frame_info.entropy.tx_8x8_prob;
+            ctx.tx_16x16_prob = current_frame_info.entropy.tx_16x16_prob;
+            ctx.tx_32x32_prob = current_frame_info.entropy.tx_32x32_prob;
+        }
+    }
+}
+
+VP9::Adaptation VP9::DetectAdaptation() const {
+    // Where the two views of the driver's context differ, this frame's table shows which one the
+    // driver kept (unless the frame updated that probability again).
+    const auto as_bytes = [](const Vp9EntropyProbs& probs) {
+        return std::span{reinterpret_cast<const u8*>(&probs), sizeof(probs)};
+    };
+    const auto forward = as_bytes(frame_ctxs[current_frame_ctx_idx]);
+    const auto reverted = as_bytes(reverted_ctxs[current_frame_ctx_idx]);
+    const auto current = as_bytes(current_frame_info.entropy);
+    size_t forward_votes = 0;
+    size_t backward_votes = 0;
+    for (size_t i = 0; i < current.size(); ++i) {
+        if (forward[i] != reverted[i]) {
+            forward_votes += current[i] == forward[i];
+            backward_votes += current[i] == reverted[i];
+        }
+    }
+    if (forward_votes == backward_votes) {
+        return Adaptation::Unknown;
+    }
+    return forward_votes > backward_votes ? Adaptation::Forward : Adaptation::Backward;
+}
+
+void VP9::ReplayForwardAdaptation() {
+    // The frames since the key frame told FFmpeg to adapt; resend them without adaptation so its
+    // contexts match the stream again. Their pictures were already presented and are dropped.
+    LOG_INFO(HW_GPU, "VP9 stream has no backward adaptation, replaying {} frames",
+             replay_frames.size());
+    initialized = decode_api.Initialize(Host1x::NvdecCommon::VideoCodec::VP9);
+    for (const auto& replay : replay_frames) {
+        if (!initialized || !decode_api.SendPacket(replay.frame, {.hidden = replay.hidden},
+                                                   GetFrameDimensions())) {
+            break;
+        }
+        while (decode_api.ReceiveFrame()) {
+        }
+    }
+    replay_frames.clear();
 }
 
 VpxRangeEncoder::VpxRangeEncoder() {

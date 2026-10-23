@@ -7,6 +7,7 @@
 #pragma once
 
 #include <array>
+#include <optional>
 #include <span>
 #include <vector>
 
@@ -81,6 +82,11 @@ public:
 
     /// Write an unsigned integer value
     void WriteU(u32 value, u32 value_size);
+
+    /// Returns the number of bits written so far
+    [[nodiscard]] size_t GetBitPosition() const {
+        return byte_array.size() * 8 + static_cast<size_t>(buffer_pos);
+    }
 
     /// Write a signed integer value
     void WriteS(s32 value, u32 value_size);
@@ -195,12 +201,33 @@ private:
     [[nodiscard]] std::vector<u8> ComposeCompressedHeader();
     [[nodiscard]] VpxBitStreamWriter ComposeUncompressedHeader();
 
+    /// Whether the stream adapts probabilities backwards (frame_parallel_decoding_mode = 0)
+    enum class Adaptation : u8 { Unknown, Backward, Forward };
+
+    /// Records the probabilities NVDEC's driver holds after the current frame
+    void UpdateFrameContexts();
+
+    /// Infers the stream's adaptation mode from the current frame's probabilities
+    [[nodiscard]] Adaptation DetectAdaptation() const;
+
+    /// Resends the frames since the key frame for a stream without backward adaptation
+    void ReplayForwardAdaptation();
+
     std::array<s8, 4> loop_filter_ref_deltas{};
     std::array<s8, 2> loop_filter_mode_deltas{};
 
     Common::ScratchBuffer<u8> frame_scratch;
     Vp9FrameContainer next_frame{};
-    std::array<Vp9EntropyProbs, 4> frame_ctxs{};
+    std::array<Vp9EntropyProbs, 4> frame_ctxs{};    ///< Driver contexts keeping forward updates
+    std::array<Vp9EntropyProbs, 4> reverted_ctxs{}; ///< Driver contexts adapted with no counts
+    s32 current_frame_ctx_idx{};
+    std::optional<size_t> parallel_mode_bit;
+    Adaptation adaptation{Adaptation::Unknown};
+    struct ReplayFrame {
+        std::vector<u8> frame;
+        bool hidden;
+    };
+    std::vector<ReplayFrame> replay_frames;
     bool swap_ref_indices{};
 
     Segmentation last_segmentation{};
