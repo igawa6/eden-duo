@@ -21,6 +21,7 @@
 #include "common/settings.h"
 #include <ranges>
 #include "shader_recompiler/environment.h"
+#include "shader_recompiler/exception.h"
 #include "video_core/engines/kepler_compute.h"
 #include "video_core/memory_manager.h"
 #include "video_core/shader_environment.h"
@@ -28,6 +29,8 @@
 #include "video_core/textures/texture.h"
 
 namespace VideoCommon {
+
+constexpr u32 MAXIMUM_SHADER_SIZE = 0x100000;
 
 constexpr std::array<char, 8> MAGIC_NUMBER{'y', 'u', 'z', 'u', 'c', 'a', 'c', 'h'};
 
@@ -150,6 +153,11 @@ u64 GenericEnvironment::ReadInstruction(u32 address) {
         return code[(address - cached_lowest) / INST_SIZE];
     }
     has_unbound_instructions = true;
+    // A program with no end marker (e.g. a dispatch pointing at garbage) would otherwise be
+    // followed through the whole address space; give up past the size TryFindSize scans.
+    if (read_highest - read_lowest >= MAXIMUM_SHADER_SIZE) {
+        throw Shader::RuntimeError("Shader reads span more than {:#x} bytes", MAXIMUM_SHADER_SIZE);
+    }
     return gpu_memory->Read<u64>(program_base + address);
 }
 
@@ -250,7 +258,7 @@ void GenericEnvironment::Serialize(std::ofstream& file) const {
 
 std::optional<u64> GenericEnvironment::TryFindSize() {
     static constexpr size_t BLOCK_SIZE = 0x1000;
-    static constexpr size_t MAXIMUM_SIZE = 0x100000;
+    static constexpr size_t MAXIMUM_SIZE = MAXIMUM_SHADER_SIZE;
 
     static constexpr u64 SELF_BRANCH_A = 0xE2400FFFFF87000FULL;
     static constexpr u64 SELF_BRANCH_B = 0xE2400FFFFF07000FULL;

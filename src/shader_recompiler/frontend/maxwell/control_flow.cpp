@@ -256,12 +256,14 @@ void CFG::AnalyzeLabel(FunctionId function_id, Label& label) {
 bool CFG::InspectVisitedBlocks(FunctionId function_id, const Label& label) {
     const Location pc{label.address};
     Function& function{functions[function_id]};
-    const auto it{
-        std::ranges::find_if(function.blocks, [pc](auto& block) { return block.Contains(pc); })};
-    if (it == function.blocks.end()) {
+    // Blocks are ordered by begin and never overlap: only the last one starting at or before pc
+    // can contain it
+    const auto next_it{function.blocks.upper_bound(pc, Compare{})};
+    if (next_it == function.blocks.begin() || !std::prev(next_it)->Contains(pc)) {
         // Address has not been visited
         return false;
     }
+    const auto it{std::prev(next_it)};
     Block* const visited_block{&*it};
     if (visited_block->begin == pc) {
         throw LogicError("Dangling block");
