@@ -59,6 +59,11 @@ MemoryManager::MemoryManager(Core::System& system_, u64 address_space_bits_, GPU
 MemoryManager::~MemoryManager() = default;
 
 MemoryManager::EntryType MemoryManager::GetEntry(size_t position, bool is_big_page) const {
+    // Games can hand engines garbage addresses (FINAL FANTASY RESONANCE's inline uploads);
+    // past the address space there is no entry to read, so treat it as unmapped.
+    if (!IsWithinGPUAddressRange(position)) [[unlikely]] {
+        return EntryType::Free;
+    }
     if (is_big_page) {
         position = position >> big_page_bits;
         const u64 entry_mask = big_entries[position / 32];
