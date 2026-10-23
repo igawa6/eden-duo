@@ -48,9 +48,16 @@ void State::ProcessData(const u32* data, size_t num_data) {
 }
 
 void State::ProcessData(std::span<const u8> read_buffer) {
+    // Copy only the lines the supplied data covers. Garbage registers (FINAL FANTASY RESONANCE)
+    // otherwise loop over billions of lines and read far past the buffer.
+    if (regs.line_length_in == 0) {
+        return;
+    }
+    const u32 line_count = static_cast<u32>(
+        (std::min<size_t>)(regs.line_count, read_buffer.size() / regs.line_length_in));
     const GPUVAddr address{regs.dest.Address()};
     if (is_linear) {
-        for (size_t line = 0; line < regs.line_count; ++line) {
+        for (size_t line = 0; line < line_count; ++line) {
             const GPUVAddr dest_line = address + line * regs.dest.pitch;
             std::span<const u8> buffer(read_buffer.data() + line * regs.line_length_in,
                                        regs.line_length_in);
@@ -77,7 +84,7 @@ void State::ProcessData(std::span<const u8> read_buffer) {
 
         Tegra::Texture::SwizzleSubrect(tmp, read_buffer, bytes_per_pixel, width, regs.dest.height,
                                        regs.dest.depth, x_offset, regs.dest.y, x_elements,
-                                       regs.line_count, regs.dest.BlockHeight(),
+                                       line_count, regs.dest.BlockHeight(),
                                        regs.dest.BlockDepth(), regs.line_length_in);
     }
 }
