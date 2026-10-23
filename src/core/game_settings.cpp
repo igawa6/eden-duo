@@ -135,11 +135,14 @@ void LoadBootOverrides(std::uint64_t program_id) {
             // Its CPU builds draw data from GPU results; with the GPU thread running behind
             // (Adreno), it reads them before they land and the HUD blinks, then garbage commands
             // crash the driver. Baked vertex formats from those commands are invalid too.
+            // Its fence values must also wait for the GPU, or the HUD still blinks.
             DefaultForTitle(Settings::values.use_asynchronous_gpu_emulation, false);
             DefaultForTitle(Settings::values.vertex_input_dynamic_state, true);
-            LOG_INFO(Core, "Title defaults: async GPU {}, vertex input dynamic state {}",
+            DefaultForTitle(Settings::values.gpu_fence_behavior, Settings::GpuFenceBehavior::Accurate);
+            LOG_INFO(Core, "Title defaults: async GPU {}, vertex input dynamic state {}, fence {}",
                      Settings::values.use_asynchronous_gpu_emulation.GetValue(),
-                     Settings::values.vertex_input_dynamic_state.GetValue());
+                     Settings::values.vertex_input_dynamic_state.GetValue(),
+                     Settings::CanonicalizeEnum(Settings::values.gpu_fence_behavior.GetValue()));
             break;
         default:
             break;
@@ -163,6 +166,7 @@ void LoadOverrides(std::uint64_t program_id, const VideoCore::RendererBase& rend
             break;
         case TitleID::FireEmblemEngage:
         case TitleID::DragonQuestVIIReimagined:
+        case TitleID::FinalFantasyResonance:
             // Their effect shaders divide by fp16 subnormals; flushed to zero the result goes
             // inf/NaN and the bloom blows characters and lights out to white.
             Settings::values.fix_fp16_denormals_by_title = true;
