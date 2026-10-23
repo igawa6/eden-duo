@@ -124,6 +124,13 @@ void Puller::ProcessSemaphoreRelease(DmaPusher& dma_pusher) {
 }
 
 void Puller::ProcessSemaphoreAcquire(DmaPusher& dma_pusher) {
+    const GPUVAddr semaphore_address = regs.semaphore_address.SemaphoreAddress();
+    if (!dma_pusher.memory_manager.GpuToCpuAddress(semaphore_address)) [[unlikely]] {
+        // Nothing can ever release a semaphore in unmapped memory; waiting on it would spin the
+        // GPU thread forever and freeze the game.
+        LOG_ERROR(HW_GPU, "Semaphore acquire on unmapped address {:#x} skipped", semaphore_address);
+        return;
+    }
     u32 word = dma_pusher.memory_manager.Read<u32>(regs.semaphore_address.SemaphoreAddress());
     const auto value = regs.semaphore_acquire;
     while (word != value) {

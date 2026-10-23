@@ -102,6 +102,13 @@ bool DmaPusher::Step() {
         } else if (use_safe) {
             Tegra::Memory::GpuGuestMemory<Tegra::CommandHeader, Tegra::Memory::GuestMemoryFlags::SafeRead>headers(memory_manager, dma_state.dma_get, header.size, &command_headers);
             ProcessCommands(headers);
+        } else if (memory_manager.IsMemoryDirty(dma_state.dma_get, header.size * sizeof(u32),
+                                                VideoCommon::CacheType::BufferCache)) {
+            // Commands the GPU wrote itself (FINAL FANTASY RESONANCE builds part of its command
+            // stream with GPU copies) only exist in the buffer cache; an unsafe read would run
+            // stale guest memory as commands. Only these segments pay for the download.
+            Tegra::Memory::GpuGuestMemory<Tegra::CommandHeader, Tegra::Memory::GuestMemoryFlags::SafeRead>headers(memory_manager, dma_state.dma_get, header.size, &command_headers);
+            ProcessCommands(headers);
         } else {
             Tegra::Memory::GpuGuestMemory<Tegra::CommandHeader, Tegra::Memory::GuestMemoryFlags::UnsafeRead>headers(memory_manager, dma_state.dma_get, header.size, &command_headers);
             ProcessCommands(headers);
