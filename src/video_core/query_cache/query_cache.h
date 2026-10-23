@@ -265,9 +265,14 @@ void QueryCacheBase<Traits>::CounterReport(GPUVAddr addr, QueryType counter_type
     // only after the GPU has executed the work and they have been written.
     const bool delay_fence = is_fence && Settings::values.delay_fence_reports_by_title;
     bool is_synced = (Settings::IsGPUFenceBehaviorDefault() ? !Settings::IsGPULevelHigh() : !Settings::IsGPUFenceBehaviorBalanced() && !Settings::IsGPUFenceBehaviorAccurate()) && is_fence && !delay_fence;
-    std::function<void()> operation([this, is_synced, streamer, query_base = query, query_location,
-                                     pointer, pointer_timestamp] {
-        if (True(query_base->flags & QueryFlagBits::IsInvalidated)) {
+    std::function<void()> operation([this, is_synced, delay_fence, streamer, query_base = query,
+                                     query_location, pointer, pointer_timestamp] {
+        // A delayed fence still has to be written once the GPU gets there, as the hardware would,
+        // even if the guest touched that memory meanwhile; the game waits for that value. Only a
+        // newer report to the same address supersedes it.
+        const QueryFlagBits dropped =
+            delay_fence ? QueryFlagBits::IsRewritten : QueryFlagBits::IsInvalidated;
+        if (True(query_base->flags & dropped)) {
             if (!is_synced) [[likely]] {
                 impl->pending_unregister.push_back(query_location);
             }
