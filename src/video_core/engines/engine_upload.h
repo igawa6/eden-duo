@@ -64,7 +64,7 @@ public:
 
     void ProcessExec(bool is_linear_);
     void ProcessData(u32 data, bool is_last_call);
-    void ProcessData(const u32* data, size_t num_data);
+    void ProcessData(const u32* data, size_t num_data, bool is_last_call);
 
     /// Binds a rasterizer to this engine.
     void BindRasterizer(VideoCore::RasterizerInterface* rasterizer);
