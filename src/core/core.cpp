@@ -383,6 +383,9 @@ struct System::Impl {
         Settings::SetCurrentProgramID(params.program_id);
         pending_mod_title_id = params.program_id;
 
+        GameSettings::LoadBootOverrides(params.program_id);
+        cpu_manager.SetAsyncGpu(Settings::values.use_asynchronous_gpu_emulation.GetValue());
+
         // Track launch time for frontend launches
         LaunchTimestampCache::SaveLaunchTimestamp(params.program_id);
 
