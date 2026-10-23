@@ -74,6 +74,23 @@ void SdlConfig::SaveAllValues() {
 
 void SdlConfig::ReadSdlValues() {
     ReadSdlControlValues();
+
+    // External content folders (updates/DLC loaded without installing), as the Android frontend
+    // reads them.
+    BeginGroup(Settings::TranslateCategory(Settings::Category::Ui));
+    BeginGroup(Settings::TranslateCategory(Settings::Category::Paths));
+    Settings::values.external_content_dirs.clear();
+    const int external_dirs_size = BeginArray(std::string("external_content_dirs"));
+    for (int i = 0; i < external_dirs_size; ++i) {
+        SetArrayIndex(i);
+        std::string dir_path = ReadStringSetting(std::string("path"));
+        if (!dir_path.empty()) {
+            Settings::values.external_content_dirs.push_back(dir_path);
+        }
+    }
+    EndArray();
+    EndGroup();
+    EndGroup();
 }
 
 void SdlConfig::ReadSdlControlValues() {

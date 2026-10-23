@@ -1003,10 +1003,16 @@ void OnGameLoaded(Session& session, Core::System& system) {
         }
     }
 
+#ifndef _WIN32
     std::signal(SIGUSR1, ScreenshotSignalHandler);
     std::signal(SIGUSR2, ButtonSignalHandler);
     LOG_INFO(Frontend, "screenshots: kill -USR1 {} writes {}-screen1.png / -screen2.png", getpid(),
              g_screenshot_prefix);
+#else
+    // No user signals on Windows; the <prefix>.shot / <prefix>.btn files drive the same paths.
+    LOG_INFO(Frontend, "screenshots: create {}.shot to write {}-screen1.png", g_screenshot_prefix,
+             g_screenshot_prefix);
+#endif
 }
 
 void Iterate(Core::System& system, InputCommon::InputSubsystem& input_subsystem) {
