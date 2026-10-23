@@ -977,6 +977,21 @@ std::unique_ptr<ComputePipeline> PipelineCache::CreateComputePipeline(
         LOG_ERROR(Render_Vulkan, "Skipping {:#016x}", hash);
         return nullptr;
     }
+    {
+        // A launch built from garbage QMD data (FINAL FANTASY RESONANCE) can ask for more than
+        // the device allows; Turnip exits the process on such a shader instead of failing, and
+        // the disk cache would replay it on every boot.
+        const auto& limits = device.GetPhysical().GetProperties().limits;
+        const auto& wg = key.workgroup_size;
+        const u64 invocations = u64{wg[0]} * wg[1] * wg[2];
+        if (invocations == 0 || invocations > limits.maxComputeWorkGroupInvocations ||
+            wg[0] > limits.maxComputeWorkGroupSize[0] || wg[1] > limits.maxComputeWorkGroupSize[1] ||
+            wg[2] > limits.maxComputeWorkGroupSize[2]) {
+            LOG_ERROR(Render_Vulkan, "Skipping compute {:#016x}: workgroup {}x{}x{} over device limits",
+                      hash, wg[0], wg[1], wg[2]);
+            return nullptr;
+        }
+    }
 
     LOG_DEBUG(Render_Vulkan, "{:#016x}", hash);
 
