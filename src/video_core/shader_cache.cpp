@@ -10,6 +10,7 @@
 #include <boost/container/small_vector.hpp>
 
 #include "common/assert.h"
+#include "shader_recompiler/exception.h"
 #include "shader_recompiler/frontend/maxwell/control_flow.h"
 #include "shader_recompiler/object_pool.h"
 #include "video_core/control/channel_state.h"
@@ -75,6 +76,10 @@ bool ShaderCache::RefreshStages(std::array<u64, 6>& unique_hashes) {
             const u32 start_address{shader_config.offset};
             GraphicsEnvironment env{*maxwell3d, *gpu_memory, program, base_addr, start_address};
             shader_info = MakeShaderInfo(env, *cpu_shader_addr);
+            if (!shader_info) {
+                last_shaders_valid = false;
+                return false;
+            }
         }
         shader_infos[index] = shader_info;
         unique_hashes[index] = shader_info->unique_hash;
@@ -237,7 +242,12 @@ const ShaderInfo* ShaderCache::MakeShaderInfo(GenericEnvironment& env, VAddr cpu
         // Slow path, not really hit on commercial games
         // Build a control flow graph to get the real shader size
         Shader::ObjectPool<Shader::Maxwell::Flow::Block> flow_block;
-        Shader::Maxwell::Flow::CFG cfg{env, flow_block, env.StartAddress()};
+        try {
+            Shader::Maxwell::Flow::CFG cfg{env, flow_block, env.StartAddress()};
+        } catch (const Shader::Exception& exception) {
+            LOG_ERROR(HW_GPU, "Skipping shader at {:#x}: {}", cpu_addr, exception.what());
+            return nullptr;
+        }
         info->unique_hash = env.CalculateHash();
         info->size_bytes = env.ReadSizeBytes();
     }
