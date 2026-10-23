@@ -319,7 +319,12 @@ inline void MemoryManager::MemoryOperation(GPUVAddr gpu_src_addr, std::size_t si
         used_page_mask = page_mask;
         used_page_bits = page_bits;
     }
-    std::size_t remaining_size{size};
+    // Garbage ranges from games (sizes far past the address space) would otherwise be walked
+    // page by page for hours; nothing exists past the end, so stop there.
+    if (!IsWithinGPUAddressRange(gpu_src_addr)) [[unlikely]] {
+        return;
+    }
+    std::size_t remaining_size{(std::min<u64>)(size, address_space_size - gpu_src_addr)};
     std::size_t page_index{gpu_src_addr >> used_page_bits};
     std::size_t page_offset{gpu_src_addr & used_page_mask};
     GPUVAddr current_address = gpu_src_addr;
