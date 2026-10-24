@@ -214,16 +214,12 @@ void Maxwell3D::ProcessMacro(Core::System& system, u32 method, const u32* base_s
 
     // Call the macro when there are no more parameters in the command buffer
     if (is_last_call) {
-        CallPendingMacro(system);
+        ConsumeSink(system);
+        CallMacroMethod(system, executing_macro, macro_params);
+        macro_params.clear();
+        macro_segments.clear();
+        current_macro_dirty = false;
     }
-}
-
-void Maxwell3D::CallPendingMacro(Core::System& system) {
-    ConsumeSink(system);
-    CallMacroMethod(system, executing_macro, macro_params);
-    macro_params.clear();
-    macro_segments.clear();
-    current_macro_dirty = false;
 }
 
 void Maxwell3D::RefreshParametersImpl() {
@@ -403,15 +399,6 @@ void Maxwell3D::CallMacroMethod(Core::System& system, u32 method, const std::vec
 }
 
 void Maxwell3D::CallMethod(Core::System& system, u32 method, u32 method_argument, bool is_last_call) {
-    // Each write to a macro's method register (even) starts a call of that macro; its ARG
-    // register (odd) adds an argument. An incrementing write can run on from one macro into the
-    // next (0xE38 call, 0xE39 argument, 0xE3A call, ...): FINAL FANTASY RESONANCE does this.
-    // The running macro then has all its arguments, so call it before starting the next one,
-    // rather than feeding the next macros' words to it as arguments and never calling them.
-    if (executing_macro != 0 && method >= MacroRegistersStart && (method % 2) == 0) {
-        CallPendingMacro(system);
-    }
-
     // It is an error to write to a register other than the current macro's ARG register before
     // it has finished execution.
     if (executing_macro != 0) {
