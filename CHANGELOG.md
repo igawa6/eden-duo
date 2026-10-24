@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.3.3 (unreleased)
+
+**Fixed**
+
+- Breath of the Wild, Castlevania: Belmont's Curse, Super Mario Odyssey and Echoes of Wisdom keep their dual-screen badge and "not in your library" card even when the companion list cannot be loaded from GitHub (they were missing from the list that comes with the app).
+
 ## 1.3.2.2
 
 **New**
