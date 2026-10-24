@@ -38,6 +38,7 @@ private:
         android::BufferItem item{};
         ReleaseFrameNumber release_frame_number{};
         u64 last_acquire_frame{0};
+        u64 composite_id{0}; ///< The last composite that reads this buffer; 0 if none.
         bool is_acquired{false};
     };
 
@@ -52,7 +53,8 @@ private:
 private:
     bool TryAcquireFramebufferLocked(Layer& layer, Framebuffer& framebuffer);
     CacheStatus CacheFramebufferLocked(Layer& layer, ConsumerId consumer_id);
-    void ReleaseFramebuffersLocked(Display& display);
+    void ReleaseFramebuffersLocked(Display& display, Nvidia::Devices::nvdisp_disp0& nvdisp,
+                                   bool force);
 };
 
 } // namespace Service::Nvnflinger

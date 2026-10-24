@@ -221,10 +221,15 @@ public:
 
     void RendererFrameEndNotify();
 
-    void RequestComposite(std::vector<Tegra::FramebufferConfig>&& layers,
-                          std::vector<Service::Nvidia::NvFence>&& fences);
+    /// Queues a composite; returns its id (see IsCompositeDone).
+    u64 RequestComposite(std::vector<Tegra::FramebufferConfig>&& layers,
+                         std::vector<Service::Nvidia::NvFence>&& fences);
 
-    void WaitForComposite();
+    /// Waits for the last requested composite to have run; false on timeout or shutdown.
+    bool WaitForComposite();
+
+    /// True once the composite has run, so the buffers it read can be reused.
+    [[nodiscard]] bool IsCompositeDone(u64 composite_id);
 
     std::vector<u8> GetAppletCaptureBuffer();
 

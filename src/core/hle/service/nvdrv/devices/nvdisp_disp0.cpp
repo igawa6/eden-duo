@@ -60,7 +60,7 @@ NvResult nvdisp_disp0::Ioctl3(DeviceFD fd, Ioctl command, std::span<const u8> in
 void nvdisp_disp0::OnOpen(NvCore::SessionId session_id, DeviceFD fd) {}
 void nvdisp_disp0::OnClose(DeviceFD fd) {}
 
-void nvdisp_disp0::Composite(std::span<const Nvnflinger::HwcLayer> sorted_layers) {
+u64 nvdisp_disp0::Composite(std::span<const Nvnflinger::HwcLayer> sorted_layers) {
     std::vector<Tegra::FramebufferConfig> output_layers;
     std::vector<Service::Nvidia::NvFence> output_fences;
     output_layers.reserve(sorted_layers.size());
@@ -88,15 +88,21 @@ void nvdisp_disp0::Composite(std::span<const Nvnflinger::HwcLayer> sorted_layers
         }
     }
 
-    system.GPU().RequestComposite(std::move(output_layers), std::move(output_fences));
+    const u64 composite_id =
+        system.GPU().RequestComposite(std::move(output_layers), std::move(output_fences));
     Common::ADPF::ReportFrameInterval();
     system.SpeedLimiter().DoSpeedLimiting(system.CoreTiming().GetGlobalTimeUs());
     system.GetPerfStats().EndSystemFrame();
     system.GetPerfStats().BeginSystemFrame();
+    return composite_id;
 }
 
-void nvdisp_disp0::WaitForComposite() {
-    system.GPU().WaitForComposite();
+bool nvdisp_disp0::WaitForComposite() {
+    return system.GPU().WaitForComposite();
+}
+
+bool nvdisp_disp0::IsCompositeDone(u64 composite_id) {
+    return system.GPU().IsCompositeDone(composite_id);
 }
 
 Kernel::KEvent* nvdisp_disp0::QueryEvent(u32 event_id) {

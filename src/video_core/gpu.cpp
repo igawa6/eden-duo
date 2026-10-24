@@ -4,6 +4,7 @@
 // SPDX-FileCopyrightText: Copyright 2018 yuzu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -186,6 +187,8 @@ struct GPU::Impl {
         std::unique_lock lk{sync_mutex};
         shutting_down.store(true, std::memory_order::relaxed);
         sync_cv.notify_all();
+        std::scoped_lock composite_lk{composite_mutex};
+        composite_cv.notify_all();
     }
 
     /// Obtain the CPU Context
@@ -257,7 +260,11 @@ struct GPU::Impl {
         gpu_thread.FlushAndInvalidateRegion(addr, size, is_async);
     }
 
-    void RequestComposite(std::vector<Tegra::FramebufferConfig>&& layers, std::vector<Service::Nvidia::NvFence>&& fences) {
+    /// The composite runs later than this returns: on the GPU thread, and only once the frame's
+    /// acquire fences signal. The returned id becomes done when it has actually run (see
+    /// IsCompositeDone), which is when the buffers it reads may go back to the game.
+    u64 RequestComposite(std::vector<Tegra::FramebufferConfig>&& layers, std::vector<Service::Nvidia::NvFence>&& fences) {
+        const u64 composite_id = ++last_composite_request;
         const size_t num_fences{fences.size()};
         size_t current_request_counter{};
         if (num_fences != 0) {
@@ -272,14 +279,15 @@ struct GPU::Impl {
             }
         }
         pending_composite_fence = RequestSyncOperation(
-            [this, current_request_counter, num_fences, composite_layers = std::move(layers),
-             composite_fences = std::move(fences)] {
+            [this, composite_id, current_request_counter, num_fences,
+             composite_layers = std::move(layers), composite_fences = std::move(fences)] {
                 if (num_fences == 0) {
                     renderer->Composite(composite_layers);
+                    MarkCompositeDone(composite_id);
                     return;
                 }
                 auto& syncpoint_manager = system.Host1x().GetSyncpointManager();
-                const auto executer = [this, current_request_counter, composite_layers]() {
+                const auto executer = [this, composite_id, current_request_counter, composite_layers]() {
                     {
                         std::unique_lock<std::mutex> lk(request_swap_mutex);
                         if (--request_swap_counters[current_request_counter] != 0) {
@@ -288,6 +296,7 @@ struct GPU::Impl {
                         free_swap_counters.push_back(current_request_counter);
                     }
                     renderer->Composite(composite_layers);
+                    MarkCompositeDone(composite_id);
                 };
                 for (size_t i = 0; i < num_fences; i++) {
                     syncpoint_manager.RegisterGuestAction(composite_fences[i].id,
@@ -295,18 +304,39 @@ struct GPU::Impl {
                 }
             });
         gpu_thread.TickGPU(is_async);
+        return composite_id;
     }
 
-    void WaitForComposite() {
+    void MarkCompositeDone(u64 composite_id) {
+        std::scoped_lock lk{composite_mutex};
+        completed_composite = (std::max)(completed_composite, composite_id);
+        composite_cv.notify_all();
+    }
+
+    [[nodiscard]] bool IsCompositeDone(u64 composite_id) {
+        std::scoped_lock lk{composite_mutex};
+        return completed_composite >= composite_id;
+    }
+
+    /// Waits for the last requested composite to have run. False when it didn't within
+    /// CompositeTimeout (its fences never signalled) or emulation is shutting down.
+    bool WaitForComposite() {
         const u64 fence = pending_composite_fence;
-        if (fence == 0) {
-            return;
-        }
         pending_composite_fence = 0;
         if (shutting_down.load(std::memory_order_relaxed)) {
-            return;
+            return false;
         }
-        WaitForSyncOperation(fence);
+        if (fence != 0) {
+            WaitForSyncOperation(fence);
+        }
+        const u64 composite_id = last_composite_request;
+        std::unique_lock lk{composite_mutex};
+        composite_cv.wait_for(lk, CompositeTimeout, [this, composite_id] {
+            return completed_composite >= composite_id ||
+                   shutting_down.load(std::memory_order_relaxed);
+        });
+        return completed_composite >= composite_id &&
+               !shutting_down.load(std::memory_order_relaxed);
     }
 
     std::vector<u8> GetAppletCaptureBuffer() {
@@ -344,6 +374,13 @@ struct GPU::Impl {
     std::mutex device_mutex;
 
     std::condition_variable sync_cv;
+
+    /// A composite whose fences don't signal within this is given up on (buffers are released).
+    static constexpr std::chrono::milliseconds CompositeTimeout{200};
+    u64 last_composite_request{}; ///< Written by the composer thread only.
+    u64 completed_composite{};
+    std::mutex composite_mutex;
+    std::condition_variable composite_cv;
 
     std::list<std::function<void()>> sync_requests;
     std::atomic<u64> current_sync_fence{};
@@ -480,13 +517,17 @@ const VideoCore::ShaderNotify& GPU::ShaderNotify() const {
     return impl->shader_notify;
 }
 
-void GPU::RequestComposite(std::vector<Tegra::FramebufferConfig>&& layers,
+u64 GPU::RequestComposite(std::vector<Tegra::FramebufferConfig>&& layers,
                            std::vector<Service::Nvidia::NvFence>&& fences) {
-    impl->RequestComposite(std::move(layers), std::move(fences));
+    return impl->RequestComposite(std::move(layers), std::move(fences));
 }
 
-void GPU::WaitForComposite() {
-    impl->WaitForComposite();
+bool GPU::WaitForComposite() {
+    return impl->WaitForComposite();
+}
+
+bool GPU::IsCompositeDone(u64 composite_id) {
+    return impl->IsCompositeDone(composite_id);
 }
 
 std::vector<u8> GPU::GetAppletCaptureBuffer() {

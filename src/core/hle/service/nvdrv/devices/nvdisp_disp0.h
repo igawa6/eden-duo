@@ -37,10 +37,13 @@ public:
     void OnOpen(NvCore::SessionId session_id, DeviceFD fd) override;
     void OnClose(DeviceFD fd) override;
 
-    /// Performs a screen flip, compositing each buffer.
-    void Composite(std::span<const Nvnflinger::HwcLayer> sorted_layers);
+    /// Performs a screen flip, compositing each buffer. Returns the composite's id.
+    u64 Composite(std::span<const Nvnflinger::HwcLayer> sorted_layers);
 
-    void WaitForComposite();
+    /// Waits for the last composite to have run; false on timeout or shutdown.
+    bool WaitForComposite();
+
+    [[nodiscard]] bool IsCompositeDone(u64 composite_id);
 
     Kernel::KEvent* QueryEvent(u32 event_id) override;
 

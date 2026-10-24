@@ -5,6 +5,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 #include <optional>
+#include <vector>
 
 #include <boost/container/small_vector.hpp>
 
@@ -70,12 +71,18 @@ u32 HardwareComposer::ComposeLocked(f32* out_speed_scale, Display& display,
         return 1;
     }
 
-    // Wait for the previous composite, bounding the number of in-flight composites.
-    nvdisp.WaitForComposite();
+    // Wait for the previous composite to have run, bounding the number of in-flight composites,
+    // then give back the buffers it read. If it never ran (its fences didn't signal in time, or
+    // we are shutting down), release anyway rather than starve the game of buffers.
+    const bool composited = nvdisp.WaitForComposite();
+    this->ReleaseFramebuffersLocked(display, nvdisp, !composited);
 
     // Determine the number of vsync periods to wait before composing again.
     std::optional<s32> swap_interval{};
     bool has_acquired_buffer{};
+
+    // The framebuffers this composite reads.
+    std::vector<ConsumerId> composited_ids;
 
     // Acquire all necessary framebuffers.
     for (auto& layer : display.stack.layers) {
@@ -131,6 +138,7 @@ u32 HardwareComposer::ComposeLocked(f32* out_speed_scale, Display& display,
                 .layer_id = layer->layer_id,
                 .layer_stack_mask = layer->layer_stack_mask,
             });
+            composited_ids.push_back(consumer_id);
         }
 
         // Overlay layers run at their own framerate independently of the game.
@@ -160,23 +168,29 @@ u32 HardwareComposer::ComposeLocked(f32* out_speed_scale, Display& display,
                          [&](const HwcLayer& l, const HwcLayer& r) { return l.z_index < r.z_index; });
 
         // Composite.
-        nvdisp.Composite(composition_stack);
+        const u64 composite_id = nvdisp.Composite(composition_stack);
+        for (const auto consumer_id : composited_ids) {
+            m_framebuffers[consumer_id].composite_id = composite_id;
+        }
     }
 
     // Advance by 1 frame (60 FPS compositing)
     m_frame_number += 1;
 
-    // Release framebuffers once the frame has been handed to the compositor. This happens
-    // within the same vsync period as the acquire (release_frame_number is checked against
-    // the advanced counter), so the producer gets its buffers back immediately instead of
-    // losing a queue slot for a whole frame.
-    // TODO: support release fences; releasing before the composite has finished can tear.
-    this->ReleaseFramebuffersLocked(display);
+    // Release framebuffers whose composite has already run, within the same vsync period as the
+    // acquire (release_frame_number is checked against the advanced counter), so the producer
+    // gets its buffers back without losing a queue slot for a whole frame. A buffer whose
+    // composite is still pending (async GPU: it runs once the frame's fences signal) is released
+    // at the next compose instead: handing it back earlier lets the game draw its next frame
+    // into it before the composite reads it, which shows half-drawn frames (e.g. no HUD).
+    this->ReleaseFramebuffersLocked(display, nvdisp, false);
 
     return 1;
 }
 
-void HardwareComposer::ReleaseFramebuffersLocked(Display& display) {
+void HardwareComposer::ReleaseFramebuffersLocked(Display& display,
+                                                 Nvidia::Devices::nvdisp_disp0& nvdisp,
+                                                 bool force) {
     for (auto& [layer_id, framebuffer] : m_framebuffers) {
         if (!framebuffer.is_acquired) {
             continue;
@@ -188,6 +202,11 @@ void HardwareComposer::ReleaseFramebuffersLocked(Display& display) {
         }
 
         if (!layer->is_overlay && framebuffer.release_frame_number > m_frame_number) {
+            continue;
+        }
+
+        if (!force && framebuffer.composite_id != 0 &&
+            !nvdisp.IsCompositeDone(framebuffer.composite_id)) {
             continue;
         }
 
