@@ -138,12 +138,12 @@ bool TitleSettings(std::uint64_t program_id, bool force) {
         case TitleID::FinalFantasyResonance:
             // The bloom hack scales sampled RGBA values and corrupts this game's sprite colours.
             DefaultForTitle(Settings::values.fix_bloom_effects, false);
-            // Its CPU builds draw data from GPU results and the HUD blinks when it reads them
-            // early. The AYN Thor community setup (r/AynThor) keeps asynchronous GPU emulation and
-            // fixes that with accurate GPU emulation, safe DMA and reactive flushing instead, for
-            // near 30 FPS without flicker; dynamic vertex input keeps vertex formats valid.
-            // Asynchronous GPU emulation still lets the HUD blink on the Thor: run it synchronously.
-            DefaultForTitle(Settings::values.use_asynchronous_gpu_emulation, false);
+            // Asynchronous GPU emulation is what reaches 30 FPS on the AYN Thor. Its HUD used to
+            // drop out of single frames under it: buffers went back to the game before their
+            // composite ran (fixed in HardwareComposer). Accurate GPU emulation, safe DMA and
+            // reactive flushing keep its GPU readbacks in order; dynamic vertex input keeps vertex
+            // formats valid.
+            DefaultForTitle(Settings::values.use_asynchronous_gpu_emulation, true);
             DefaultForTitle(Settings::values.use_docked_mode, Settings::ConsoleMode::Docked);
             DefaultForTitle(Settings::values.cpu_clock, Settings::CpuClock::Boost);
             DefaultForTitle(Settings::values.vsync_mode, Settings::VSyncMode::Mailbox);
