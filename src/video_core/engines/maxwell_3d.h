@@ -3206,6 +3206,9 @@ private:
 
     void ProcessMacro(Core::System& system, u32 method, const u32* base_start, u32 amount, bool is_last_call);
 
+    /// Calls the macro whose arguments have been collected so far.
+    void CallPendingMacro(Core::System& system);
+
     u32 ProcessShadowRam(u32 method, u32 argument);
 
     void ProcessDirtyRegisters(u32 method, u32 argument);
