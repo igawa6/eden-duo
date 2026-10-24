@@ -70,7 +70,7 @@ class SaveTransferFragment : Fragment() {
     }
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
-        val span = (resources.configuration.screenWidthDp / 2 / 150).coerceIn(2, 5)
+        val span = 3 // games per row on each side
         binding.sourceGrid.layoutManager = GridLayoutManager(requireContext(), span)
         binding.sourceGrid.adapter = sourceAdapter
         binding.destinationGrid.layoutManager = GridLayoutManager(requireContext(), span)
