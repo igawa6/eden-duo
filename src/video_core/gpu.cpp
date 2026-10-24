@@ -318,8 +318,8 @@ struct GPU::Impl {
         return completed_composite >= composite_id;
     }
 
-    /// Waits for the last requested composite to have run. False when it didn't within
-    /// CompositeTimeout (its fences never signalled) or emulation is shutting down.
+    /// Waits for the last composite request to be registered on the GPU thread (not for the
+    /// composite itself, which may wait on fences: see IsCompositeDone). False on shutdown.
     bool WaitForComposite() {
         const u64 fence = pending_composite_fence;
         pending_composite_fence = 0;
@@ -329,14 +329,7 @@ struct GPU::Impl {
         if (fence != 0) {
             WaitForSyncOperation(fence);
         }
-        const u64 composite_id = last_composite_request;
-        std::unique_lock lk{composite_mutex};
-        composite_cv.wait_for(lk, CompositeTimeout, [this, composite_id] {
-            return completed_composite >= composite_id ||
-                   shutting_down.load(std::memory_order_relaxed);
-        });
-        return completed_composite >= composite_id &&
-               !shutting_down.load(std::memory_order_relaxed);
+        return true;
     }
 
     std::vector<u8> GetAppletCaptureBuffer() {
@@ -375,8 +368,6 @@ struct GPU::Impl {
 
     std::condition_variable sync_cv;
 
-    /// A composite whose fences don't signal within this is given up on (buffers are released).
-    static constexpr std::chrono::milliseconds CompositeTimeout{200};
     u64 last_composite_request{}; ///< Written by the composer thread only.
     u64 completed_composite{};
     std::mutex composite_mutex;

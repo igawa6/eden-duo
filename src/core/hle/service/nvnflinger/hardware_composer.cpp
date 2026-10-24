@@ -9,6 +9,7 @@
 
 #include <boost/container/small_vector.hpp>
 
+#include "common/logging.h"
 #include "core/hle/service/nvdrv/devices/nvdisp_disp0.h"
 #include "core/hle/service/nvnflinger/buffer_item.h"
 #include "core/hle/service/nvnflinger/buffer_item_consumer.h"
@@ -44,6 +45,9 @@ s32 NormalizeSwapInterval(f32* out_speed_scale, s32 swap_interval) {
 
 } // namespace
 
+// About 200 ms at the 60 Hz composer rate.
+constexpr u64 MaxHeldFrames = 12;
+
 HardwareComposer::HardwareComposer() = default;
 HardwareComposer::~HardwareComposer() = default;
 
@@ -71,11 +75,10 @@ u32 HardwareComposer::ComposeLocked(f32* out_speed_scale, Display& display,
         return 1;
     }
 
-    // Wait for the previous composite to have run, bounding the number of in-flight composites,
-    // then give back the buffers it read. If it never ran (its fences didn't signal in time, or
-    // we are shutting down), release anyway rather than starve the game of buffers.
-    const bool composited = nvdisp.WaitForComposite();
-    this->ReleaseFramebuffersLocked(display, nvdisp, !composited);
+    // Wait for the previous composite request to be registered, bounding the number of
+    // in-flight requests, then give back the buffers whose composite has run since.
+    const bool shutting_down = !nvdisp.WaitForComposite();
+    this->ReleaseFramebuffersLocked(display, nvdisp, shutting_down);
 
     // Determine the number of vsync periods to wait before composing again.
     std::optional<s32> swap_interval{};
@@ -183,14 +186,14 @@ u32 HardwareComposer::ComposeLocked(f32* out_speed_scale, Display& display,
     // composite is still pending (async GPU: it runs once the frame's fences signal) is released
     // at the next compose instead: handing it back earlier lets the game draw its next frame
     // into it before the composite reads it, which shows half-drawn frames (e.g. no HUD).
-    this->ReleaseFramebuffersLocked(display, nvdisp, false);
+    this->ReleaseFramebuffersLocked(display, nvdisp, shutting_down);
 
     return 1;
 }
 
 void HardwareComposer::ReleaseFramebuffersLocked(Display& display,
                                                  Nvidia::Devices::nvdisp_disp0& nvdisp,
-                                                 bool force) {
+                                                 bool shutting_down) {
     for (auto& [layer_id, framebuffer] : m_framebuffers) {
         if (!framebuffer.is_acquired) {
             continue;
@@ -205,9 +208,18 @@ void HardwareComposer::ReleaseFramebuffersLocked(Display& display,
             continue;
         }
 
-        if (!force && framebuffer.composite_id != 0 &&
+        // Hold a buffer until the composite that reads it has run; the composer never blocks on
+        // it, it checks again next vsync. A composite whose fences never signal would hold the
+        // buffer forever and starve the game, so give up after MaxHeldFrames.
+        if (!shutting_down && framebuffer.composite_id != 0 &&
             !nvdisp.IsCompositeDone(framebuffer.composite_id)) {
-            continue;
+            const u64 held = m_frame_number - framebuffer.last_acquire_frame;
+            if (held < MaxHeldFrames) {
+                continue;
+            }
+            LOG_WARNING(Service_Nvnflinger,
+                        "Releasing a buffer {} frames after acquire, before its composite ran",
+                        held);
         }
 
         layer->buffer_item_consumer->ReleaseBuffer(framebuffer.item, android::Fence::NoFence());

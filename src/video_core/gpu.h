@@ -225,7 +225,7 @@ public:
     u64 RequestComposite(std::vector<Tegra::FramebufferConfig>&& layers,
                          std::vector<Service::Nvidia::NvFence>&& fences);
 
-    /// Waits for the last requested composite to have run; false on timeout or shutdown.
+    /// Waits for the last composite request to be registered; false on shutdown.
     bool WaitForComposite();
 
     /// True once the composite has run, so the buffers it read can be reused.
