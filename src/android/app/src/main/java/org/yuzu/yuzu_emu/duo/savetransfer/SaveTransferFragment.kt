@@ -56,6 +56,7 @@ class SaveTransferFragment : Fragment() {
     private val selected = mutableSetOf<String>()
     private val copied = mutableSetOf<String>()
     private var busy = false
+    private val heldKeys = mutableSetOf<Int>()
 
     private val currentSource: SourceApp? get() = sources.getOrNull(sourceIndex)
 
@@ -82,8 +83,12 @@ class SaveTransferFragment : Fragment() {
         binding.transferButton.setOnClickListener { transfer(selectedEntries()) }
         binding.destinationName.text =
             requireContext().applicationInfo.loadLabel(requireContext().packageManager)
+    }
 
-        viewLifecycleOwner.lifecycleScope.launch { reload() }
+    /** Also picks up grants given or revoked, and apps installed or removed, while away. */
+    override fun onResume() {
+        super.onResume()
+        if (!busy) viewLifecycleOwner.lifecycleScope.launch { reload() }
     }
 
     override fun onDestroyView() {
@@ -93,12 +98,28 @@ class SaveTransferFragment : Fragment() {
 
     /**
      * Controller buttons, forwarded by the host activity from dispatchKeyEvent so they act the
-     * same whichever tile has focus. Returns true (consuming both press and release) for ours.
+     * same whichever tile has focus. A press we take, we take with its release; one we leave
+     * (A on Give access or Back) goes on to Android, which turns A into a click.
      */
     fun onControllerKey(event: KeyEvent): Boolean {
-        if (_binding == null || event.keyCode !in CONTROLLER_KEYS) return false
-        if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) handleKey(event.keyCode)
-        return true
+        if (_binding == null) return false
+        return when (event.action) {
+            KeyEvent.ACTION_DOWN -> {
+                if (event.repeatCount == 0 && ownsControllerKey(event.keyCode, focusOnSave())) {
+                    heldKeys.add(event.keyCode)
+                    handleKey(event.keyCode)
+                }
+                event.keyCode in heldKeys
+            }
+            KeyEvent.ACTION_UP -> heldKeys.remove(event.keyCode)
+            else -> false
+        }
+    }
+
+    private fun focusOnSave(): Boolean {
+        val focused = requireActivity().currentFocus ?: return true
+        return binding.sourceGrid.findContainingViewHolder(focused) != null ||
+            binding.destinationGrid.findContainingViewHolder(focused) != null
     }
 
     private fun handleKey(keyCode: Int) {
@@ -136,6 +157,10 @@ class SaveTransferFragment : Fragment() {
             sources = SaveSources.available(context, includeDuetPlus)
         }
         sourceIndex = sources.indexOfFirst { it.source.packageName == selectedPackage }.coerceAtLeast(0)
+        if (currentSource?.source?.packageName != selectedPackage) {
+            selected.clear()
+            copied.clear()
+        }
         showDestination()
         loadSource()
     }
@@ -254,15 +279,23 @@ class SaveTransferFragment : Fragment() {
         val app = currentSource ?: return
         if (uri == null) return
         if (uri.authority != app.source.authority) {
-            showSourceMessage(getString(R.string.save_transfer_wrong_folder, app.source.label), access = true)
+            // A toast: onResume, which comes next, redraws the source pane.
+            Toast.makeText(
+                requireContext(),
+                getString(R.string.save_transfer_wrong_folder, app.source.label),
+                Toast.LENGTH_LONG
+            ).show()
             return
         }
-        requireContext().contentResolver.takePersistableUriPermission(
-            uri,
-            Intent.FLAG_GRANT_READ_URI_PERMISSION
-        )
-        sources = sources.toMutableList().also { it[sourceIndex] = app.copy(grantedTree = uri.toString()) }
-        viewLifecycleOwner.lifecycleScope.launch { loadSource() }
+        try {
+            requireContext().contentResolver.takePersistableUriPermission(
+                uri,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION
+            )
+        } catch (e: SecurityException) {
+            Log.warning("[SaveTransfer] Cannot keep access to ${app.source.packageName}: ${e.message}")
+        }
+        // onResume, which comes next, reloads the sources with the new grant.
     }
 
     private fun transfer(entries: List<SaveEntry>) {
@@ -288,8 +321,7 @@ class SaveTransferFragment : Fragment() {
                 confirmed.mapNotNull { entry ->
                     try {
                         if (NativeLibrary.isRunning()) error(context.getString(R.string.save_transfer_running))
-                        target.backup(entry.titleId)
-                        target.replace(entry.titleId) { reader.copyTitle(entry, it) }
+                        target.transfer(entry.titleId) { reader.copyTitle(entry, it) }
                         copied.add(entry.titleId)
                         null
                     } catch (e: Exception) {
@@ -369,16 +401,19 @@ class SaveTransferFragment : Fragment() {
     companion object {
         const val ARG_INCLUDE_DUET_PLUS = "include_duet_plus"
         const val TAG = "SaveTransferFragment"
-        private val CONTROLLER_KEYS = setOf(
-            KeyEvent.KEYCODE_BUTTON_L1,
-            KeyEvent.KEYCODE_BUTTON_R1,
-            KeyEvent.KEYCODE_BUTTON_X,
-            KeyEvent.KEYCODE_BUTTON_A,
-            KeyEvent.KEYCODE_BUTTON_B
-        )
 
         fun newInstance(includeDuetPlus: Boolean) = SaveTransferFragment().apply {
             arguments = bundleOf(ARG_INCLUDE_DUET_PLUS to includeDuetPlus)
         }
     }
+}
+
+/**
+ * Whether the screen takes a controller button. L1/R1/B work anywhere; A and X act on saves, so
+ * they're the screen's only while the cursor is on a save (or nowhere): on a button, A clicks it.
+ */
+internal fun ownsControllerKey(keyCode: Int, focusOnSave: Boolean): Boolean = when (keyCode) {
+    KeyEvent.KEYCODE_BUTTON_L1, KeyEvent.KEYCODE_BUTTON_R1, KeyEvent.KEYCODE_BUTTON_B -> true
+    KeyEvent.KEYCODE_BUTTON_A, KeyEvent.KEYCODE_BUTTON_X -> focusOnSave
+    else -> false
 }

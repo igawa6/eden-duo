@@ -5,6 +5,9 @@ package org.yuzu.yuzu_emu.duo.savetransfer
 
 import java.io.File
 import java.io.IOException
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.atomic.AtomicBoolean
+import kotlin.concurrent.thread
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -112,5 +115,39 @@ class DestinationSavesTest {
         assertEquals(listOf("a"), File(root, title).list()!!.toList())
         assertFalse(root.list()!!.any { it.startsWith(".") })
         assertTrue(File(root, title).isDirectory)
+    }
+
+    @Test
+    fun transfersOfOneGameDontOverlap() {
+        // A screen closed mid-copy keeps copying; a reopened screen must not share its staging folder.
+        val root = profileRoot()
+        File(root, title).mkdirs()
+        File(root, "$title/a").writeText("old")
+        val firstWriting = CountDownLatch(1)
+        val releaseFirst = CountDownLatch(1)
+        val secondStarted = AtomicBoolean(false)
+        val first = thread {
+            DestinationSaves(root).transfer(title) {
+                File(it, "first").writeText("1")
+                firstWriting.countDown()
+                releaseFirst.await()
+            }
+        }
+        firstWriting.await()
+        val second = thread {
+            DestinationSaves(root).transfer(title) {
+                secondStarted.set(true)
+                File(it, "second").writeText("2")
+            }
+        }
+        Thread.sleep(300)
+        assertFalse("second transfer started while the first was copying", secondStarted.get())
+        releaseFirst.countDown()
+        first.join()
+        second.join()
+
+        assertEquals(listOf("second"), File(root, title).list()!!.toList())
+        assertEquals("1", File(backupRoot(), "2/$profile/$title/first").readText())
+        assertEquals("old", File(backupRoot(), "1/$profile/$title/a").readText())
     }
 }

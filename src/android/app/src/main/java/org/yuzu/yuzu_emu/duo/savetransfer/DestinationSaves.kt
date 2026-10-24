@@ -46,6 +46,15 @@ class DestinationSaves(private val profileRoot: File) {
         return backup
     }
 
+    /**
+     * Backs up then replaces one game's save. One transfer at a time in this process: a screen
+     * closed mid-copy keeps copying, and a reopened one must not share its staging folder.
+     */
+    // ponytail: one process-wide lock; per-title locks if parallel transfers ever matter.
+    fun transfer(titleId: String, write: (File) -> Unit): File? = synchronized(LOCK) {
+        backup(titleId).also { replace(titleId, write) }
+    }
+
     /** Writes the new save beside the old one, then swaps it in; on failure the old save stays. */
     fun replace(titleId: String, write: (File) -> Unit) {
         val live = File(profileRoot, titleId)
@@ -74,5 +83,6 @@ class DestinationSaves(private val profileRoot: File) {
 
     companion object {
         const val KEEP = 3
+        private val LOCK = Any()
     }
 }
