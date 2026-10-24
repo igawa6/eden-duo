@@ -2632,9 +2632,13 @@ void ParseManifestExtras(const nlohmann::json& json, Manifest& manifest) {
     if (manifest.font_atlas_src.empty()) {
         manifest.font_atlas_src = json.value("font_atlas_src", std::string{});
     }
+    // A BFFNT carries its own sheets, whether it is the file itself ("x.bffnt", "x.bffnt#...") or
+    // a member of an archive ("FontData.szs#TitleFont60.bffnt").
     if (manifest.font_atlas_src.empty() &&
-        EndsWithNoCase(manifest.font_metrics_src.substr(0, manifest.font_metrics_src.find('#')),
-                       ".bffnt")) {
+        (EndsWithNoCase(manifest.font_metrics_src.substr(0, manifest.font_metrics_src.find('#')),
+                        ".bffnt") ||
+         EndsWithNoCase(manifest.font_metrics_src.substr(manifest.font_metrics_src.rfind('#') + 1),
+                        ".bffnt"))) {
         manifest.font_atlas_src = manifest.font_metrics_src; // a BFFNT carries its own sheets
     }
 

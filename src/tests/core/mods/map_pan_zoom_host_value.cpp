@@ -186,3 +186,24 @@ TEST_CASE("MapViewHostValueFrom takes the last record of an area, like PublishMa
     REQUIRE(MapViewHostValueFrom("@map_view_cx:twice", records, 0, 0) == 2.0);
     REQUIRE(MapViewHostValueFrom("@map_view_rot:twice", records, 0, 0) == 20.0);
 }
+
+TEST_CASE("DSMod host flag values: FlagHostValueFrom answers a settings flag's live value",
+          "[dsmod][flags]") {
+    // The module's get_i64("@flag:<name>"): PublishFlags runs after the module each tick, so
+    // the answer comes from the live flag table, not the tick's snapshot.
+    std::unordered_map<std::string, s64> flags{{"smo.hide_top_hud", 1},
+                                               {"smo.show_uncollected_moons", 0}};
+    REQUIRE(FlagHostValueFrom("@flag:smo.hide_top_hud", flags) == 1);
+    REQUIRE(FlagHostValueFrom("@flag:smo.show_uncollected_moons", flags) == 0);
+    flags["smo.show_uncollected_moons"] = 1; // the settings toggle (mod_actions.cpp)
+    REQUIRE(FlagHostValueFrom("@flag:smo.show_uncollected_moons", flags) == 1);
+}
+
+TEST_CASE("DSMod host flag values: FlagHostValueFrom answers nullopt for anything else",
+          "[dsmod][flags]") {
+    const std::unordered_map<std::string, s64> flags{{"lp_anim", 1}};
+    REQUIRE_FALSE(FlagHostValueFrom("@flag:missing", flags).has_value());
+    REQUIRE_FALSE(FlagHostValueFrom("@flag:", flags).has_value());
+    REQUIRE_FALSE(FlagHostValueFrom("lp_anim", flags).has_value());
+    REQUIRE_FALSE(FlagHostValueFrom("@view_zoom:lp_anim", flags).has_value());
+}

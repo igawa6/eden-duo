@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    SPDX-FileCopyrightText: Copyright 2026 igawa6
+    SPDX-License-Identifier: GPL-3.0-or-later
+-->
+<!-- Eden Duo: the "Not in library" chip added to compact-grid cards of not-owned games. -->
+<com.google.android.material.textview.MaterialTextView xmlns:android="http://schemas.android.com/apk/res/android"
+    style="@style/Widget.Eden.UnownedChip" />

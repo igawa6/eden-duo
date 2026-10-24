@@ -14,6 +14,7 @@ target_sources(tests PRIVATE
     core/mods/firmware_version_leak.cpp
     core/mods/firmware_version_nca_path.cpp
     core/mods/map_pan_zoom_host_value.cpp
+    core/mods/profile_reload.cpp
     core/mods/map_room_category.cpp
     core/mods/image_fallback.cpp
     core/mods/mod_load_plan.cpp

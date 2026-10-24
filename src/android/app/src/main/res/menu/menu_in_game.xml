@@ -38,6 +38,12 @@
         android:icon="@drawable/ic_two_users"
         android:title="@string/multiplayer" />
 
+    <!-- Eden Duo: hide / show the second-screen companion -->
+    <item
+        android:id="@+id/menu_toggle_companion"
+        android:icon="@drawable/ic_dual_screen"
+        android:title="@string/companion_toggle_hide" />
+
     <item
         android:id="@+id/menu_load_amiibo"
         android:icon="@drawable/ic_nfc"

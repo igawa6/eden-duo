@@ -5,23 +5,23 @@
     <string name="emulator_import_short_description">Copy settings, keys, firmware, saves, installed content, mods, and game folders from Eden or a compatible Yuzu-based emulator.</string>
     <string name="emulator_import_description">Choose an installed emulator, its user folder, or a full user-data ZIP backup. Compatible settings, keys, firmware, installed content, mods, and a snapshot of saves will be copied. You can then choose to use existing game, update/DLC, and save folders or keep independent copies. Android will ask you to grant folder access. Private app preferences and features unique to another emulator may not transfer. Close the source emulator before importing.</string>
     <string name="emulator_import_choose_source">Choose source emulator</string>
-    <string name="emulator_import_other_folder">Other emulator / user folder…</string>
+    <string name="emulator_import_other_folder">Another emulator or its user folder…</string>
     <string name="emulator_import_zip">Choose user-data ZIP backup</string>
     <string name="emulator_import_add_folder">Add game or update/DLC folder</string>
     <string name="emulator_import_apply">Import into Eden Duo</string>
     <string name="emulator_import_restore">Restore previous Eden Duo data</string>
-    <string name="emulator_import_replace_warning">This replaces current Eden Duo settings, saves, and user data. A backup of the current data will be kept here so you can restore it. The source emulator and its files will remain unchanged.</string>
+    <string name="emulator_import_replace_warning">This replaces Eden Duo\'s current settings, saves and user data. Your current data is backed up first, and Restore previous Eden Duo data brings it back. The other emulator and its files are not changed.</string>
     <string name="emulator_import_copying">Copying data…</string>
     <string name="emulator_import_applying">Applying data…</string>
-    <string name="emulator_import_review">User data copied. Select any separate folders listed below to copy or use in place, or skip them, before importing. You can also add game or update/DLC folders.</string>
+    <string name="emulator_import_review">Your settings, keys, system files and mods are copied. Choose what to do with each folder below, then tap Import into Eden Duo. Nothing in Eden Duo changes until then.</string>
     <string name="emulator_import_summary">%1$d files · %2$s</string>
-    <string name="emulator_import_folder_copy">Choose %1$s: %2$s</string>
-    <string name="emulator_import_folder_copied">Copied %1$s: %2$s</string>
-    <string name="emulator_import_folder_skipped">Skipped %1$s: %2$s</string>
+    <string name="emulator_import_folder_copy">Choose for %1$s: %2$s</string>
+    <string name="emulator_import_folder_copied">Separate copy · %1$s: %2$s</string>
+    <string name="emulator_import_folder_skipped">Skipped · %1$s: %2$s</string>
     <string name="emulator_import_skip_folder">Skip this folder</string>
     <string name="emulator_import_skip_warning">This folder and its files will not be imported. Its folder reference will be removed from the imported settings.</string>
-    <string name="emulator_import_nand">NAND / firmware / installed content</string>
-    <string name="emulator_import_sdmc">SD card data / mods</string>
+    <string name="emulator_import_nand">System files and installed games (NAND)</string>
+    <string name="emulator_import_sdmc">Mods and game extras (SD card)</string>
     <string name="emulator_import_wrong_folder">Select the root user folder of %1$s in the file picker.</string>
     <string name="emulator_import_game_running">Close the running game and its settings before importing data.</string>
     <string name="emulator_import_cancelled">Copy cancelled. Current Eden Duo data was not changed.</string>
@@ -29,19 +29,30 @@
     <string name="emulator_import_complete">Import complete. Previous Eden Duo data was backed up. Any folders you skipped were not imported.</string>
     <string name="emulator_import_restored">Previous Eden Duo data restored. The data you replaced was backed up.</string>
     <string name="emulator_import_folder_mode">How should Eden Duo use this folder?</string>
-    <string name="emulator_import_copy_files">Copy files into Eden Duo (uses extra storage)</string>
-    <string name="emulator_import_use_existing">Use existing folder (keeps files in place)</string>
-    <string name="emulator_import_folder_linked">Using existing %1$s: %2$s</string>
+    <string name="emulator_import_copy_files">Separate copy in Eden Duo (uses extra storage)</string>
+    <string name="emulator_import_use_existing">Share with the other emulator (no extra space)</string>
+    <string name="emulator_import_folder_linked">Shared · %1$s: %2$s</string>
     <string name="emulator_import_link_failed">Select a separate game or update/DLC folder and allow permanent read access.</string>
     <string name="emulator_import_setup_description">Bring your settings and data from an existing emulator, or start fresh to set up keys, firmware, and games.</string>
     <string name="emulator_import_start_fresh">Start fresh</string>
-    <string name="emulator_import_source_saves">Source save data</string>
-    <string name="emulator_import_folder_explanation">Use existing folder keeps files where they are. Eden Duo opens that folder directly, so changes are shared with the other emulator. Copy files makes a separate copy inside Eden Duo and uses extra storage.
+    <string name="emulator_import_source_saves">Your saves</string>
+    <string name="emulator_import_folder_explanation">Share: Eden Duo reads the folder where it is. Files added or removed there show up in both emulators. Good for game and update/DLC folders.
 
-Settings, keys, firmware, installed NAND content, and mods are always copied so Eden Duo has its own app data.</string>
-    <string name="emulator_import_saves_explanation">Use existing folder shares saves with the source emulator. Progress and deletions in either app affect the same saves. Keep the source emulator closed while playing. Copy files keeps an independent set of saves inside Eden Duo.
+Separate copy: Eden Duo keeps its own copy and uses extra storage.
 
-Select the save-storage root containing the user and system folders, usually the source emulator\'s nand folder.</string>
-    <string name="emulator_import_copy_only">This data must be copied into Eden Duo: settings, keys, firmware, installed NAND content, and mods. Game, update/DLC, and save folders can be shared separately.</string>
+Settings, keys, system files and mods are always copied.</string>
+    <string name="emulator_import_saves_explanation">Separate copy (recommended): Eden Duo keeps its own saves. Playing in one emulator never changes the other.
+
+Share: both emulators use the same saves. Progress or a deleted save in either app changes both, so never run them at the same time.
+
+To bring in the save of a single game instead, use that game\'s properties → Save data → Import.
+
+When sharing, select the save folder that holds the user and system folders, usually the other emulator\'s nand folder.</string>
+    <string name="emulator_import_copy_only">Settings, keys, system files, installed games and mods are always copied into Eden Duo. Only game, update/DLC and save folders can be shared.</string>
     <string name="emulator_import_save_access_failed">Select a save-storage folder and allow permanent read and write access.</string>
+    <string name="emulator_import_restore_detail">Restore previous Eden Duo data (%1$s · %2$s)</string>
+    <string name="emulator_import_review_list">Folders:</string>
+    <string name="emulator_import_review_none">No separate folders. Everything is copied.</string>
+    <string name="emulator_import_profile_title">Which profile do you play as?</string>
+    <string name="emulator_import_profile_description">Saves belong to a user profile, and each profile has its own. Eden Duo is now using %1$s. Choose the profile whose saves you want to play; you can change it later in Profile Manager.</string>
 </resources>

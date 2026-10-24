@@ -21,6 +21,7 @@ import androidx.lifecycle.ViewModelProvider
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import org.yuzu.yuzu_emu.R
 import org.yuzu.yuzu_emu.databinding.DialogProgressBarBinding
+import org.yuzu.yuzu_emu.duo.DuoTaskFailure
 import org.yuzu.yuzu_emu.model.TaskViewModel
 import org.yuzu.yuzu_emu.utils.ViewUtils.setVisible
 import org.yuzu.yuzu_emu.utils.collect
@@ -82,6 +83,16 @@ class ProgressDialogFragment : DialogFragment() {
                         requireActivity().supportFragmentManager,
                         MessageDialogFragment.TAG
                     )
+
+                    // Eden Duo: the task threw (see TaskViewModel.runTask).
+                    is DuoTaskFailure -> MessageDialogFragment.newInstance(
+                        requireActivity(),
+                        titleId = R.string.duo_task_failed,
+                        descriptionString = getString(
+                            R.string.duo_task_failed_description,
+                            result.error.toString()
+                        )
+                    ).show(requireActivity().supportFragmentManager, MessageDialogFragment.TAG)
 
                     else -> {
                         // Do nothing

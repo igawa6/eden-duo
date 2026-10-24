@@ -337,6 +337,11 @@ void ModRuntime::InitializeGameModule() {
             // after the module).
             return rt.ModuleHostValues().GetI64(name).value_or(fallback);
         }
+        if (std::strncmp(name, "@flag:", 6) == 0) {
+            // A settings flag from the live table (FlagHostValueFrom). Same thread as every
+            // writer (taps, persist restore), unlike module_worker_host below.
+            return FlagHostValueFrom(name, rt.flags).value_or(fallback);
+        }
         if (rt.module_snapshot) {
             const auto value = rt.module_snapshot->ints.find(name);
             if (value != rt.module_snapshot->ints.end()) {

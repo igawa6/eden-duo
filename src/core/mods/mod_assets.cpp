@@ -349,6 +349,13 @@ bool ModRuntime::ModuleDecodeFont(std::span<const u8> bytes, FontMetrics& out) {
 }
 
 void ModRuntime::LoadFont() {
+    if (!font_ready && !manifest.font_metrics_src.empty() && manifest.font_atlas_src.empty()) {
+        // Without an atlas the package silently got the built-in font. Say so once.
+        LOG_WARNING(Core, "DSMod: font '{}' has no font_atlas (and is not a .bffnt); using the "
+                          "built-in font", manifest.font_metrics_src);
+        font_ready = true;
+        return;
+    }
     if (font_ready || manifest.font_metrics_src.empty() || manifest.font_atlas_src.empty() ||
         tick_count < font_retry_tick) {
         return;

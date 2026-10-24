@@ -107,6 +107,24 @@ object NoCompanion {
     }
 
     /**
+     * True when the add-on folder for [programId] holds a companion package that is turned off in
+     * Add-ons (the companion toggle names that case). False when unknown.
+     */
+    fun hasDisabledPackage(programId: String): Boolean {
+        val path = try {
+            NativeLibrary.getModLoadDirectory(programId)
+        } catch (e: Exception) {
+            return false
+        }
+        if (path.isEmpty()) return false
+        val folders = File(path).listFiles() ?: return false
+        val disabled = NativeConfig.getDisabledAddons(programId).toSet()
+        return folders.any {
+            it.isDirectory && it.name in disabled && File(it, "dualscreen/manifest.json").isFile
+        }
+    }
+
+    /**
      * False only when No Companion is Off (or App) and [programId] certainly has no companion.
      * [perGameId] is the title whose per-game value applies (null: global).
      */

@@ -9,7 +9,7 @@ package org.yuzu.yuzu_emu.duo
  * commit id the overlay showed before, so a beta or dev build still says which commit it is.
  */
 object DuoBuildLabel {
-    private val release = Regex("""\d+\.\d+\.\d+""")
+    private val release = Regex("""\d+\.\d+\.\d+(\.\d+)?""")
 
     /**
      * [versionName]: the app's versionName; [buildVersion]: the native build version

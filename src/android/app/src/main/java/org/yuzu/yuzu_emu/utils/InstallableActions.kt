@@ -10,6 +10,7 @@ import androidx.fragment.app.FragmentActivity
 import androidx.fragment.app.FragmentManager
 import org.yuzu.yuzu_emu.NativeLibrary
 import org.yuzu.yuzu_emu.R
+import org.yuzu.yuzu_emu.duo.SaveZipImport
 import org.yuzu.yuzu_emu.fragments.MessageDialogFragment
 import org.yuzu.yuzu_emu.fragments.ProgressDialogFragment
 import org.yuzu.yuzu_emu.model.AddonViewModel
@@ -349,47 +350,70 @@ object InstallableActions {
             activity,
             R.string.importing_user_data
         ) { progressCallback, _ ->
-            val checkStream = ZipInputStream(
-                BufferedInputStream(activity.contentResolver.openInputStream(result))
-            )
-            var isYuzuBackup = false
-            checkStream.use { stream ->
-                var ze: ZipEntry? = null
-                while (stream.nextEntry?.also { ze = it } != null) {
-                    val itemName = ze!!.name.trim()
-                    if (itemName == "/config/config.ini" || itemName == "config/config.ini") {
-                        isYuzuBackup = true
-                        return@use
-                    }
-                }
-            }
-            if (!isYuzuBackup) {
-                return@newInstance MessageDialogFragment.newInstance(
-                    activity,
-                    titleId = R.string.invalid_yuzu_backup,
-                    descriptionId = R.string.user_data_import_failed_description
-                )
-            }
-
-            NativeConfig.unloadGlobalConfig()
-            File(userDirectory).deleteRecursively()
-
+            // Eden Duo: check and unpack the zip next to the user folder first; the user folder
+            // and the global config are only touched once that worked, so a bad zip changes
+            // nothing (the task used to delete the user folder before unpacking).
+            val userDir = File(userDirectory)
+            val stagingDir = File(userDir.parentFile, "duo_user_data_import")
             try {
-                FileUtil.unzipToInternalStorage(
-                    result.toString(),
-                    File(userDirectory),
-                    progressCallback
-                )
-            } catch (_: Exception) {
-                return@newInstance MessageDialogFragment.newInstance(
-                    activity,
-                    titleId = R.string.import_failed,
-                    descriptionId = R.string.user_data_import_failed_description
-                )
-            }
+                try {
+                    val checkStream = ZipInputStream(
+                        BufferedInputStream(activity.contentResolver.openInputStream(result))
+                    )
+                    var isYuzuBackup = false
+                    checkStream.use { stream ->
+                        var ze: ZipEntry? = null
+                        while (stream.nextEntry?.also { ze = it } != null) {
+                            val itemName = ze!!.name.trim()
+                            if (itemName == "/config/config.ini" ||
+                                itemName == "config/config.ini"
+                            ) {
+                                isYuzuBackup = true
+                                return@use
+                            }
+                        }
+                    }
+                    if (!isYuzuBackup) {
+                        return@newInstance MessageDialogFragment.newInstance(
+                            activity,
+                            titleId = R.string.invalid_yuzu_backup,
+                            descriptionId = R.string.user_data_import_failed_description
+                        )
+                    }
 
-            NativeLibrary.initializeSystem(true)
-            NativeConfig.initializeGlobalConfig()
+                    stagingDir.deleteRecursively()
+                    FileUtil.unzipToInternalStorage(
+                        result.toString(),
+                        stagingDir,
+                        progressCallback
+                    )
+                } catch (e: Exception) {
+                    Log.error("[InstallableActions] User data import failed: $e")
+                    return@newInstance MessageDialogFragment.newInstance(
+                        activity,
+                        titleId = R.string.import_failed,
+                        descriptionId = R.string.user_data_import_failed_description
+                    )
+                }
+
+                NativeConfig.unloadGlobalConfig()
+                val replaced = try {
+                    SaveZipImport.replaceDirectory(stagingDir, userDir)
+                } finally {
+                    // The config is reloaded whatever happened, so the app never runs without it.
+                    NativeLibrary.initializeSystem(true)
+                    NativeConfig.initializeGlobalConfig()
+                }
+                if (!replaced) {
+                    return@newInstance MessageDialogFragment.newInstance(
+                        activity,
+                        titleId = R.string.import_failed,
+                        descriptionId = R.string.user_data_import_failed_description
+                    )
+                }
+            } finally {
+                stagingDir.deleteRecursively()
+            }
             gamesViewModel.reloadGames(false)
             driverViewModel.reloadDriverData()
 

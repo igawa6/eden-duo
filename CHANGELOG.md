@@ -19,6 +19,44 @@
 - Fix characters, lights and pillars glowing as white blobs in **Dragon Quest VII Reimagined** on Adreno 6xx/7xx (seen in the ship's hold at the start). Same cause as Fire Emblem Engage; **Fix FP16 Denormals** is now on automatically for it too.
 - Fix buildings, signs and props blinking in and out in **Double Dragon Revive** (stage 1 right after starting a new game). Its Unreal renderer culls objects with occlusion queries and reads their results once the frame's fence signals; at the default fence behavior that fence was released on the CPU before the GPU had written the results, so visible objects read as occluded for a frame. For this game the fence report now waits until the GPU has run the work and the query results are in memory.
 
+## 1.3.2.2
+
+**New**
+
+- "Dual-screen games not in your library" now also appears in the Carousel view, as greyscale cards after your games.
+
+**Fixed**
+
+- Save import and export (one game, or all saves) now use the profile you play as, matching what the dialog says; they always used the first profile.
+- For companion makers: a companion reading the game's save file found nothing on Android, because the app looked under a stale account instead of the profile the game uses.
+
+## 1.3.2.1
+
+**Fixed**
+
+- Eden Duo could close on start, and when returning from a game, with the library in the Compact grid or List view: a "Dual-screen games not in your library" tile was drawn with the Grid layout.
+
+## 1.3.2
+
+**New**
+
+- The game library ends with "Dual-screen games not in your library": every game that has an Eden Duo companion but is not in your games folders, as a greyscale tile with its cover art and a "Not in library" chip. Tapping one explains how to add it; the tiles cannot be launched. The section stays with the "dual-screen games only" filter, is hidden while you search or sort by recently played/added, and can be switched off with "Show dual-screen games not in your library" in the library's sort/filter menu. Cover art comes from [GameTDB](https://www.gametdb.com) (downloaded once per game and kept; without a connection the tile shows the game's name instead). Shown in the grid, compact grid and list views, not in the carousel.
+- In-game companion toggle: hide the companion during a game so the second screen can be used for another app, and bring it back where it was. Tap the game screen with four fingers, use the new "Companion" Quick Settings tile, or "Hide companion" in the in-game menu. The gesture can be changed to a 5-finger pinch or a 3-finger swipe down, or turned off (Settings -> Graphics -> Second Screen -> Companion toggle gesture); while a gesture is in progress its touches do not reach the game. Every game starts with the companion shown.
+
+**Fixed**
+
+- Based on the Eden nightly of 2026-10-19 (de7e6e01d4). It drops the per-request firmware version check that Eden added and removed again upstream: with firmware installed (for example a NAND folder shared with Eden), every system service call looked the version up from the NAND three times, which could slow games down.
+- Importing save data no longer crashes Eden Duo. A zip from Eden (the per-game save export, or any zip with a folder named after the game's title ID, at any depth, in any letter case) imports; any other zip shows what is wrong, including "This save belongs to title ..." when it holds another game's saves. Only the game's own folder is unpacked, and the current saves are replaced only after that worked.
+- "Import user data" no longer deletes the user folder before it has unpacked the backup: a damaged or unreadable zip now leaves your data and settings as they were and shows an error.
+- A failure inside any progress dialog task (importing, exporting, installing) now shows an error instead of closing the app.
+- A companion package whose manifest is larger than 4 MiB or is not valid JSON is no longer dropped without a word: the log names the file and why the package was not loaded.
+- For companion makers: a font given as a member of an archive (`…FontData.szs#Title.bffnt`) now finds its own glyph sheets like a plain `.bffnt`, and a font without an atlas is reported in the log instead of silently falling back to the built-in font.
+- For companion makers: `text_center_h` now centres a value widget's text vertically, as it already did for labels.
+- The library's companion badges and the "not in your library" section no longer disappear when GitHub briefly answers with an empty release list; the games that come with Eden Duo always keep their badge.
+- Import from another emulator is easier to follow: plain names for each kind of data, "Share with the other emulator" or "Separate copy" for every folder (saves default to a separate copy), and a confirmation that lists what happens to each folder. A running game is reported before the copy starts instead of after it, Restore shows when the backup was made and its size, and after an import with several user profiles Eden Duo asks which one you play as. Importing one game's save names the profile it goes into.
+- Games such as Link's Awakening and Castlevania run at full speed again: includes Eden's fix for a slowdown from its multithreading rework (upstream #4548).
+- For companion makers: a module can read a companion setting with `get_i64("@flag:<name>")` while it samples; it used to get the fallback value every time.
+
 ## 1.3.1
 
 **Fixed**

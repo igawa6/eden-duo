@@ -29,6 +29,9 @@ import org.yuzu.yuzu_emu.views.AuxPresentation
  * state at call time: [emulationActivity] is the game activity, [programId] the running game's id,
  * [secondScreenTitle] the title whose per-game Second Screen values apply (null for global) and
  * [emulationStarted] whether the game finished booting.
+ *
+ * The user can hide and show the window during the game (CompanionToggle); while it is hidden,
+ * nothing here shows it again on its own.
  */
 class DualScreenEmulationController(
     private val fragment: Fragment,
@@ -66,6 +69,9 @@ class DualScreenEmulationController(
     private var idleRecheckLeft = 0
     private val idleRecheck = Runnable { dropIdleCompanion() }
     private val auxHandler = Handler(Looper.getMainLooper())
+    // Eden Duo companion toggle (CompanionToggle): hidden by the user for this game session.
+    // While hidden nothing shows the window automatically -- showAuxPresentation is the one gate.
+    private val toggleState = CompanionToggleState()
     private val auxRetry = Runnable { if (auxWanted) showAuxPresentation() }
     private val auxDisplayStates = HashMap<Int, Int>()
     private val auxDisplayListener = object : DisplayManager.DisplayListener {
@@ -154,6 +160,7 @@ class DualScreenEmulationController(
 
     fun onStart() {
         auxWanted = true
+        CompanionToggle.register(this)
         displayManager()?.let { dm ->
             auxDisplayStates.clear()
             for (display in dm.displays) auxDisplayStates[display.displayId] = display.state
@@ -176,11 +183,72 @@ class DualScreenEmulationController(
     }
 
     fun onDestroyView() {
+        CompanionToggle.unregister(this)
         auxWanted = false
         auxHandler.removeCallbacks(auxRetry)
         auxHandler.removeCallbacks(idleRecheck)
         dismissAuxPresentation()
         AuxCompanionActivity.dismiss(fragment)
+    }
+
+    /** True while the user hid the second-screen window (CompanionToggle). */
+    val isCompanionHiddenByUser: Boolean get() = toggleState.hiddenByUser
+
+    /** The game screen's touch filter for the companion toggle gesture (InputOverlay). */
+    val gameTouch: CompanionToggle.GameTouch by lazy {
+        val density = fragment.context?.resources?.displayMetrics?.density ?: 1f
+        CompanionToggle.GameTouch(density) {
+            fragment.context?.let { CompanionToggle.toggle(it) }
+        }
+    }
+
+    /**
+     * One companion toggle (gesture, Quick Settings tile or in-game menu): hides or shows the
+     * second-screen window where it was, per CompanionToggleState's decision table. Never loads
+     * a companion and never starts the No Companion app. Main thread.
+     */
+    fun toggleCompanion(nowMs: Long): CompanionToggleOutcome {
+        val game = emulationActivity() ?: fragment.activity
+        val outcome = toggleState.toggle(nowMs, windowState(), game != null && hasSecondScreen(game))
+        Log.info("[EmulationFragment] DSMod: companion toggle: $outcome")
+        when (outcome) {
+            CompanionToggleOutcome.HIDDEN -> {
+                auxHandler.removeCallbacks(auxRetry)
+                val swapped = AuxCompanionActivity.isUpOrPending()
+                dismissAuxPresentation()
+                AuxCompanionActivity.dismiss(fragment)
+                // The companion activity (Swap Screens) had the focus on its display: give it
+                // back to the game rather than to whatever is left there.
+                if (swapped && game != null) CompanionApp.returnFocusToGame(game, "companion hidden")
+            }
+
+            CompanionToggleOutcome.SHOWN -> {
+                if (auxWanted) showAuxPresentation()
+                // Another app the user opened on the second screen may hold the focus.
+                if (game != null) CompanionApp.returnFocusToGame(game, "companion shown")
+            }
+
+            else -> Unit
+        }
+        return outcome
+    }
+
+    private fun windowState(): CompanionWindow {
+        if (!isAuxOff()) return CompanionWindow.SHOWN_WHEN_WANTED
+        val id = programId()
+        return if (id != null && NoCompanion.hasDisabledPackage(id)) {
+            CompanionWindow.NONE_ADDON_OFF
+        } else {
+            CompanionWindow.NONE_NO_COMPANION
+        }
+    }
+
+    /** A display for the second-screen window exists and is on (the window may be down). */
+    private fun hasSecondScreen(game: Activity): Boolean {
+        if (auxPresentation != null || AuxCompanionActivity.isUpOrPending()) return true
+        if (AuxCompanionActivity.isWantedFor(game)) return true // the default display
+        val own = AuxCompanionActivity.activityDisplayId(game)
+        return AuxPresentation.auxDisplayCandidates(game, own).isNotEmpty()
     }
 
     private fun displayManager(): DisplayManager? =
@@ -282,6 +350,7 @@ class DualScreenEmulationController(
     }
 
     private fun showAuxPresentation() {
+        if (!toggleState.allowsAutoShow()) return
         if (isAuxOff()) return
         // Eden Duo: with the game on a secondary display the second screen is the default one,
         // where a Presentation cannot go; AuxCompanionActivity hosts it there instead.

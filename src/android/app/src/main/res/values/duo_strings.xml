@@ -25,6 +25,25 @@
     <string name="companion_app_choose">Choose an app</string>
     <string name="companion_app_missing">%1$s (not installed)</string>
     <string name="companion_app_search">Search apps</string>
+    <!-- Eden Duo: in-game companion toggle -->
+    <string name="companion_toggle_gesture">Companion toggle gesture</string>
+    <string name="companion_toggle_gesture_description">Hides or shows the companion during a game, so the second screen can be used for another app. Also in the in-game menu and the Companion Quick Settings tile.</string>
+    <string name="companion_toggle_gesture_tap4">4-finger tap</string>
+    <string name="companion_toggle_gesture_pinch5">5-finger pinch</string>
+    <string name="companion_toggle_gesture_swipe3">3-finger swipe down</string>
+    <string name="companion_toggle_gesture_off">Off</string>
+    <string name="companion_toggle_hide">Hide companion</string>
+    <string name="companion_toggle_show">Show companion</string>
+    <string name="companion_toggle_hidden">Companion hidden</string>
+    <string name="companion_toggle_shown">Companion shown</string>
+    <string name="companion_toggle_no_companion">No companion for this game</string>
+    <string name="companion_toggle_addon_off">The companion is turned off for this game. Turn it on in Add-ons and restart the game.</string>
+    <string name="companion_toggle_no_screen">No second screen</string>
+    <string name="companion_toggle_no_game">No game running</string>
+    <string name="companion_tile">Companion</string>
+    <string name="companion_tile_shown">Shown</string>
+    <string name="companion_tile_hidden">Hidden</string>
+    <string name="companion_tile_no_game">No game</string>
     <string name="dual_screen_mods">Dual screen mods</string>
     <string name="dual_screen_companion_available">Companion available for %1$s</string>
     <string name="dual_screen_filter">Show games with dual screen companions</string>
@@ -70,4 +89,22 @@
     <string name="about_next_game_poll">Next game poll</string>
     <string name="eden_duo_kofi_link" translatable="false">https://ko-fi.com/igawa6</string>
     <string name="eden_duo_poll_link" translatable="false">https://ko-fi.com/polls/3rd-Poll-Next-Switch-Game-on-Eden-Duo-C7J128KB48</string>
+    <!-- The library's "not in your library" section. -->
+    <string name="companion_unowned_header">Dual-screen games not in your library</string>
+    <string name="companion_unowned_covers_credit">Covers: GameTDB</string>
+    <string name="companion_unowned_chip">Not in library</string>
+    <string name="companion_unowned_dialog_title">Dual-screen companion available</string>
+    <string name="companion_unowned_dialog_message">Add this game to your games folder to play it with its companion.</string>
+    <string name="companion_unowned_dialog_link">Companion list</string>
+    <string name="companion_unowned_tile_description">%1$s, not in your library. Dual-screen companion available.</string>
+    <string name="companion_unowned_setting">Show dual-screen games not in your library</string>
+    <string name="companion_unowned_link" translatable="false">https://github.com/igawa6/eden-duo-companions#readme</string>
+    <string name="about_cover_art_credit" translatable="false">Game cover art: GameTDB (https://www.gametdb.com)</string>
+    <!-- Importing saves and user data. -->
+    <string name="duo_task_failed">Something went wrong</string>
+    <string name="duo_task_failed_description">Eden Duo could not finish this task.\n\nDetails: %1$s</string>
+    <string name="duo_save_import_other_title">This save belongs to title %1$s, not to this game (%2$s). Import it from that game\'s properties.</string>
+    <string name="duo_save_import_error_description">The zip could not be read, so your current saves were kept.\n\nDetails: %1$s</string>
+    <string name="duo_save_import_failed_description">The saves in the zip could not be copied to %1$s.</string>
+    <string name="duo_save_import_profile">Saves are imported into the profile %1$s.</string>
 </resources>

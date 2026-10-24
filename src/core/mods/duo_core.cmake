@@ -88,6 +88,20 @@ target_sources(core PRIVATE
 # .upstream/DIVERGENCES.md; the package is added in externals/CMakeLists.txt).
 target_link_libraries(core PUBLIC unordered_dense::unordered_dense)
 
+# dsm:u is written against both upstream service handler-table forms. Eden #4480 replaced the
+# constructor-time RegisterHandlers table with a per-service FindRequest override built by
+# CreateStaticMap; select the form the service.h in this tree provides, and re-run the configure
+# when that header changes (an upstream merge can switch the form).
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/hle/service/service.h")
+file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/hle/service/service.h" DUO_HLE_STATIC_DISPATCH
+    REGEX "CreateStaticMap")
+if (DUO_HLE_STATIC_DISPATCH)
+    set_property(SOURCE hle/service/dsm/dsm.cpp APPEND PROPERTY
+        COMPILE_DEFINITIONS DUO_HLE_STATIC_DISPATCH=1)
+endif()
+unset(DUO_HLE_STATIC_DISPATCH)
+
 # Title-specific DSMod code is an optional, separately distributable shared object.  It is kept
 # outside the core archive so Eden APKs contain only the generic host and a package can provide a
 # module matching one title/build.  The module links no Eden target and receives all emulator

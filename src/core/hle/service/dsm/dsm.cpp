@@ -17,12 +17,19 @@ namespace Service::DSM {
 
 constexpr u32 DsmIpcVersion = 1;
 
+// The service handler table has two upstream forms. Eden before #4480 registers a runtime table
+// from the constructor (RegisterHandlers); from #4480 on, each service overrides FindRequest with
+// a compile-time map (CreateStaticMap). The Duo core CMake detects which one service.h provides
+// and defines DUO_HLE_STATIC_DISPATCH for this file only. Drop the RegisterHandlers branch once
+// the base nightly includes #4480 (see .upstream/DIVERGENCES.md).
 class IDsmUser final : public ServiceFramework<IDsmUser> {
 public:
     explicit IDsmUser(Core::System& system_);
     ~IDsmUser() override;
 
+#ifdef DUO_HLE_STATIC_DISPATCH
     std::optional<FunctionInfoBase> FindRequest(u32 key) override;
+#endif
 
 private:
     Result GetVersion(Out<u32> out_version);
@@ -33,6 +40,7 @@ private:
     Result BindLayer(u32 mode, u64 layer_id);
 };
 
+#ifdef DUO_HLE_STATIC_DISPATCH
 IDsmUser::IDsmUser(Core::System& system_) : ServiceFramework{system_, "dsm:u"} {}
 
 std::optional<ServiceFrameworkBase::FunctionInfoBase> IDsmUser::FindRequest(u32 key) {
@@ -46,6 +54,19 @@ std::optional<ServiceFrameworkBase::FunctionInfoBase> IDsmUser::FindRequest(u32 
     // clang-format on
     return HandlerTableGenerateWithFind(key, functions);
 }
+#else
+IDsmUser::IDsmUser(Core::System& system_) : ServiceFramework{system_, "dsm:u"} {
+    // clang-format off
+    static const FunctionInfo functions[] = {
+        {0, C<&IDsmUser::GetVersion>, "GetVersion"},
+        {1, C<&IDsmUser::GetAuxDisplayInfo>, "GetAuxDisplayInfo"},
+        {2, C<&IDsmUser::GetAuxTouch>, "GetAuxTouch"},
+        {3, C<&IDsmUser::BindLayer>, "BindLayer"},
+    };
+    // clang-format on
+    RegisterHandlers(functions);
+}
+#endif
 
 IDsmUser::~IDsmUser() = default;
 

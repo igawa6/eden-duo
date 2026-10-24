@@ -180,7 +180,7 @@ private:
     void StoreSettings();
     void SetSaveNeeded();
 
-    std::optional<FunctionInfoBase> FindRequest(u32 key) override;
+    Core::System& m_system;
     SystemSettings m_system_settings{};
     // Eden Duo: the firmware version is resolved once per service instance. It cannot change
     // while the process runs, and some games poll it thousands of times a second (each call

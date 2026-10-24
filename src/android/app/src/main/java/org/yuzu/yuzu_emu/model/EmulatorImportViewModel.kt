@@ -45,7 +45,12 @@ class EmulatorImportViewModel(application: Application) : AndroidViewModel(appli
         val files: Long = 0,
         val bytes: Long = 0,
         val folders: List<FolderChoice> = emptyList(),
-        val backupAvailable: Boolean = false
+        val backupAvailable: Boolean = false,
+        /** When the restorable backup was made (epoch ms) and its size, for the Restore button. */
+        val backupTime: Long = 0,
+        val backupBytes: Long = 0,
+        /** Set once by a finished import when more than one user profile exists. */
+        val askProfile: Boolean = false
     )
 
     private val context get() = getApplication<Application>()
@@ -69,15 +74,31 @@ class EmulatorImportViewModel(application: Application) : AndroidViewModel(appli
 
     /** Disk I/O: call off the main thread. */
     private fun refreshBackupAvailable() {
-        val available = runCatching { EmulatorDataImporter.latestBackup(userDirectory) != null }
-            .getOrDefault(false)
-        _state.update { it.copy(backupAvailable = available) }
+        val backup = runCatching { EmulatorDataImporter.latestBackup(userDirectory) }.getOrNull()
+        val time = backup?.let { File(it.directory, "state").lastModified() } ?: 0L
+        val bytes = backup?.let { session ->
+            runCatching { session.previous.walkTopDown().filter { it.isFile }.sumOf { it.length() } }
+                .getOrDefault(0L)
+        } ?: 0L
+        _state.update { it.copy(backupAvailable = backup != null, backupTime = time, backupBytes = bytes) }
+    }
+
+    /** Fails before a long copy instead of after it: the replacement needs no running game. */
+    private fun requireNoGameRunning() {
+        if (GameHelper.isEmulationActive() || NativeLibrary.isRunning()) {
+            throw IOException(context.getString(R.string.emulator_import_game_running))
+        }
+    }
+
+    fun profileShown() {
+        _state.update { it.copy(askProfile = false) }
     }
 
     fun prepare(tree: Uri, isZip: Boolean) {
         if (_state.value.busy) return
         val source = if (isZip) null else pendingSource
         runOperation(reset = true) {
+            requireNoGameRunning()
             if (source != null &&
                 (
                     tree.authority != source.authority || DocumentsContract.getTreeDocumentId(tree).trimEnd(
@@ -162,6 +183,7 @@ class EmulatorImportViewModel(application: Application) : AndroidViewModel(appli
             return
         }
         runOperation {
+            requireNoGameRunning()
             try {
                 EmulatorImportSources.copyTree(
                     context,
@@ -264,6 +286,7 @@ class EmulatorImportViewModel(application: Application) : AndroidViewModel(appli
                 applying = false,
                 ready = false,
                 complete = true,
+                askProfile = !restore && runCatching { NativeLibrary.getUserCount() > 1 }.getOrDefault(false),
                 message = context.getString(
                     if (restore) R.string.emulator_import_restored else R.string.emulator_import_complete
                 )
@@ -292,7 +315,8 @@ class EmulatorImportViewModel(application: Application) : AndroidViewModel(appli
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 action()
-            } catch (e: Exception) {
+            } catch (e: Throwable) {
+                // Also an Error (out of memory during a large copy): busy must clear either way.
                 if (reset) {
                     session?.discard()
                     session = null

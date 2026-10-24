@@ -283,6 +283,20 @@ object CompanionApp {
         }, FOCUS_LOST_DELAY_MS)
     }
 
+    /**
+     * The companion toggle (CompanionToggle) closed or opened the second-screen window: the
+     * game's task is brought back to the front shortly after, so input focus stays with the game
+     * (an app the user opened on the second screen may hold it) -- only while the game is still
+     * started, as above.
+     */
+    fun returnFocusToGame(game: Activity, why: String) {
+        val ref = WeakReference(game)
+        val taskId = game.taskId
+        handler.postDelayed({
+            if (gameStarted(ref.get())) moveToFront(taskId, why)
+        }, FOCUS_LOST_DELAY_MS)
+    }
+
     private fun moveToFront(taskId: Int, why: String) {
         val context = focusContext ?: YuzuApplication.appContext
         val am = context.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager ?: return

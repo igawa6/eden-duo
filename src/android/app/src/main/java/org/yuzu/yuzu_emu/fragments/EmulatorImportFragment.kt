@@ -26,6 +26,7 @@ import androidx.fragment.app.Fragment
 import androidx.fragment.app.viewModels
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import org.yuzu.yuzu_emu.NativeLibrary
 import org.yuzu.yuzu_emu.R
 import org.yuzu.yuzu_emu.databinding.FragmentEmulatorImportBinding
 import org.yuzu.yuzu_emu.features.settings.ui.SettingsSubscreenActivity
@@ -142,6 +143,23 @@ class EmulatorImportFragment : Fragment() {
             binding.addFolder.isVisible = state.ready && !state.complete
             binding.addFolder.isEnabled = !state.busy && !state.reviewLocked
             binding.restore.isVisible = !state.busy && state.backupAvailable
+            binding.restore.text = if (state.backupTime > 0) {
+                getString(
+                    R.string.emulator_import_restore_detail,
+                    android.text.format.DateUtils.formatDateTime(
+                        requireContext(),
+                        state.backupTime,
+                        android.text.format.DateUtils.FORMAT_SHOW_DATE or android.text.format.DateUtils.FORMAT_SHOW_TIME
+                    ),
+                    Formatter.formatShortFileSize(requireContext(), state.backupBytes)
+                )
+            } else {
+                getString(R.string.emulator_import_restore)
+            }
+            if (state.askProfile) {
+                model.profileShown()
+                chooseProfile()
+            }
             if (displayedFolders != state.folders || foldersWereBusy != state.busy) {
                 renderFolders(state)
             }
@@ -165,31 +183,9 @@ class EmulatorImportFragment : Fragment() {
         foldersWereBusy = state.busy
         binding.folders.removeAllViews()
         state.folders.forEach { choice ->
-            val name = if (choice.folder.original == "default:saves") {
-                getString(R.string.emulator_import_source_saves)
-            } else Uri.decode(choice.folder.original).substringAfterLast('/').takeLast(100)
-            val kind = when (choice.folder.kind) {
-                EmulatorImportConfig.Kind.GAMES -> R.string.games
-                EmulatorImportConfig.Kind.CONTENT -> R.string.updates_and_dlc
-                EmulatorImportConfig.Kind.NAND -> R.string.emulator_import_nand
-                EmulatorImportConfig.Kind.SDMC -> R.string.emulator_import_sdmc
-                EmulatorImportConfig.Kind.SAVES -> R.string.save_data
-            }
             binding.folders.addView(
                 MaterialButton(requireContext()).apply {
-                    text = getString(
-                        if (choice.linkedUri != null) {
-                            R.string.emulator_import_folder_linked
-                        } else if (choice.copied) {
-                            R.string.emulator_import_folder_copied
-                        } else if (choice.skipped) {
-                            R.string.emulator_import_folder_skipped
-                        } else {
-                            R.string.emulator_import_folder_copy
-                        },
-                        getString(kind),
-                        name
-                    )
+                    text = folderLabel(choice)
                     isEnabled = !state.busy && !choice.resolved && !state.complete
                     setOnClickListener {
                         model.pendingFolder = choice.folder
@@ -226,6 +222,50 @@ class EmulatorImportFragment : Fragment() {
         }
     }
 
+    private fun folderLabel(choice: EmulatorImportViewModel.FolderChoice): String {
+        val name = if (choice.folder.original == "default:saves") {
+            getString(R.string.emulator_import_source_saves)
+        } else Uri.decode(choice.folder.original).substringAfterLast('/').takeLast(100)
+        val kind = when (choice.folder.kind) {
+            EmulatorImportConfig.Kind.GAMES -> R.string.games
+            EmulatorImportConfig.Kind.CONTENT -> R.string.updates_and_dlc
+            EmulatorImportConfig.Kind.NAND -> R.string.emulator_import_nand
+            EmulatorImportConfig.Kind.SDMC -> R.string.emulator_import_sdmc
+            EmulatorImportConfig.Kind.SAVES -> R.string.save_data
+        }
+        return getString(
+            if (choice.linkedUri != null) {
+                R.string.emulator_import_folder_linked
+            } else if (choice.copied) {
+                R.string.emulator_import_folder_copied
+            } else if (choice.skipped) {
+                R.string.emulator_import_folder_skipped
+            } else {
+                R.string.emulator_import_folder_copy
+            },
+            getString(kind),
+            name
+        )
+    }
+
+    /** After an import with several profiles: saves are per profile, so let the player pick. */
+    private fun chooseProfile() {
+        val users = runCatching { NativeLibrary.getAllUsers()?.toList() }.getOrNull().orEmpty()
+        if (users.size < 2) return
+        val names = users.map { NativeLibrary.getUserUsername(it)?.takeIf { n -> n.isNotBlank() } ?: it }
+        val current = users.indexOf(NativeLibrary.getCurrentUser()).coerceAtLeast(0)
+        var selected = current
+        MaterialAlertDialogBuilder(requireContext())
+            .setTitle(R.string.emulator_import_profile_title)
+            .setMessage(getString(R.string.emulator_import_profile_description, names[current]))
+            .setSingleChoiceItems(names.toTypedArray(), current) { _, which -> selected = which }
+            .setPositiveButton(android.R.string.ok) { _, _ ->
+                if (selected != current) NativeLibrary.setCurrentUser(users[selected])
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
+    }
+
     private fun dp(value: Int) = (value * resources.displayMetrics.density).toInt()
 
     private fun chooseFolderMode(kind: EmulatorImportConfig.Kind, initial: Uri?) {
@@ -257,7 +297,8 @@ class EmulatorImportFragment : Fragment() {
                 setText(R.string.emulator_import_copy_files)
                 minHeight = dp(56)
             })
-            check(getChildAt(0).id)
+            // Saves default to a separate copy: sharing them lets either app overwrite progress.
+            check(getChildAt(if (kind == EmulatorImportConfig.Kind.SAVES) 1 else 0).id)
         }
         val content = LinearLayout(requireContext()).apply {
             orientation = LinearLayout.VERTICAL
@@ -286,7 +327,20 @@ class EmulatorImportFragment : Fragment() {
             .setTitle(
                 if (restore) R.string.emulator_import_restore else R.string.emulator_import_apply
             )
-            .setMessage(R.string.emulator_import_replace_warning)
+            .setMessage(
+                if (restore) {
+                    getString(R.string.emulator_import_replace_warning)
+                } else {
+                    val folders = model.state.value.folders
+                    getString(R.string.emulator_import_replace_warning) + "\n\n" +
+                        if (folders.isEmpty()) {
+                            getString(R.string.emulator_import_review_none)
+                        } else {
+                            getString(R.string.emulator_import_review_list) + "\n" +
+                                folders.joinToString("\n") { "• " + folderLabel(it) }
+                        }
+                }
+            )
             .setPositiveButton(
                 if (restore) R.string.emulator_import_restore else R.string.emulator_import_apply
             ) { _, _ ->

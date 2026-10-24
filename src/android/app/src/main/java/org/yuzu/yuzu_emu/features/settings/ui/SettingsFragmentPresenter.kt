@@ -554,7 +554,7 @@ class SettingsFragmentPresenter(
             add(HeaderSetting(R.string.hacks))
 
             add(BooleanSetting.SKIP_CPU_INNER_INVALIDATION.key)
-            add(BooleanSetting.NCE_RUNTIME_NRO_PATCH.key)
+            add(BooleanSetting.NCE_INVALIDATION_GPU_READBACK.key)
             add(BooleanSetting.FIX_BLOOM_EFFECTS.key)
             add(BooleanSetting.FIX_FP16_DENORMALS.key)
             add(BooleanSetting.EMULATE_BGR565.key)

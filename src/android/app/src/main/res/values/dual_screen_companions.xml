@@ -1,5 +1,5 @@
 <resources xmlns:tools="http://schemas.android.com/tools" tools:ignore="MissingTranslation">
-    <!-- Published companions as of 2026-10-12, used before the first online catalog refresh. -->
+    <!-- Published companions as of 2026-10-20, used before the first online catalog refresh. -->
     <string-array name="dual_screen_supported_title_ids" translatable="false">
         <item>01005CA01580E000</item>
         <item>010093801237C000</item>
@@ -14,6 +14,10 @@
         <item>0100F9F00C696000</item>
         <item>01003E601E324000</item>
         <item>0100C510166F0000</item>
+        <item>01001B300B9BE000</item>
+        <item>010086500D3C8000</item>
+        <item>0100C2901153C000</item>
+        <item>0100D04004176000</item>
     </string-array>
 
     <style name="Widget.Eden.DualScreenBadge" parent="">
@@ -44,4 +48,30 @@
     <color name="dual_screen_badge_current">#2E7D32</color>
     <color name="dual_screen_badge_available">#1565C0</color>
     <dimen name="dual_screen_fetch_option_spacing">8dp</dimen>
+
+    <!-- The library's "not in your library" section (UnownedCompanionGamesAdapter). -->
+    <item name="companion_cover_title" type="id" />
+    <item name="companion_unowned_toggle" type="id" />
+    <item name="companion_unowned_tile_type" type="id" />
+    <color name="companion_unowned_fallback">#28282C</color>
+    <color name="companion_unowned_glyph">#96969B</color>
+    <color name="companion_unowned_title">#A0A0A0</color>
+    <color name="companion_unowned_header">#C8C8C8</color>
+    <color name="companion_unowned_credit">#8C8C8C</color>
+    <color name="companion_unowned_divider">#33FFFFFF</color>
+    <!-- Space under the section header; with the tile card insets about the H2 mockup gap
+         (normal gap + 30 px at the Thor 1080p screen). -->
+    <dimen name="companion_unowned_header_gap">8dp</dimen>
+    <style name="Widget.Eden.UnownedChip" parent="">
+        <item name="android:layout_width">wrap_content</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:background">@drawable/companion_unowned_chip_background</item>
+        <item name="android:paddingHorizontal">8dp</item>
+        <item name="android:paddingVertical">2dp</item>
+        <item name="android:text">@string/companion_unowned_chip</item>
+        <item name="android:textColor">@android:color/white</item>
+        <item name="android:textSize">11sp</item>
+        <item name="android:maxLines">1</item>
+        <item name="android:elevation">2dp</item>
+    </style>
 </resources>

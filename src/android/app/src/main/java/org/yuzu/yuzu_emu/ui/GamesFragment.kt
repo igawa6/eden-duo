@@ -26,6 +26,7 @@ import androidx.fragment.app.activityViewModels
 import androidx.navigation.fragment.findNavController
 import androidx.preference.PreferenceManager
 import androidx.recyclerview.widget.RecyclerView
+import androidx.recyclerview.widget.ConcatAdapter
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
@@ -71,6 +72,8 @@ class GamesFragment : Fragment() {
     private val gamesViewModel: GamesViewModel by activityViewModels()
     private val homeViewModel: HomeViewModel by activityViewModels()
     private lateinit var gameAdapter: GameAdapter
+    // Eden Duo: companion games not in the library, after the games (UnownedCompanionGamesAdapter).
+    private lateinit var unownedAdapter: org.yuzu.yuzu_emu.duo.UnownedCompanionGamesAdapter
 
     private val preferences =
         PreferenceManager.getDefaultSharedPreferences(YuzuApplication.appContext)
@@ -117,6 +120,8 @@ class GamesFragment : Fragment() {
         gameAdapter = GameAdapter(
             requireActivity() as AppCompatActivity
         )
+        unownedAdapter = org.yuzu.yuzu_emu.duo.UnownedCompanionGamesAdapter(requireActivity())
+        unownedAdapter.cardSizeProvider = { gameAdapter.cardSize }
 
         applyGridGamesBinding()
 
@@ -225,8 +230,18 @@ class GamesFragment : Fragment() {
             if (savedViewType != GameAdapter.VIEW_TYPE_CAROUSEL) {
                 (this as? CarouselRecyclerView)?.setupCarousel(false)
             }
-            adapter = gameAdapter
+            // Eden Duo: the "not in your library" section follows the games, its header a full
+            // row (the carousel has no header and sizes its tiles like the game cards).
+            unownedAdapter.setStyle(savedViewType)
+            (layoutManager as? GridLayoutManager)?.let { grid ->
+                grid.spanSizeLookup = object : GridLayoutManager.SpanSizeLookup() {
+                    override fun getSpanSize(position: Int): Int =
+                        if (unownedAdapter.isHeader(position - gameAdapter.itemCount)) grid.spanCount else 1
+                }
+            }
+            adapter = ConcatAdapter(gameAdapter, unownedAdapter)
             lastViewType = savedViewType
+            filterAndSearch() // Eden Duo: the empty notice depends on the section's visibility.
         }
     }
 
@@ -259,8 +274,19 @@ class GamesFragment : Fragment() {
     }
 
     private fun submitGameList(games: List<Game>) {
-        dualScreenFilter.updateNotice(binding.noticeText, games)
-        val adapter = (binding.gridGames as? RecyclerView)?.adapter as? GameAdapter
+        // Eden Duo: the "not in your library" section (hidden while searching).
+        val unowned = dualScreenFilter.unowned(
+            binding.searchText.text.toString(),
+            currentFilter == View.NO_ID || currentFilter == R.id.alphabetical
+        )
+        unownedAdapter.submit(unowned)
+        dualScreenFilter.updateNotice(
+            binding.noticeText,
+            games,
+            unowned.isNotEmpty()
+        )
+        val attached = (binding.gridGames as? RecyclerView)?.adapter
+        val adapter = gameAdapter.takeIf { attached === it || attached is ConcatAdapter }
         if (adapter == null) {
             schedulePostReloadListSettle()
             return
@@ -383,6 +409,7 @@ class GamesFragment : Fragment() {
     private fun showFilterMenu(anchor: View) {
         val popup = PopupMenu(requireContext(), anchor)
         popup.menuInflater.inflate(R.menu.menu_game_filters, popup.menu)
+        dualScreenFilter.addMenuItem(popup.menu)
 
         // Set checked state based on current filter
         when (currentFilter) {
@@ -395,6 +422,7 @@ class GamesFragment : Fragment() {
         }
 
         popup.setOnMenuItemClickListener { item ->
+            if (dualScreenFilter.onMenuItem(item)) return@setOnMenuItemClickListener true
             currentFilter = item.itemId
             preferences.edit { putInt(PREF_SORT_TYPE, currentFilter) }
             filterAndSearch()

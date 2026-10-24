@@ -130,8 +130,15 @@ class CarouselRecyclerView @JvmOverloads constructor(
         }
     }
 
+    // Eden Duo: the library's adapter is a ConcatAdapter (games, then the companion games not
+    // in the library); the carousel's card geometry still comes from the GameAdapter in it.
+    private fun gameAdapterOf(adapter: Adapter<*>?): GameAdapter? =
+        adapter as? GameAdapter
+            ?: (adapter as? androidx.recyclerview.widget.ConcatAdapter)?.adapters
+                ?.firstNotNullOfOrNull { it as? GameAdapter }
+
     override fun setAdapter(adapter: Adapter<*>?) {
-        val oldAdapter = this.adapter as? GameAdapter
+        val oldAdapter = gameAdapterOf(this.adapter)
 
         if (oldAdapter !== adapter) {
             oldAdapter?.unregisterAdapterDataObserver(carouselAdapterObserver)
@@ -139,7 +146,7 @@ class CarouselRecyclerView @JvmOverloads constructor(
 
         super.setAdapter(adapter)
 
-        (adapter as? GameAdapter)?.registerAdapterDataObserver(carouselAdapterObserver)
+        gameAdapterOf(adapter)?.registerAdapterDataObserver(carouselAdapterObserver)
         updateCardGeometry()
         applyCarouselPadding()
     }
@@ -208,8 +215,8 @@ class CarouselRecyclerView @JvmOverloads constructor(
     }
 
     fun updateChildScaleAndAlphaForPosition(child: View) {
-        val cardSize = (adapter as? GameAdapter ?: return).cardSize
-        val position = getChildViewHolder(child).bindingAdapterPosition
+        val cardSize = (gameAdapterOf(adapter) ?: return).cardSize
+        val position = getChildViewHolder(child).absoluteAdapterPosition
         if (position == RecyclerView.NO_POSITION || cardSize <= 0) {
             return // No valid position or card size
         }
@@ -310,7 +317,7 @@ class CarouselRecyclerView @JvmOverloads constructor(
     private fun updateCardGeometry() {
         if (!isCarouselMode || height <= 0) return
 
-        val gameAdapter = adapter as? GameAdapter ?: return
+        val gameAdapter = gameAdapterOf(adapter) ?: return
         val windowInsets = latestWindowInsets ?: ViewCompat.getRootWindowInsets(this) ?: return
 
         if (cardGeometryInitialized && !hasWindowFocus()) return
@@ -345,7 +352,7 @@ class CarouselRecyclerView @JvmOverloads constructor(
     private fun applyCarouselPadding() {
         if (!isCarouselMode) return
 
-        val gameAdapter = adapter as? GameAdapter ?: return
+        val gameAdapter = gameAdapterOf(adapter) ?: return
         val cardSize = gameAdapter.cardSize
         if (cardSize <= 0 || bottomInset < 0) return
 
@@ -361,7 +368,7 @@ class CarouselRecyclerView @JvmOverloads constructor(
 
     fun setupCarousel(enabled: Boolean) {
         if (enabled) {
-            val gameAdapter = adapter as? GameAdapter ?: return
+            val gameAdapter = gameAdapterOf(adapter) ?: return
             if (gameAdapter.cardSize == 0) return
             if (bottomInset < 0) return
 

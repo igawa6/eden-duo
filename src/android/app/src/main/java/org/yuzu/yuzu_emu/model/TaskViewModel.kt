@@ -10,6 +10,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import org.yuzu.yuzu_emu.duo.runGuardedTask
+import org.yuzu.yuzu_emu.utils.Log
 
 class TaskViewModel : ViewModel() {
     val result: StateFlow<Any> get() = _result
@@ -59,16 +61,19 @@ class TaskViewModel : ViewModel() {
         _isRunning.value = true
 
         viewModelScope.launch(Dispatchers.IO) {
-            val res = task(
-                { max, progress ->
-                    _maxProgress.value = max.toDouble()
-                    _progress.value = progress.toDouble()
-                    return@task cancelled.value
-                },
-                { message ->
-                    _message.value = message
-                }
-            )
+            // Eden Duo: a task that throws ends with a DuoTaskFailure instead of crashing the app.
+            val res = runGuardedTask({ Log.error("[TaskViewModel] Task failed: $it") }) {
+                task(
+                    { max, progress ->
+                        _maxProgress.value = max.toDouble()
+                        _progress.value = progress.toDouble()
+                        return@task cancelled.value
+                    },
+                    { message ->
+                        _message.value = message
+                    }
+                )
+            }
             _result.value = res
             _isComplete.value = true
             _isRunning.value = false

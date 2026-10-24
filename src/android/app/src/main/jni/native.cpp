@@ -1719,10 +1719,10 @@ jstring Java_org_yuzu_yuzu_1emu_NativeLibrary_getSavePath(JNIEnv* env, jobject j
 
     auto& system = EmulationSession::GetInstance().System();
 
+    // Eden Duo: the selected profile (the one a game runs as), not always profile 0.
     Service::Account::ProfileManager manager;
-    // TODO: Pass in a selected user once we get the relevant UI working
-    const auto user_id = manager.GetUser(static_cast<std::size_t>(0));
-    ASSERT(user_id);
+    const std::optional<Common::UUID> user_id = manager.GetLastOpenedUser();
+    ASSERT(user_id && user_id->IsValid());
 
     const auto saveDir = Common::FS::GetEdenPath(Common::FS::EdenPath::SaveDir);
     auto vfsSaveDir = system.GetFilesystem()->OpenDirectory(Common::FS::PathToUTF8String(saveDir),
@@ -1737,10 +1737,10 @@ jstring Java_org_yuzu_yuzu_1emu_NativeLibrary_getSavePath(JNIEnv* env, jobject j
 jstring Java_org_yuzu_yuzu_1emu_NativeLibrary_getDefaultProfileSaveDataRoot(JNIEnv* env,
                                                                             jobject jobj,
                                                                             jboolean jfuture) {
+    // Eden Duo: the selected profile (the one a game runs as), not always profile 0.
     Service::Account::ProfileManager manager;
-    // TODO: Pass in a selected user once we get the relevant UI working
-    const auto user_id = manager.GetUser(static_cast<std::size_t>(0));
-    ASSERT(user_id);
+    const std::optional<Common::UUID> user_id = manager.GetLastOpenedUser();
+    ASSERT(user_id && user_id->IsValid());
 
     const auto user_save_data_root =
         FileSys::SaveDataFactory::GetUserGameSaveDataRoot(user_id->AsU128(), jfuture);

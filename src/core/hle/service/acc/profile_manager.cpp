@@ -485,6 +485,17 @@ void ProfileManager::ResetUserSaveFile()
 {
     RemoveAllProfiles();
     ParseUserSaveFile();
+    // Eden Duo: re-open the selected user, as the constructor does. A manager built before the
+    // user folder was known kept a stale (random) last-opened user across this reload, so
+    // anything asking it for the running account (the companion save reader) got the wrong one.
+    if (user_count > 0) {
+        auto current =
+            std::clamp<int>(static_cast<s32>(Settings::values.current_user), 0, MAX_USERS - 1);
+        if (!UserExistsIndex(current)) {
+            current = 0;
+        }
+        OpenUser(*GetUser(current));
+    }
 }
 
 std::vector<UUID> ProfileManager::FindExistingProfileUUIDs()

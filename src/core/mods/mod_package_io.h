@@ -8,6 +8,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include "common/logging.h"
 #include "core/file_sys/vfs/vfs.h"
 
 namespace Core::Mods {
@@ -22,7 +23,14 @@ inline std::optional<std::vector<u8>> ReadPackageBytes(const FileSys::VirtualFil
         return std::nullopt;
     }
     const auto size = file->GetSize();
-    if (size == 0 || size > limit) {
+    if (size == 0) {
+        return std::nullopt;
+    }
+    if (size > limit) {
+        // A package whose metadata is over the cap was dropped without a word: the game simply
+        // showed "no dual-screen package". Say which file and by how much.
+        LOG_WARNING(Core, "DSMod: {} is {} bytes, over the {} byte limit; the package is not loaded",
+                    file->GetName(), size, limit);
         return std::nullopt;
     }
     std::vector<u8> bytes(size);
@@ -40,6 +48,7 @@ inline std::optional<nlohmann::json> ReadPackageJson(const FileSys::VirtualFile&
     }
     auto json = nlohmann::json::parse(bytes->begin(), bytes->end(), nullptr, false);
     if (json.is_discarded()) {
+        LOG_WARNING(Core, "DSMod: {} is not valid JSON; the package is not loaded", file->GetName());
         return std::nullopt;
     }
     return json;

@@ -75,6 +75,17 @@ object SecondScreenSettings {
                     add(CompanionApp.pickerItem(context, gameId))
                 }
             }
+            if (!perGame) {
+                add(
+                    SingleChoiceSetting(
+                        CompanionToggle.gestureSetting,
+                        titleId = R.string.companion_toggle_gesture,
+                        descriptionId = R.string.companion_toggle_gesture_description,
+                        choicesId = R.array.companionToggleGestureEntries,
+                        valuesId = R.array.companionToggleGestureValues
+                    )
+                )
+            }
         }
     }
 }

@@ -125,6 +125,18 @@ SPDX-License-Identifier: GPL-3.0-or-later
             android:taskAffinity="${applicationId}.companion"
             android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|uiMode|density|keyboard|keyboardHidden|navigation|locale|layoutDirection|fontScale" />
 
+        <!-- Eden Duo: Quick Settings tile that hides / shows the running game's companion. -->
+        <service
+            android:name="org.yuzu.yuzu_emu.duo.CompanionTileService"
+            android:exported="true"
+            android:icon="@drawable/ic_dual_screen"
+            android:label="@string/companion_tile"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
+
         <service android:name="org.yuzu.yuzu_emu.utils.ForegroundService" android:foregroundServiceType="specialUse">
             <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="Keep emulation running in background"/>
         </service>

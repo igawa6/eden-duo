@@ -83,6 +83,10 @@ class InputOverlay(context: Context, attrs: AttributeSet?) :
     // External listener for EmulationFragment joypad overlay auto-hide
     var touchEventListener: ((MotionEvent) -> Unit)? = null
 
+    // Eden Duo: companion toggle gesture (CompanionToggle.GameTouch); false keeps the event
+    // away from the emulated touchscreen.
+    var touchscreenFilter: ((MotionEvent) -> Boolean)? = null
+
     override fun onCheckIsTextEditor(): Boolean = true
 
     override fun onCreateInputConnection(outAttrs: EditorInfo): InputConnection {
@@ -231,6 +235,7 @@ class InputOverlay(context: Context, attrs: AttributeSet?) :
         if (inEditMode) {
             return onTouchWhileEditing(event)
         }
+        val toTouchscreen = touchscreenFilter?.invoke(event) ?: true // Eden Duo
 
         var shouldUpdateView = false
         val playerIndex = when (NativeInput.getStyleIndex(0)) {
@@ -302,7 +307,7 @@ class InputOverlay(context: Context, attrs: AttributeSet?) :
             invalidate()
         }
 
-        if (!BooleanSetting.TOUCHSCREEN.getBoolean()) {
+        if (!BooleanSetting.TOUCHSCREEN.getBoolean() || !toTouchscreen) {
             return true
         }
 

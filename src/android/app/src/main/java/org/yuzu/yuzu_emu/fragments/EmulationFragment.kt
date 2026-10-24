@@ -805,6 +805,7 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
                 binding.inGameMenu.requestFocus()
                 emulationViewModel.setDrawerOpen(true)
                 updateQuickOverlayMenuEntry(BooleanSetting.SHOW_INPUT_OVERLAY.getBoolean())
+                updateCompanionMenuEntry() // Eden Duo
                 if (drawerView == binding.inGameMenu) {
                     binding.drawerLayout.closeDrawer(binding.quickSettingsSheet)
                 } else if (drawerView == binding.quickSettingsSheet) {
@@ -912,6 +913,13 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
 
                 R.id.menu_multiplayer -> {
                     emulationActivity?.displayMultiplayerDialog()
+                    true
+                }
+
+                // Eden Duo: hide / show the second-screen companion (CompanionToggle).
+                R.id.menu_toggle_companion -> {
+                    org.yuzu.yuzu_emu.duo.CompanionToggle.toggle(requireContext())
+                    updateCompanionMenuEntry()
                     true
                 }
 
@@ -1636,6 +1644,19 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
 
         addQuickSettings()
         dualScreen.onResume()
+        b.surfaceInputOverlay.touchscreenFilter = dualScreen.gameTouch::filter // Eden Duo
+    }
+
+    // Eden Duo: the in-game menu's companion toggle names what it will do.
+    private fun updateCompanionMenuEntry() {
+        val item = _binding?.inGameMenu?.menu?.findItem(R.id.menu_toggle_companion) ?: return
+        item.title = getString(
+            if (dualScreen.isCompanionHiddenByUser) {
+                R.string.companion_toggle_show
+            } else {
+                R.string.companion_toggle_hide
+            }
+        )
     }
 
     private fun resetInputOverlay() {

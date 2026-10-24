@@ -315,6 +315,12 @@ struct PendingTap {
 [[nodiscard]] std::optional<f64> PanZoomViewHostValueFrom(std::string_view name,
                                                            const ViewState& states);
 
+/// The module get_i64 answer for "@flag:<name>": the flag's live value, or nullopt when `name`
+/// is not a flag key or the flag is unknown. PublishFlags runs after the module, so the tick's
+/// snapshot never holds flags while the module samples. Kept free of ModRuntime for unit tests.
+[[nodiscard]] std::optional<s64> FlagHostValueFrom(std::string_view name,
+                                                   const std::unordered_map<std::string, s64>& flags);
+
 class ModRuntime {
 public:
     // --- lifecycle (mod_runtime.cpp) ---------------------------------------------------------

@@ -26,4 +26,16 @@
         <item>2</item>
         <item>3</item>
     </integer-array>
+    <string-array name="companionToggleGestureEntries">
+        <item>@string/companion_toggle_gesture_tap4</item>
+        <item>@string/companion_toggle_gesture_pinch5</item>
+        <item>@string/companion_toggle_gesture_swipe3</item>
+        <item>@string/companion_toggle_gesture_off</item>
+    </string-array>
+    <integer-array name="companionToggleGestureValues">
+        <item>0</item>
+        <item>1</item>
+        <item>2</item>
+        <item>3</item>
+    </integer-array>
 </resources>

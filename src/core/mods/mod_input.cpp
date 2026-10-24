@@ -1711,6 +1711,19 @@ void ModRuntime::PublishFlags(StateSnapshot& snapshot) {
     }
 }
 
+std::optional<s64> FlagHostValueFrom(std::string_view name,
+                                     const std::unordered_map<std::string, s64>& flags) {
+    constexpr std::string_view Prefix = "@flag:";
+    if (!name.starts_with(Prefix) || name.size() <= Prefix.size()) {
+        return std::nullopt;
+    }
+    const auto it = flags.find(std::string{name.substr(Prefix.size())});
+    if (it == flags.end()) {
+        return std::nullopt;
+    }
+    return it->second;
+}
+
 std::optional<f64> PanZoomViewHostValueFrom(std::string_view name, const ViewState& states) {
     constexpr std::string_view Zoom = "@view_zoom:";
     constexpr std::string_view PanX = "@view_pan_x:";
