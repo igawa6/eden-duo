@@ -1889,4 +1889,41 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
     <string name="add_folders">Add Folder</string>
     <string name="percent">%1$d%%</string>
 
+
+    <!-- Eden Duo: save transfer (copy Switch saves from other Eden apps into this one) -->
+    <string name="save_transfer">Save transfer</string>
+    <string name="save_transfer_description">Copy game saves from your other Eden apps into this app</string>
+    <string name="save_transfer_back">Back</string>
+    <string name="save_transfer_previous_app">Previous app</string>
+    <string name="save_transfer_next_app">Next app</string>
+    <string name="save_transfer_copy_from">Copy from</string>
+    <string name="save_transfer_copy_into">Copy into</string>
+    <string name="save_transfer_controls">Ⓧ Select   Ⓐ Transfer   Ⓑ Back   L1 / R1 Switch app</string>
+    <string name="save_transfer_button">Transfer</string>
+    <string name="save_transfer_give_access">Give access</string>
+    <string name="save_transfer_needs_access">%1$s needs to share its files once. On the next screen, choose Use this folder.</string>
+    <string name="save_transfer_lost_access">Couldn\'t read %1$s\'s saves. Give access again.</string>
+    <string name="save_transfer_wrong_folder">That isn\'t %1$s\'s folder. Pick %1$s on the next screen.</string>
+    <string name="save_transfer_no_sources">No other Eden apps are installed</string>
+    <string name="save_transfer_empty">No saves in %1$s</string>
+    <string name="save_transfer_no_saves_here">No saves yet</string>
+    <string name="save_transfer_state_new">Not here yet</string>
+    <string name="save_transfer_state_newer">Newer</string>
+    <string name="save_transfer_state_same">Same</string>
+    <string name="save_transfer_state_older">Older</string>
+    <string name="save_transfer_state_copied">Copied</string>
+    <string name="save_transfer_updated">Updated %1$s</string>
+    <string name="save_transfer_overwrite_title">Overwrite %1$s\'s save?</string>
+    <string name="save_transfer_overwrite_message">This replaces the save in this app. Its current save is backed up first.\n\nCopying: saved %1$s\nReplacing: saved %2$s</string>
+    <string name="save_transfer_overwrite_newer">The save in this app is newer than the one you\'re copying.\n\n</string>
+    <string name="save_transfer_overwrite">Overwrite</string>
+    <string name="save_transfer_skip">Skip</string>
+    <string name="save_transfer_running">Quit your game first. Saves can\'t be replaced while a game is running.</string>
+    <string name="save_transfer_failed_title">Some saves weren\'t copied</string>
+    <string name="save_transfer_failed">%1$s: %2$s</string>
+    <plurals name="save_transfer_done">
+        <item quantity="one">Copied %d save</item>
+        <item quantity="other">Copied %d saves</item>
+    </plurals>
+
 </resources>
