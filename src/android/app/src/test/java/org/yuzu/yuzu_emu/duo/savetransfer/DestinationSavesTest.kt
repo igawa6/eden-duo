@@ -36,6 +36,8 @@ class DestinationSavesTest {
         File(root, "$title/a").setLastModified(1_000_000)
         File(root, "$title/b").setLastModified(2_000_000)
         File(root, ".yuzu_save_size").writeText("x")
+        File(root, "$title/.yuzu_save_size").writeText("12345678")
+        File(root, "$title/.yuzu_save_size").setLastModified(9_000_000)
 
         val listed = DestinationSaves(root).list()
         assertEquals(setOf(title), listed.keys)

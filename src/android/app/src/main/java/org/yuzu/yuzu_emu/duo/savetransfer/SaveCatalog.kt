@@ -18,6 +18,9 @@ data class SaveEntry(
 enum class DestinationState { NONE, OLDER, SAME, NEWER }
 
 object SaveCatalog {
+    /** Eden writes this into every save folder, even one the game never wrote to. */
+    const val SIZE_MARKER = ".yuzu_save_size"
+
     /** File times differ by a second or two between copies and file systems. */
     private const val SAME_WINDOW_MS = 2_000L
     private val titleId = Regex("[0-9A-Fa-f]{16}")

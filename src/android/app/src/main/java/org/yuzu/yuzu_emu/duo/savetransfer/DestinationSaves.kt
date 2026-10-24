@@ -19,7 +19,7 @@ class DestinationSaves(private val profileRoot: File) {
         profileRoot.listFiles().orEmpty()
             .filter { it.isDirectory && SaveCatalog.isTitleId(it.name) }
             .associate { dir ->
-                val files = dir.walkTopDown().filter { it.isFile }.toList()
+                val files = dir.walkTopDown().filter { it.isFile && it.name != SaveCatalog.SIZE_MARKER }.toList()
                 val title = dir.name.uppercase()
                 title to SaveEntry(
                     titleId = title,
