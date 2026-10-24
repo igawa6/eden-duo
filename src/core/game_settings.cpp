@@ -136,6 +136,8 @@ void LoadBootOverrides(std::uint64_t program_id) {
             // early. The AYN Thor community setup (r/AynThor) keeps asynchronous GPU emulation and
             // fixes that with accurate GPU emulation, safe DMA and reactive flushing instead, for
             // near 30 FPS without flicker; dynamic vertex input keeps vertex formats valid.
+            // Asynchronous GPU emulation still lets the HUD blink on the Thor: run it synchronously.
+            DefaultForTitle(Settings::values.use_asynchronous_gpu_emulation, false);
             DefaultForTitle(Settings::values.use_docked_mode, Settings::ConsoleMode::Docked);
             DefaultForTitle(Settings::values.cpu_clock, Settings::CpuClock::Boost);
             DefaultForTitle(Settings::values.vsync_mode, Settings::VSyncMode::Mailbox);
