@@ -91,9 +91,17 @@ class SaveTransferFragment : Fragment() {
         _binding = null
     }
 
-    /** Controller buttons, forwarded by the host activity before views see them. */
-    fun onControllerKey(keyCode: Int): Boolean {
-        if (_binding == null) return false
+    /**
+     * Controller buttons, forwarded by the host activity from dispatchKeyEvent so they act the
+     * same whichever tile has focus. Returns true (consuming both press and release) for ours.
+     */
+    fun onControllerKey(event: KeyEvent): Boolean {
+        if (_binding == null || event.keyCode !in CONTROLLER_KEYS) return false
+        if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) handleKey(event.keyCode)
+        return true
+    }
+
+    private fun handleKey(keyCode: Int) {
         when (keyCode) {
             KeyEvent.KEYCODE_BUTTON_L1 -> cycleSource(-1)
             KeyEvent.KEYCODE_BUTTON_R1 -> cycleSource(1)
@@ -104,9 +112,7 @@ class SaveTransferFragment : Fragment() {
                 transfer(entries)
             }
             KeyEvent.KEYCODE_BUTTON_B -> requireActivity().finish()
-            else -> return false
         }
-        return true
     }
 
     private fun focusedSourceTile(): SaveTile? {
@@ -362,6 +368,14 @@ class SaveTransferFragment : Fragment() {
 
     companion object {
         const val ARG_INCLUDE_DUET_PLUS = "include_duet_plus"
+        const val TAG = "SaveTransferFragment"
+        private val CONTROLLER_KEYS = setOf(
+            KeyEvent.KEYCODE_BUTTON_L1,
+            KeyEvent.KEYCODE_BUTTON_R1,
+            KeyEvent.KEYCODE_BUTTON_X,
+            KeyEvent.KEYCODE_BUTTON_A,
+            KeyEvent.KEYCODE_BUTTON_B
+        )
 
         fun newInstance(includeDuetPlus: Boolean) = SaveTransferFragment().apply {
             arguments = bundleOf(ARG_INCLUDE_DUET_PLUS to includeDuetPlus)
