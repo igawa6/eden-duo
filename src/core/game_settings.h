@@ -65,4 +65,11 @@ void LoadOverrides(std::uint64_t program_id, const VideoCore::RendererBase& rend
 /// the user set for the game is kept; RestoreGlobalState undoes these when the game stops.
 void LoadBootOverrides(std::uint64_t program_id);
 
+/// True when the title has tuned settings (the ones LoadBootOverrides defaults).
+bool HasOptimalSettings(std::uint64_t program_id);
+
+/// Writes the title's tuned settings into the loaded config as the game's own values, replacing
+/// what the user set for them. Returns false when the title has none.
+bool ApplyOptimalSettings(std::uint64_t program_id);
+
 } // namespace Core::GameSettings

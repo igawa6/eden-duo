@@ -37,6 +37,7 @@ import org.yuzu.yuzu_emu.duo.SaveZipImport
 import org.yuzu.yuzu_emu.features.DocumentProvider
 import org.yuzu.yuzu_emu.features.settings.model.Settings
 import org.yuzu.yuzu_emu.features.settings.ui.SettingsSubscreen
+import org.yuzu.yuzu_emu.features.settings.utils.SettingsFile
 import org.yuzu.yuzu_emu.model.AddonViewModel
 import org.yuzu.yuzu_emu.model.DriverViewModel
 import org.yuzu.yuzu_emu.model.GameProperty
@@ -53,6 +54,7 @@ import org.yuzu.yuzu_emu.utils.GameIconUtils
 import org.yuzu.yuzu_emu.utils.GpuDriverHelper
 import org.yuzu.yuzu_emu.utils.Log
 import org.yuzu.yuzu_emu.utils.MemoryUtil
+import org.yuzu.yuzu_emu.utils.NativeConfig
 import org.yuzu.yuzu_emu.utils.ViewUtils.marquee
 import org.yuzu.yuzu_emu.utils.ViewUtils.updateMargins
 import org.yuzu.yuzu_emu.utils.collect
@@ -262,6 +264,28 @@ class GamePropertiesFragment : Fragment() {
         dialog.show()
     }
 
+    /** Writes the game's tuned settings into its own config, replacing what was set for them. */
+    private fun applyOptimalSettings() {
+        val message = if (NativeLibrary.isRunning()) {
+            // Loading another per-game config here would replace the running game's settings.
+            R.string.apply_optimal_settings_running
+        } else {
+            SettingsFile.loadCustomConfig(args.game)
+            try {
+                if (NativeConfig.applyOptimalSettings(args.game.programId)) {
+                    NativeConfig.savePerGameConfig()
+                    R.string.apply_optimal_settings_done
+                } else {
+                    R.string.apply_optimal_settings_failed
+                }
+            } finally {
+                NativeConfig.unloadPerGameConfig()
+            }
+        }
+        Toast.makeText(YuzuApplication.appContext, message, Toast.LENGTH_LONG).show()
+        homeViewModel.reloadPropertiesList(true)
+    }
+
     private fun reloadList() {
         _binding ?: return
 
@@ -334,6 +358,24 @@ class GamePropertiesFragment : Fragment() {
                     }
                 )
             )
+
+            if (NativeConfig.hasOptimalSettings(args.game.programId)) {
+                add(
+                    SubmenuProperty(
+                        R.string.apply_optimal_settings,
+                        R.string.apply_optimal_settings_description,
+                        R.drawable.ic_check_circle,
+                        action = {
+                            MessageDialogFragment.newInstance(
+                                requireActivity(),
+                                titleId = R.string.apply_optimal_settings,
+                                descriptionId = R.string.apply_optimal_settings_warning,
+                                positiveAction = { applyOptimalSettings() }
+                            ).show(parentFragmentManager, MessageDialogFragment.TAG)
+                        }
+                    )
+                )
+            }
 
             if (!args.game.isHomebrew) {
                 add(

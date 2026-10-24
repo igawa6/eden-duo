@@ -904,6 +904,12 @@
     <string name="seconds_must_be_between_0_and_59">Seconds must be between 0 and 59</string>
     <string name="playtime_updated_successfully">Playtime updated successfully</string>
     <string name="clear_shader_cache">Clear shader cache</string>
+    <string name="apply_optimal_settings">Apply optimal settings for this game</string>
+    <string name="apply_optimal_settings_description">Use the settings tuned for this game</string>
+    <string name="apply_optimal_settings_warning">This replaces this game\'s own values for the tuned settings. Your other settings stay as they are.</string>
+    <string name="apply_optimal_settings_done">Optimal settings applied. They take effect the next time the game starts.</string>
+    <string name="apply_optimal_settings_failed">Couldn\'t apply this game\'s optimal settings</string>
+    <string name="apply_optimal_settings_running">Quit the game first, then apply its optimal settings</string>
     <string name="clear_shader_cache_description">Removes all shaders built while playing this game</string>
     <string name="clear_shader_cache_warning_description">You will experience more stuttering as the shader cache regenerates</string>
     <string name="cleared_shaders_successfully">Cleared shaders successfully</string>

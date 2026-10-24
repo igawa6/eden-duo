@@ -62,6 +62,17 @@ object NativeConfig {
     @Synchronized
     external fun unloadPerGameConfig()
 
+    /** True when the title has tuned settings that [applyOptimalSettings] can write. */
+    @Synchronized
+    external fun hasOptimalSettings(programId: String): Boolean
+
+    /**
+     * Writes the title's tuned settings into the loaded per-game config as the game's own values
+     * (call [savePerGameConfig] after). False when no per-game config is loaded or none exist.
+     */
+    @Synchronized
+    external fun applyOptimalSettings(programId: String): Boolean
+
     @Synchronized
     external fun getBoolean(key: String, needsGlobal: Boolean): Boolean
 

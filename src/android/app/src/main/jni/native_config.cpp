@@ -12,6 +12,7 @@
 #include "common/fs/path_util.h"
 #include "common/logging.h"
 #include "common/settings.h"
+#include "core/game_settings.h"
 #include "frontend_common/config.h"
 #include "frontend_common/settings_generator.h"
 #include "native.h"
@@ -88,6 +89,20 @@ void Java_org_yuzu_yuzu_1emu_utils_NativeConfig_savePerGameConfig(JNIEnv* env, j
 
 void Java_org_yuzu_yuzu_1emu_utils_NativeConfig_unloadPerGameConfig(JNIEnv* env, jobject obj) {
     per_game_config.reset();
+}
+
+jboolean Java_org_yuzu_yuzu_1emu_utils_NativeConfig_hasOptimalSettings(JNIEnv* env, jobject obj,
+                                                                      jstring jprogramId) {
+    return Core::GameSettings::HasOptimalSettings(EmulationSession::GetProgramId(env, jprogramId));
+}
+
+jboolean Java_org_yuzu_yuzu_1emu_utils_NativeConfig_applyOptimalSettings(JNIEnv* env, jobject obj,
+                                                                        jstring jprogramId) {
+    if (per_game_config == nullptr) {
+        return false;
+    }
+    return Core::GameSettings::ApplyOptimalSettings(
+        EmulationSession::GetProgramId(env, jprogramId));
 }
 
 jboolean Java_org_yuzu_yuzu_1emu_utils_NativeConfig_getBoolean(JNIEnv* env, jobject obj,
