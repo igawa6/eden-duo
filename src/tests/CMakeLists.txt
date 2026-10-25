@@ -29,6 +29,10 @@ target_link_libraries(tests PRIVATE ${PLATFORM_LIBRARIES} Catch2::Catch2WithMain
 
 add_test(NAME tests COMMAND tests)
 
+add_executable(composite_completion_test video_core/composite_completion_standalone.cpp)
+target_include_directories(composite_completion_test PRIVATE "${PROJECT_SOURCE_DIR}/src")
+add_test(NAME composite_completion_test COMMAND composite_completion_test)
+
 # needed for vma
 if (NOT MSVC)
     target_compile_options(tests PRIVATE

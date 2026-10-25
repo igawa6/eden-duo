@@ -40,7 +40,8 @@ public:
     /// Performs a screen flip, compositing each buffer. Returns the composite's id.
     u64 Composite(std::span<const Nvnflinger::HwcLayer> sorted_layers);
 
-    /// Waits for the last composite request to be registered; false on shutdown.
+    /// Waits for the last requested composite to have run (bounded by GPU::Impl::CompositeTimeout).
+    /// False when it did not run in time or emulation is shutting down.
     bool WaitForComposite();
 
     [[nodiscard]] bool IsCompositeDone(u64 composite_id);

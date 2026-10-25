@@ -54,7 +54,7 @@ private:
     bool TryAcquireFramebufferLocked(Layer& layer, Framebuffer& framebuffer);
     CacheStatus CacheFramebufferLocked(Layer& layer, ConsumerId consumer_id);
     void ReleaseFramebuffersLocked(Display& display, Nvidia::Devices::nvdisp_disp0& nvdisp,
-                                   bool shutting_down);
+                                   bool force);
 };
 
 } // namespace Service::Nvnflinger

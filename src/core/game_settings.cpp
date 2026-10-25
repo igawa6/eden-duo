@@ -138,17 +138,19 @@ bool TitleSettings(std::uint64_t program_id, bool force) {
         case TitleID::FinalFantasyResonance:
             // The bloom hack scales sampled RGBA values and corrupts this game's sprite colours.
             DefaultForTitle(Settings::values.fix_bloom_effects, false);
-            // Asynchronous GPU emulation is what reaches 30 FPS on the AYN Thor. Its HUD used to
-            // drop out of single frames under it: buffers went back to the game before their
-            // composite ran (fixed in HardwareComposer). Accurate GPU emulation, safe DMA and
-            // reactive flushing keep its GPU readbacks in order; dynamic vertex input keeps vertex
-            // formats valid.
-            DefaultForTitle(Settings::values.use_asynchronous_gpu_emulation, true);
+            // Async GPU still produces HUD dropouts and guest panics on Adreno, so keep guest
+            // command submission synchronous until that path is verified through gameplay.
+            // Accurate fences are what keeps its GPU readbacks in order; safe DMA and reactive
+            // flushing keep the rest of the pipeline in order, and dynamic vertex input keeps the
+            // vertex formats from its GPU-built commands valid.
+            DefaultForTitle(Settings::values.use_asynchronous_gpu_emulation, false);
             DefaultForTitle(Settings::values.use_docked_mode, Settings::ConsoleMode::Docked);
             DefaultForTitle(Settings::values.cpu_clock, Settings::CpuClock::Boost);
             DefaultForTitle(Settings::values.vsync_mode, Settings::VSyncMode::Mailbox);
             DefaultForTitle(Settings::values.gpu_accuracy, Settings::GpuAccuracy::High);
             DefaultForTitle(Settings::values.dma_accuracy, Settings::DmaAccuracy::Safe);
+            // Its fence values must wait for the GPU, or the HUD still blinks.
+            DefaultForTitle(Settings::values.gpu_fence_behavior, Settings::GpuFenceBehavior::Accurate);
             DefaultForTitle(Settings::values.sync_memory_operations, true);
             DefaultForTitle(Settings::values.use_disk_shader_cache, true);
             DefaultForTitle(Settings::values.use_reactive_flushing, true);
