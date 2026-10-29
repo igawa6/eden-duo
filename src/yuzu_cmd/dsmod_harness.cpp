@@ -4,6 +4,7 @@
 // Eden Duo: the eden-cli test harness, see dsmod_harness.h. Moved out of yuzu.cpp so upstream's
 // frontend file only carries hook calls.
 
+#include <optional>
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -377,7 +378,7 @@ static int NativeButtonFromName(const std::string& name) {
     std::string upper = name;
     std::ranges::transform(upper, upper.begin(), [](unsigned char c) { return std::toupper(c); });
     const auto it = kMap.find(upper);
-    return it == kMap.end() ? static_cast<int>(NB::A) : it->second;
+    return it == kMap.end() ? -1 : it->second;  // unknown name: no button, never a silent A
 }
 
 /// Returns the keyboard scancode bound to a player-1 button, or -1 when it is not a keyboard bind.
@@ -386,7 +387,11 @@ static int KeyCodeForButton(const std::string& name) {
     if (players.empty()) {
         return -1;
     }
-    const auto& binding = players[0].buttons[static_cast<size_t>(NativeButtonFromName(name))];
+    const int native = NativeButtonFromName(name);
+    if (native < 0) {
+        return -1;
+    }
+    const auto& binding = players[0].buttons[static_cast<size_t>(native)];
     Common::ParamPackage param{binding};
     if (param.Get("engine", std::string{}) != "keyboard") {
         return -1;
@@ -394,23 +399,26 @@ static int KeyCodeForButton(const std::string& name) {
     return param.Get("code", -1);
 }
 
-static InputCommon::VirtualGamepad::VirtualButton ButtonFromName(const std::string& name) {
+/// Route button name -> virtual pad button, case-insensitive ("DLeft", "DLEFT", "dleft").
+/// Unknown names return nullopt: a typo must not press A (it confirmed prompts in RE4 routes).
+static std::optional<InputCommon::VirtualGamepad::VirtualButton> ButtonFromName(
+    const std::string& name) {
     using VB = InputCommon::VirtualGamepad::VirtualButton;
-    if (name == "B") return VB::ButtonB;
-    if (name == "X") return VB::ButtonX;
-    if (name == "Y") return VB::ButtonY;
-    if (name == "Plus") return VB::ButtonPlus;
-    if (name == "Minus") return VB::ButtonMinus;
-    if (name == "DUp") return VB::ButtonUp;
-    if (name == "DDown") return VB::ButtonDown;
-    if (name == "DLeft") return VB::ButtonLeft;
-    if (name == "DRight") return VB::ButtonRight;
-    if (name == "L") return VB::TriggerL;
-    if (name == "R") return VB::TriggerR;
-    if (name == "ZL") return VB::TriggerZL;
-    if (name == "ZR") return VB::TriggerZR;
-    if (name == "Home") return VB::ButtonHome;
-    return VB::ButtonA;
+    static const std::unordered_map<std::string, VB> kMap{
+        {"A", VB::ButtonA},       {"B", VB::ButtonB},        {"X", VB::ButtonX},
+        {"Y", VB::ButtonY},       {"PLUS", VB::ButtonPlus},  {"MINUS", VB::ButtonMinus},
+        {"DUP", VB::ButtonUp},    {"DDOWN", VB::ButtonDown}, {"DLEFT", VB::ButtonLeft},
+        {"DRIGHT", VB::ButtonRight}, {"L", VB::TriggerL},    {"R", VB::TriggerR},
+        {"ZL", VB::TriggerZL},    {"ZR", VB::TriggerZR},     {"HOME", VB::ButtonHome},
+    };
+    std::string upper = name;
+    std::ranges::transform(upper, upper.begin(), [](unsigned char c) { return std::toupper(c); });
+    const auto it = kMap.find(upper);
+    if (it == kMap.end()) {
+        LOG_WARNING(Frontend, "dsmod harness: unknown button name '{}' ignored", name);
+        return std::nullopt;
+    }
+    return it->second;
 }
 
 struct BtnStep {
@@ -591,8 +599,10 @@ static void ServiceButtonRequests(Core::System& system,
             const std::string& which = step.arg;
             if (pad != nullptr && !which.empty()) {
                 const auto button = ButtonFromName(which);
-                for (const std::size_t player : {std::size_t{0}, std::size_t{8}}) {
-                    pad->SetButtonState(player, button, down);
+                if (button) {
+                    for (const std::size_t player : {std::size_t{0}, std::size_t{8}}) {
+                        pad->SetButtonState(player, *button, down);
+                    }
                 }
                 LOG_INFO(Frontend, "virtual button '{}' {}", which, down ? "held" : "released");
             }
@@ -652,7 +662,12 @@ static void ServiceButtonRequests(Core::System& system,
             const std::string name = step.name.substr(
                 start, plus == std::string::npos ? std::string::npos : plus - start);
             if (!name.empty()) {
-                const auto button = ButtonFromName(name);
+                const auto maybe_button = ButtonFromName(name);
+                if (!maybe_button) {
+                    start = plus == std::string::npos ? step.name.size() + 1 : plus + 1;
+                    continue;
+                }
+                const auto button = *maybe_button;
                 g_button_all.push_back(button);
                 // Both the handheld port and player 1, since which one the game reads depends
                 // on setup.
