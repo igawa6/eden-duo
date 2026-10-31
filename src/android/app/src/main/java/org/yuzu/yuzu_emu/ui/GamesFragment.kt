@@ -279,7 +279,6 @@ class GamesFragment : Fragment() {
             binding.searchText.text.toString(),
             currentFilter == View.NO_ID || currentFilter == R.id.alphabetical
         )
-        unownedAdapter.submit(unowned)
         dualScreenFilter.updateNotice(
             binding.noticeText,
             games,
@@ -288,12 +287,17 @@ class GamesFragment : Fragment() {
         val attached = (binding.gridGames as? RecyclerView)?.adapter
         val adapter = gameAdapter.takeIf { attached === it || attached is ConcatAdapter }
         if (adapter == null) {
+            unownedAdapter.submit(unowned)
             schedulePostReloadListSettle()
             return
         }
 
         val submitGeneration = ++gameListSubmitGeneration
         adapter.submitList(games) {
+            // The section follows the games: submitted before the (asynchronous) game list
+            // commits, it was the only content on open, became the scroll anchor, and the
+            // games then landed above it, leaving the library scrolled to the bottom.
+            unownedAdapter.submit(unowned)
             if (committedGameListSubmitGeneration < submitGeneration) {
                 committedGameListSubmitGeneration = submitGeneration
             }

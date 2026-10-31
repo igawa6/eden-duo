@@ -4,6 +4,7 @@
 
 **Fixed**
 
+- The game list opens at the top again: the "not in your library" section loaded before your games and the list stayed scrolled to it at the bottom.
 - Breath of the Wild, Castlevania: Belmont's Curse, Super Mario Odyssey, Echoes of Wisdom, Dave the Diver and Persona 3 Portable keep their dual-screen badge and "not in your library" card even when the companion list cannot be loaded from GitHub (they were missing from the list that comes with the app).
 
 ## 1.3.2.2
