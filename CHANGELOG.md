@@ -2,6 +2,10 @@
 
 ## 1.3.3 (unreleased)
 
+**Added**
+
+- New companions appear in the library's "not in your library" section without an app update: the names and covers now come from an online catalog (the copy inside the app is the offline fallback).
+
 **Fixed**
 
 - The game list opens at the top again: the "not in your library" section loaded before your games and the list stayed scrolled to it at the bottom.
