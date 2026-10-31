@@ -71,4 +71,14 @@ class CompanionCatalogTest {
             assertTrue(entry.name, entry.gametdb.isEmpty() || Regex("[A-Z0-9]{5}").matches(entry.gametdb))
         }
     }
+
+    @Test
+    fun onlineCatalogExtendsAndKeepsLastGoodAnswer() {
+        val online = """[{"titleId": "010097F018538000", "name": "Dave the Diver"}]"""
+        assertTrue(CompanionCatalog.refreshOnline { online })
+        assertEquals("Dave the Diver", CompanionCatalog.entries["010097F018538000"]?.name)
+        assertFalse(CompanionCatalog.refreshOnline { online })
+        assertFalse(CompanionCatalog.refreshOnline { "[]" })
+        assertEquals("Dave the Diver", CompanionCatalog.entries["010097F018538000"]?.name)
+    }
 }

@@ -120,6 +120,13 @@ class DualScreenLibraryState(
         }
         lastCatalogAttempt = now
         scope.launch {
+            // Names/covers for "not in your library": independent of the release list, so a
+            // failed release fetch does not hold back a new companion's tile.
+            withContext(Dispatchers.IO) {
+                runCatching { CompanionCatalog.refreshOnline() }.onFailure {
+                    Log.warning("[DualScreen] online catalog refresh failed: ${it.message}")
+                }
+            }
             try {
                 val releases = withContext(Dispatchers.IO) { DualScreenModRepository.fetchAll() }
                 val latest = releases.groupBy { DualScreenModRepository.titleIdForAsset(it.assetName) }

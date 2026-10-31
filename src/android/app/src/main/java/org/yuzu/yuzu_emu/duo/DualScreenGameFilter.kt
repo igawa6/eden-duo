@@ -97,6 +97,8 @@ class DualScreenGameFilter(
             adapter().dualScreenBadges.setTitleIds(it)
             refilter()
         }
+        // A new online catalog can name a game the bundled list did not know.
+        CompanionCatalog.revision.collect(owner) { refilter() }
     }
 
     fun bindButton(button: MaterialButton) {
