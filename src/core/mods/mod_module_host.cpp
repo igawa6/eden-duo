@@ -431,11 +431,11 @@ void ModRuntime::InitializeGameModule() {
         }
         // Range reads keep large ROMFS archives out of the 60 Hz reader path and avoid
         // allocating/rereading the entire file for every size/chunk request.
-        if (source.find('#') == std::string::npos &&
-            !rt.asset_sources->IsModuleReadableByteSource(source)) {
+        // Directory sources and opt-in byte sources ("sysfont:", runtime 23) read only the
+        // requested range; an archive member is read whole and sliced.
+        if (source.find('#') == std::string::npos) {
             return rt.asset_sources->ReadRange(source, offset, output, size);
         }
-        // A byte source ("sysfont:", runtime 23) and an archive member are read whole and sliced.
         const auto bytes = rt.ReadAssetBytes(source);
         if (!output) {
             return bytes.size();

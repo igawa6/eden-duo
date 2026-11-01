@@ -65,6 +65,10 @@ struct AssetSource {
     /// Runtime 23: byte sources only. Whether a module's read_romfs may read it (whole, then
     /// sliced by offset). Off by default: "module:" is the module's own output, never its input.
     bool module_readable{false};
+    /// Byte sources only (optional): bytes [offset, offset+size) of `src` into `out`, or the
+    /// whole size when `out` is null -- so a large byte source (a 20 MiB font) is not copied
+    /// whole for every chunk a module reads. Without it ReadRange reads whole and slices.
+    std::function<size_t(const std::string& src, u64 offset, void* out, size_t size)> read_range;
 };
 
 class AssetSources {

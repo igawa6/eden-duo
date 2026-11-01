@@ -3,6 +3,7 @@
 
 #include "core/mods/mod_sysfont_source.h"
 
+#include <algorithm>
 #include <cstring>
 #include <map>
 #include <memory>
@@ -64,36 +65,54 @@ std::vector<u8> DecryptSysfont(std::span<const u8> stored) {
 }
 
 AssetSource MakeSysfontSource(std::function<FileSys::VirtualDir(u64)> open_real_archive) {
+    using Bytes = std::shared_ptr<const std::vector<u8>>;
     struct Cache {
+        std::function<FileSys::VirtualDir(u64)> open;
         std::mutex mutex;
-        std::map<std::string, std::vector<u8>> fonts; // by file name; empty = tried, missing
-    };
-    auto cache = std::make_shared<Cache>();
-    return {
-        .prefix = "sysfont",
-        .read_bytes = [open = std::move(open_real_archive),
-                       cache](const std::string& src) -> std::vector<u8> {
+        std::map<std::string, Bytes> fonts; // by file name; empty vector = tried, missing
+        Bytes Get(const std::string& src) {
+            static const Bytes none = std::make_shared<const std::vector<u8>>();
             const auto entry = FindSysfont(AssetSources::PathOf(src));
             if (!entry || !open) {
-                return {};
+                return none;
             }
-            std::scoped_lock lock{cache->mutex};
+            std::scoped_lock lock{mutex};
             const std::string key{entry->file};
-            if (const auto it = cache->fonts.find(key); it != cache->fonts.end()) {
+            if (const auto it = fonts.find(key); it != fonts.end()) {
                 return it->second;
             }
             std::vector<u8> ttf;
             if (const auto root = open(entry->archive_id)) {
-                if (const auto file = root->GetFile(std::string{entry->file})) {
-                    const auto stored = file->ReadAllBytes();
-                    ttf = DecryptSysfont(stored);
+                if (const auto file = root->GetFile(key)) {
+                    ttf = DecryptSysfont(file->ReadAllBytes());
                 }
             }
-            cache->fonts.emplace(key, ttf);
-            return ttf;
-        },
+            return fonts.emplace(key, std::make_shared<const std::vector<u8>>(std::move(ttf)))
+                .first->second;
+        }
+    };
+    auto cache = std::make_shared<Cache>();
+    cache->open = std::move(open_real_archive);
+    return {
+        .prefix = "sysfont",
+        .read_bytes = [cache](const std::string& src) { return *cache->Get(src); },
         .capability = EDEN_DSMOD_CAP_SOURCE_SYSFONT,
         .module_readable = true,
+        // A module reads a 20 MiB font in chunks: copy only the requested slice of the cached
+        // font, never the whole vector per call.
+        .read_range = [cache](const std::string& src, u64 offset, void* out,
+                              size_t size) -> size_t {
+            const auto bytes = cache->Get(src);
+            if (out == nullptr) {
+                return bytes->size();
+            }
+            if (offset >= bytes->size()) {
+                return 0;
+            }
+            const size_t count = std::min<size_t>(size, bytes->size() - offset);
+            std::memcpy(out, bytes->data() + offset, count);
+            return count;
+        },
     };
 }
 

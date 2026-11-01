@@ -96,6 +96,15 @@ TEST_CASE("DSMod sysfont source: real archive only, cached", "[dsmod][runtime23]
     REQUIRE(sources.ReadAll("sysfont:not_a_font").empty());
     REQUIRE(opens == 2);
     REQUIRE((sources.Capabilities() & EDEN_DSMOD_CAP_SOURCE_SYSFONT) != 0);
+    // Ranged reads (what a module's read_romfs uses) slice the cached font, no re-open.
+    REQUIRE(sources.ReadRange("sysfont:nintendo_udsg-r_ko_003", 0, nullptr, 0) == FakeTtf.size());
+    std::vector<u8> part(5, 0xEE);
+    REQUIRE(sources.ReadRange("sysfont:nintendo_udsg-r_ko_003", 4, part.data(), 5) == 5);
+    REQUIRE(std::vector<u8>(FakeTtf.begin() + 4, FakeTtf.begin() + 9) == part);
+    REQUIRE(sources.ReadRange("sysfont:nintendo_udsg-r_ko_003", 10, part.data(), 5) == 2);
+    REQUIRE(sources.ReadRange("sysfont:nintendo_udsg-r_ko_003", 99, part.data(), 5) == 0);
+    REQUIRE(sources.ReadRange("sysfont:nintendo_udjxh-db_zh-tw_003", 0, nullptr, 0) == 0);
+    REQUIRE(opens == 2);
 }
 
 TEST_CASE("DSMod sysfont source: readable from a module's read_romfs", "[dsmod][runtime23][sysfont]") {
