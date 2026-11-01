@@ -98,6 +98,19 @@ TEST_CASE("DSMod sysfont source: real archive only, cached", "[dsmod][runtime23]
     REQUIRE((sources.Capabilities() & EDEN_DSMOD_CAP_SOURCE_SYSFONT) != 0);
 }
 
+TEST_CASE("DSMod sysfont source: readable from a module's read_romfs", "[dsmod][runtime23][sysfont]") {
+    // The module host's read_romfs admits directory sources and byte sources that opt in; the
+    // first rt23 build refused "sysfont:" there although it advertised the capability.
+    AssetSources sources;
+    sources.Register(MakeSysfontSource([](u64) -> FileSys::VirtualDir { return nullptr; }));
+    sources.Register({.prefix = "module",
+                      .read_bytes = [](const std::string&) { return std::vector<u8>{1}; }});
+    REQUIRE(sources.IsModuleReadableByteSource("sysfont:nintendo_udsg-r_ko_003"));
+    REQUIRE_FALSE(sources.IsDirectorySource("sysfont:nintendo_udsg-r_ko_003"));
+    REQUIRE_FALSE(sources.IsModuleReadableByteSource("module:x:y"));
+    REQUIRE_FALSE(sources.IsModuleReadableByteSource("nosuch:x"));
+}
+
 TEST_CASE("DSMod sysfont source: archive without the file", "[dsmod][runtime23][sysfont]") {
     AssetSources sources;
     sources.Register(MakeSysfontSource(

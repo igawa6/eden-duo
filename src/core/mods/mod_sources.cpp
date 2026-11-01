@@ -92,6 +92,11 @@ bool AssetSources::IsDirectorySource(std::string_view src) const {
     return slot != nullptr && !slot->def.read_bytes && slot->def.open_dir;
 }
 
+bool AssetSources::IsModuleReadableByteSource(std::string_view src) const {
+    const Slot* const slot = Find(PrefixOf(src));
+    return slot != nullptr && slot->def.read_bytes && slot->def.module_readable;
+}
+
 bool AssetSources::Available(std::string_view src) {
     const std::string_view prefix = src.find(':') == std::string_view::npos ? src : PrefixOf(src);
     Slot* const slot = Find(prefix);

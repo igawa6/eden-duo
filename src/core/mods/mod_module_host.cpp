@@ -419,7 +419,8 @@ void ModRuntime::InitializeGameModule() {
         // which could only ever miss, so a module could not tell it from a missing file).
         if (const auto prefix = AssetSources::PrefixOf(source); prefix.empty()) {
             source.insert(0, "romfs:");
-        } else if (!rt.asset_sources->IsDirectorySource(source)) {
+        } else if (!rt.asset_sources->IsDirectorySource(source) &&
+                   !rt.asset_sources->IsModuleReadableByteSource(source)) {
             static std::atomic<bool> warned{false};
             if (!warned.exchange(true)) {
                 LOG_WARNING(Core, "DSMod module: read_romfs('{}'): '{}:' is not a file source "
@@ -430,9 +431,11 @@ void ModRuntime::InitializeGameModule() {
         }
         // Range reads keep large ROMFS archives out of the 60 Hz reader path and avoid
         // allocating/rereading the entire file for every size/chunk request.
-        if (source.find('#') == std::string::npos) {
+        if (source.find('#') == std::string::npos &&
+            !rt.asset_sources->IsModuleReadableByteSource(source)) {
             return rt.asset_sources->ReadRange(source, offset, output, size);
         }
+        // A byte source ("sysfont:", runtime 23) and an archive member are read whole and sliced.
         const auto bytes = rt.ReadAssetBytes(source);
         if (!output) {
             return bytes.size();

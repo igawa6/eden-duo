@@ -93,6 +93,7 @@ AssetSource MakeSysfontSource(std::function<FileSys::VirtualDir(u64)> open_real_
             return ttf;
         },
         .capability = EDEN_DSMOD_CAP_SOURCE_SYSFONT,
+        .module_readable = true,
     };
 }
 
