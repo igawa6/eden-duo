@@ -13,6 +13,7 @@
 #include "core/mods/mod_runtime.h"
 #include "core/mods/mod_sources.h"
 #include "core/mods/mod_sysfont_source.h"
+#include "core/mods/mod_types_page.h"
 
 using namespace Core::Mods;
 
@@ -125,4 +126,15 @@ TEST_CASE("DSMod sysfont source: archive without the file", "[dsmod][runtime23][
     sources.Register(MakeSysfontSource(
         [](u64) { return ArchiveWith("other.bfttf", Store(FakeTtf)); }));
     REQUIRE(sources.ReadAll("sysfont:nintendo_udsg-r_ko_003").empty());
+}
+
+TEST_CASE("DSMod refused haptic honours a widget's explicit off", "[dsmod][runtime23][haptic]") {
+    using Core::Mods::HapticOverride;
+    using Core::Mods::HapticStrength;
+    using Core::Mods::RefusalHapticOverride;
+    constexpr auto off = static_cast<HapticOverride>(HapticStrength::Off);
+    REQUIRE(RefusalHapticOverride(off) == off);                       // touch feedback off
+    REQUIRE(RefusalHapticOverride(-1) == -1);                         // no override: manifest
+    REQUIRE(RefusalHapticOverride(static_cast<HapticOverride>(HapticStrength::Click)) == -1);
+    REQUIRE(RefusalHapticOverride(static_cast<HapticOverride>(HapticStrength::Reject)) == -1);
 }

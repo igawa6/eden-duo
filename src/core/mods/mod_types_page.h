@@ -48,6 +48,14 @@ struct HapticsConfig {
 /// A per-widget / per-action override: -1 = none, else a HapticStrength value.
 using HapticOverride = s8;
 
+/// Runtime 23: the strength a refused tap uses on a widget with `widget` override. A refusal keeps
+/// the manifest's "refused" strength (a "click" widget does not turn refusals into clicks), but an
+/// explicit "off" on the widget silences it too -- a package's touch-feedback-off setting is built
+/// from paired widgets with "haptic": "off", and must also stop the refusal buzz.
+[[nodiscard]] constexpr HapticOverride RefusalHapticOverride(HapticOverride widget) {
+    return widget == static_cast<HapticOverride>(HapticStrength::Off) ? widget : HapticOverride{-1};
+}
+
 /// Animation timing curves (cubic).
 enum class Easing : u8 { Linear, EaseIn, EaseOut, EaseInOut };
 [[nodiscard]] inline float ApplyEasing(Easing easing, float t) {

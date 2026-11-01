@@ -1286,7 +1286,7 @@ void ModRuntime::DrainTaps(const StateSnapshot& snapshot) {
             QueueHaptic(done_kind.value_or(TapHapticKind(*ran.action)), widget_haptic,
                         ran.action->haptic, source);
         } else if (ran.result == ActionResult::Refused) {
-            QueueHaptic(HapticKind::Refused, -1, -1, source);
+            QueueHaptic(HapticKind::Refused, RefusalHapticOverride(widget_haptic), -1, source);
         }
     };
     for (const auto& drop : drops) {
