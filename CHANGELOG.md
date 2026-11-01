@@ -4,6 +4,7 @@
 
 **Added**
 
+- Runtime 23: companions can draw text in the console's own system fonts (Korean, Simplified and Traditional Chinese), read from the real firmware only, so Pokémon Sword's companion can offer those languages. Without real firmware fonts the companion keeps English; it never shows a substitute font.
 - New companions appear in the library's "not in your library" section without an app update: the names and covers now come from an online catalog (the copy inside the app is the offline fallback).
 
 **Fixed**

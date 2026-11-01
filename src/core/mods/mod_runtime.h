@@ -193,7 +193,10 @@ namespace Core::Mods {
 ///          Also: animated dynamic map markers ("frames" / "frame_ms" / "pulse", clock-driven;
 ///          MarkerFrameAt / MarkerPulseAt) and the manifest "preload" picture list (queued once
 ///          by PumpNxAssets). Older runtimes draw the static icon and decode on first use.
-inline constexpr u32 DualScreenRuntimeVersion = 22;
+///   23     "sysfont:" asset source: the console's shared system fonts (pl:u) as TrueType bytes,
+///          real firmware only, empty otherwise (EDEN_DSMOD_CAP_SOURCE_SYSFONT,
+///          mod_sysfont_source.h). Older runtimes read 0 for the unknown prefix.
+inline constexpr u32 DualScreenRuntimeVersion = 23;
 
 /// Regions a redraw-worker job painted into its canvas but did not publish because it went stale
 /// (runtime 13). Before runtime 13 a job already running when the next was dispatched finished

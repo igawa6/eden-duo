@@ -25,6 +25,7 @@ target_sources(tests PRIVATE
     core/mods/runtime18.cpp
     core/mods/runtime21.cpp
     core/mods/runtime22.cpp
+    core/mods/runtime23_sysfont.cpp
     core/mods/runtime16_image.cpp
     core/mods/text_markup.cpp
     core/mods/text_slant.cpp

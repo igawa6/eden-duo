@@ -31,6 +31,8 @@ target_sources(core PRIVATE
     mods/mod_settings.h
     mods/mod_user_source.cpp
     mods/mod_user_source.h
+    mods/mod_sysfont_source.cpp
+    mods/mod_sysfont_source.h
     mods/mod_romfs_sources.cpp
     mods/mod_romfs_sources.h
     mods/mod_map.cpp

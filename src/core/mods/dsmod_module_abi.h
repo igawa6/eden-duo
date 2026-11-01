@@ -69,6 +69,11 @@ enum {
     // until the new one is decoded), then reloads the font atlas image and repaints. For a module
     // whose glyph set depends on state it learns late (the game language).
     EDEN_DSMOD_CAP_FONT_EPOCH = UINT64_C(1) << 11,
+    // Runtime 23: set while the "sysfont:" source is registered -- the console's shared system
+    // fonts (pl:u) as TrueType bytes, e.g. read_romfs("sysfont:nintendo_udsg-r_ko_003"). Only the
+    // real firmware font is returned: without one (no firmware, keys too old) the read is empty,
+    // never Eden's synthesized substitute (mod_sysfont_source.h).
+    EDEN_DSMOD_CAP_SOURCE_SYSFONT = UINT64_C(1) << 12,
 };
 
 enum {
