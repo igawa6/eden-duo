@@ -398,8 +398,11 @@ void ArmNce::SetContext(const Kernel::Svc::ThreadContext& ctx) {
 }
 
 void ArmNce::SignalInterrupt(Kernel::KThread* thread) {
-    constexpr u64 break_loop = static_cast<u64>(HaltReason::BreakLoop);
-    if ((m_guest_ctx.esr_el1.fetch_or(break_loop) & break_loop) != 0) return;
+    // Add break loop condition.
+    // Eden Duo: upstream #4530 returns here when BreakLoop is already pending, without waiting
+    // for the thread to leave guest code; Octopath Traveler 0 then faults on a null page at
+    // boot on the Thor. Every caller takes the lock again (see .upstream/DIVERGENCES.md #30).
+    m_guest_ctx.esr_el1.fetch_or(static_cast<u64>(HaltReason::BreakLoop));
 
     auto* params = &thread->GetNativeExecutionParameters();
     LockThreadParameters(params);
