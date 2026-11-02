@@ -119,7 +119,7 @@ class Game(
 
     companion object {
         val extensions: Set<String> = HashSet(
-            listOf("xci", "nsp", "nca", "nro")
+            listOf("xci", "nsp", "nca", "nro", "nsz", "xcz")
         )
     }
 }

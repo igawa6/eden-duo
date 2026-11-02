@@ -78,10 +78,12 @@
 #include <QGuiApplication>
 #include <QInputDialog>
 #include <QMimeData>
+#include <QMouseEvent>
 #include <QPalette>
 #include <QProgressDialog>
 #include <QScreen>
 #include <QShortcut>
+#include <QSignalBlocker>
 #include <QStatusBar>
 #include <QtConcurrentRun>
 
@@ -134,6 +136,7 @@ static FileSys::VirtualFile VfsDirectoryCreateFileWrapper(const FileSys::Virtual
 #endif
 
 // Core //
+#include "core/core.h"
 #include "core/frontend/applets/general.h"
 #include "core/frontend/applets/mii_edit.h"
 #include "core/frontend/applets/software_keyboard.h"
@@ -147,6 +150,7 @@ static FileSys::VirtualFile VfsDirectoryCreateFileWrapper(const FileSys::Virtual
 #include "core/file_sys/common_funcs.h"
 #include "core/file_sys/romfs.h"
 #include "core/file_sys/savedata_factory.h"
+#include "core/memory/dmnt_cheat_types.h"
 
 #include "core/tools/renderdoc.h"
 
@@ -1434,6 +1438,9 @@ void MainWindow::OnAppFocusStateChanged(Qt::ApplicationState state) {
 }
 
 void MainWindow::ConnectWidgetEvents() {
+    ui->menu_Cheats->installEventFilter(this);
+    ui->menu_Cheats->menuAction()->setVisible(false);
+
     connect(game_list, &GameList::BootGame, this, &MainWindow::BootGameFromList);
     connect(game_list, &GameList::GameChosen, this, &MainWindow::OnGameListLoadFile);
     connect(game_list, &GameList::OpenDirectory, this, &MainWindow::OnGameListOpenDirectory);
@@ -1468,11 +1475,75 @@ void MainWindow::ConnectWidgetEvents() {
     // Software Keyboard Applet
     connect(this, &MainWindow::EmulationStarting, this, &MainWindow::SoftwareKeyboardExit);
     connect(this, &MainWindow::EmulationStopping, this, &MainWindow::SoftwareKeyboardExit);
+    connect(this, &MainWindow::EmulationStarting, this, &MainWindow::RefreshRuntimeCheats);
+    connect(this, &MainWindow::EmulationStopping, this, &MainWindow::ClearRuntimeCheats);
 
     connect(&status_bar_update_timer, &QTimer::timeout, this, &MainWindow::UpdateStatusBar);
 
     connect(this, &MainWindow::UpdateThemedIcons, multiplayer_state,
             &MultiplayerState::UpdateThemedIcons);
+}
+
+void MainWindow::RefreshRuntimeCheats() {
+    ClearRuntimeCheats();
+
+    const auto cheats = QtCommon::system->GetRuntimeCheats();
+    auto* disable_all = ui->menu_Cheats->addAction(tr("Disable All Cheats"));
+    connect(disable_all, &QAction::triggered, this, [this] {
+        for (auto* action : runtime_cheat_actions) {
+            if (action->isEnabled()) {
+                action->setChecked(false);
+            }
+        }
+    });
+
+    auto* enable_all = ui->menu_Cheats->addAction(tr("Enable All Cheats"));
+    connect(enable_all, &QAction::triggered, this, [this] {
+        for (auto* action : runtime_cheat_actions) {
+            if (action->isEnabled()) {
+                action->setChecked(true);
+            }
+        }
+    });
+
+    ui->menu_Cheats->addSeparator();
+    runtime_cheat_actions.reserve(cheats.size());
+    for (const auto& cheat : cheats) {
+        const QString name = cheat.name.empty() ? tr("Unnamed Cheat")
+                                                : QString::fromUtf8(cheat.name);
+        auto* action = ui->menu_Cheats->addAction(name);
+        action->setCheckable(true);
+        action->setChecked(cheat.enabled || cheat.is_master);
+        action->setEnabled(!cheat.is_master);
+        connect(action, &QAction::toggled, this, [action, id = cheat.id](bool enabled) {
+            if (!QtCommon::system->SetCheatEnabled(id, enabled)) {
+                const QSignalBlocker blocker{action};
+                action->setChecked(!enabled);
+            }
+        });
+        runtime_cheat_actions.push_back(action);
+    }
+
+    ui->menu_Cheats->menuAction()->setVisible(!runtime_cheat_actions.empty());
+}
+
+void MainWindow::ClearRuntimeCheats() {
+    ui->menu_Cheats->clear();
+    runtime_cheat_actions.clear();
+    ui->menu_Cheats->menuAction()->setVisible(false);
+}
+
+bool MainWindow::eventFilter(QObject* watched, QEvent* event) {
+    if (watched == ui->menu_Cheats && event->type() == QEvent::MouseButtonRelease) {
+        const auto* mouse_event = static_cast<QMouseEvent*>(event);
+        auto* action = ui->menu_Cheats->actionAt(mouse_event->pos());
+        if (mouse_event->button() == Qt::LeftButton && action && action->isEnabled() &&
+            action->isCheckable()) {
+            action->trigger();
+            return true;
+        }
+    }
+    return QMainWindow::eventFilter(watched, event);
 }
 
 void MainWindow::ConnectMenuEvents() {
@@ -2797,9 +2868,9 @@ void MainWindow::IncrementInstallProgress() {
 
 void MainWindow::OnMenuInstallToNAND() {
     const QString file_filter =
-        tr("Installable Switch File (*.nca *.nsp *.xci);;Nintendo Content Archive "
-           "(*.nca);;Nintendo Submission Package (*.nsp);;NX Cartridge "
-           "Image (*.xci)");
+        tr("Installable Switch File (*.nca *.nsp *.nsz *.xci *.xcz);;Nintendo Content Archive "
+           "(*.nca);;Nintendo Submission Package (*.nsp *.nsz);;NX Cartridge "
+           "Image (*.xci *.xcz)");
 
     QStringList filenames = QFileDialog::getOpenFileNames(
         this, tr("Install Files"), QString::fromStdString(UISettings::values.roms_path),
@@ -2856,7 +2927,10 @@ void MainWindow::OnMenuInstallToNAND() {
         QFuture<ContentManager::InstallResult> future;
         ContentManager::InstallResult result;
 
-        if (file.endsWith(QStringLiteral("nsp"), Qt::CaseInsensitive)) {
+        if (file.endsWith(QStringLiteral("nsp"), Qt::CaseInsensitive) ||
+            file.endsWith(QStringLiteral("nsz"), Qt::CaseInsensitive) ||
+            file.endsWith(QStringLiteral("xci"), Qt::CaseInsensitive) ||
+            file.endsWith(QStringLiteral("xcz"), Qt::CaseInsensitive)) {
             const auto progress_callback = [this](size_t size, size_t progress) {
                 emit UpdateInstallProgress();
                 if (install_progress->wasCanceled()) {
@@ -3073,6 +3147,10 @@ bool MainWindow::ConfirmShutdownGame() {
 
 void MainWindow::OnLoadComplete() {
     loading_screen->OnLoadComplete();
+    if (emulation_running) {
+        render_window->show();
+        render_window->setFocus();
+    }
 
     perf_overlay = new PerformanceOverlay(this);
     perf_overlay->setVisible(ui->action_Show_Performance_Overlay->isChecked());
@@ -3661,12 +3739,12 @@ void MainWindow::OnToggleGraphicsAPI() {
         api = Settings::RendererBackend::OpenGL_GLSL;
         break;
     case Settings::RendererBackend::OpenGL_GLSL:
-        api = Settings::RendererBackend::OpenGL_GLSL;
-        break;
-    case Settings::RendererBackend::OpenGL_SPIRV:
         api = Settings::RendererBackend::OpenGL_GLASM;
         break;
     case Settings::RendererBackend::OpenGL_GLASM:
+        api = Settings::RendererBackend::OpenGL_SPIRV;
+        break;
+    case Settings::RendererBackend::OpenGL_SPIRV:
         api = Settings::RendererBackend::Null;
         break;
 #else

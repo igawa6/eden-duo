@@ -86,6 +86,10 @@ std::unique_ptr<TranslationMap> InitializeTranslations(QObject* parent) {
            tr("Synchronizes CPU core speed with the game's maximum rendering speed to boost FPS "
               "without affecting game speed (animations, physics, etc.).\n"
               "Can help reduce stuttering at lower framerates."));
+    INSERT(Settings, enable_cheats_by_default, tr("Enable cheats by default"),
+           tr("Enables regular cheats when a game starts. Master Code entries are always enabled. "
+              "Individual cheats can still be toggled from Cheats in the menu bar while the game is "
+              "running."));
 
     // Cpu
     INSERT(Settings, cpu_accuracy, tr("Accuracy:"),
@@ -194,10 +198,6 @@ std::unique_ptr<TranslationMap> InitializeTranslations(QObject* parent) {
     INSERT(Settings, skip_cpu_inner_invalidation, tr("Skip CPU Inner Invalidation"),
            tr("Skips certain cache invalidations during memory updates, reducing CPU usage and "
               "improving latency. This may cause soft-crashes."));
-    INSERT(Settings, nce_invalidation_gpu_readback,
-           tr("GPU Readback Before NCE Invalidation"),
-           tr("Flushes GPU buffer data back to guest memory before NCE invalidates the whole "
-              "guest page, preserving it while the CPU store proceeds."));
     INSERT(Settings, vsync_mode, tr("VSync Mode:"),
            tr("FIFO (VSync) does not drop frames or exhibit tearing but is limited by the screen "
               "refresh rate.\nFIFO Relaxed allows tearing as it recovers from a slow down.\n"
