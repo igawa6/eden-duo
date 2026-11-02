@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.3.4
+
+**Updated**
+
+- Based on the latest Eden nightly ([v1793569440.7a6d055094](https://git.eden-emu.dev/eden-ci/nightly/releases/tag/v1793569440.7a6d055094), 2026-11-02), with upstream's newest emulation fixes and improvements. All companions keep working.
+
 ## 1.3.3
 
 **Added**
