@@ -49,6 +49,7 @@ Companions are separate, installable **`.dsmod.zip` packages**, one per game, so
 | 25 | [Octopath Traveler 0](https://github.com/igawa6/eden-duo-companions#octopath-traveler-0) | `01005270232F2000` | 1.0.5 | 🥇<br><a href="https://ko-fi.com/W7W1DAK7T"><img src="https://img.shields.io/badge/TwoBitSprite-F16061?style=flat-square&logo=ko-fi&logoColor=white" style="vertical-align: middle;" alt="TwoBitSprite"></a> |
 | 26 | [Pokémon Sword](https://github.com/igawa6/eden-duo-companions#pokemon-sword) | `0100ABF008968000` | 1.3.2 | 🥇<br><a href="https://ko-fi.com/Y1Q8291E0L"><img src="https://img.shields.io/badge/Khaz_Otter-F16061?style=flat-square&logo=ko-fi&logoColor=white" style="vertical-align: middle;" alt="Khaz Otter"></a> |
 | 27 | [Pokémon Shield](https://github.com/igawa6/eden-duo-companions#pokemon-shield) | `01008DB008C2C000` | 1.3.2 | 🥇<br><a href="https://ko-fi.com/Y1Q8291E0L"><img src="https://img.shields.io/badge/Khaz_Otter-F16061?style=flat-square&logo=ko-fi&logoColor=white" style="vertical-align: middle;" alt="Khaz Otter"></a> |
+| 28 | [Cult of the Lamb](https://github.com/igawa6/eden-duo-companions#cult-of-the-lamb) | `01002E7016C46000` | 1.5.27, 1.5.28 | ⭐<br><a href="https://github.com/AlterDigga"><img src="https://img.shields.io/badge/AlterDigga-181717?style=flat-square&logo=github&logoColor=white" style="vertical-align: middle;" alt="AlterDigga"></a> |
 
 ⭐ Companion contributor. Big thanks for your mods creation!
 
