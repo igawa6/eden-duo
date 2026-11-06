@@ -25,6 +25,11 @@
     <string name="companion_app_choose">Choose an app</string>
     <string name="companion_app_missing">%1$s (not installed)</string>
     <string name="companion_app_search">Search apps</string>
+    <string name="second_screen_brightness">Second screen follows main brightness</string>
+    <string name="second_screen_brightness_description">On copies the main screen\'s brightness onto the second screen while a game runs. Auto does too, except on devices that light the second screen from their own slider (AYN Thor and other AYN dual-screen devices). Off leaves it to the device. Applies when a game starts.</string>
+    <string name="second_screen_brightness_auto">Auto</string>
+    <string name="second_screen_brightness_on">On</string>
+    <string name="second_screen_brightness_off">Off</string>
     <!-- Eden Duo: in-game companion toggle -->
     <string name="companion_toggle_gesture">Companion toggle gesture</string>
     <string name="companion_toggle_gesture_description">Hides or shows the companion during a game, so the second screen can be used for another app. Also in the in-game menu and the Companion Quick Settings tile.</string>

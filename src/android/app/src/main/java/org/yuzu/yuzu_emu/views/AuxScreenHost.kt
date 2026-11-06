@@ -23,6 +23,7 @@ import android.view.Window
 import android.view.WindowManager
 import java.lang.ref.WeakReference
 import org.yuzu.yuzu_emu.NativeLibrary
+import org.yuzu.yuzu_emu.duo.SecondScreenBrightness
 import org.yuzu.yuzu_emu.features.input.NativeInput
 import org.yuzu.yuzu_emu.utils.Log
 
@@ -31,7 +32,8 @@ import org.yuzu.yuzu_emu.utils.Log
  * (the second panel, while the game is on the main one) and AuxCompanionActivity (the main
  * panel, while the game is on the second one). One SurfaceView whose surface goes to the
  * native aux output, whose touches become aux touch for the dsm:u service, and which plays the
- * runtime's haptics; plus, on a panel the system does not dim, the system brightness.
+ * runtime's haptics; plus, on a panel the system does not dim, the system brightness
+ * (SecondScreenBrightness decides).
  *
  * The host calls [createView] once, then [start]/[stop] with its own visibility.
  */
@@ -60,7 +62,7 @@ class AuxScreenHost(
     }
 
     fun start() {
-        if (followSystemBrightness && !deviceLightsSecondScreen()) {
+        if (followSystemBrightness && SecondScreenBrightness.decision(context).follows) {
             // The two panels are lit independently on this hardware -- the same reason the
             // window flags have to be set on the second screen at all -- so it keeps its own
             // brightness unless it is told to follow. Left alone it sits at full while the main
@@ -85,6 +87,10 @@ class AuxScreenHost(
                     }
                 }
             }
+        } else {
+            // Not following (device-lit panel, or off by setting): an override of ours left on
+            // the window would pin the panel to it.
+            stopFollowing()
         }
         active = true
         current = WeakReference(this)
@@ -95,6 +101,11 @@ class AuxScreenHost(
         if (current?.get() === this) {
             current = null
         }
+        stopFollowing()
+    }
+
+    /** Stops copying the system brightness and hands the panel back to the device. */
+    private fun stopFollowing() {
         brightnessObserver?.let {
             try {
                 context.contentResolver.unregisterContentObserver(it)
@@ -103,6 +114,7 @@ class AuxScreenHost(
             }
         }
         brightnessObserver = null
+        applyBrightness(WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE)
     }
 
     override fun surfaceCreated(holder: SurfaceHolder) {
@@ -128,21 +140,6 @@ class AuxScreenHost(
     }
 
     private var brightnessObserver: ContentObserver? = null
-
-    /// AYN's dual-screen devices (Thor, Odin 2 Portal) light the second panel from their own
-    /// slider: Settings.System "dual_screen_brightness_level", applied to the panel by the
-    /// vendor's assistant. A window brightness override on top of that drags the second screen
-    /// to the main screen's level and the user's own slider stops working (eden-duo #8), so the
-    /// window is left alone where that setting exists.
-    private fun deviceLightsSecondScreen(): Boolean = try {
-        val level = Settings.System.getInt(context.contentResolver, "dual_screen_brightness_level", -1)
-        if (level >= 0) {
-            Log.info("$logTag second screen lit by the device (level $level); not following main")
-        }
-        level >= 0
-    } catch (e: Exception) {
-        false
-    }
 
     /// The system's brightness as a window value in 0..1, or BRIGHTNESS_OVERRIDE_NONE when it
     /// cannot be known -- under automatic brightness the stored number is not what is on screen,

@@ -85,6 +85,15 @@ object SecondScreenSettings {
                         valuesId = R.array.companionToggleGestureValues
                     )
                 )
+                add(
+                    SingleChoiceSetting(
+                        SecondScreenBrightness.setting,
+                        titleId = R.string.second_screen_brightness,
+                        descriptionId = R.string.second_screen_brightness_description,
+                        choicesId = R.array.secondScreenBrightnessEntries,
+                        valuesId = R.array.secondScreenBrightnessValues
+                    )
+                )
             }
         }
     }

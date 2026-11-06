@@ -38,4 +38,14 @@
         <item>2</item>
         <item>3</item>
     </integer-array>
+    <string-array name="secondScreenBrightnessEntries">
+        <item>@string/second_screen_brightness_auto</item>
+        <item>@string/second_screen_brightness_on</item>
+        <item>@string/second_screen_brightness_off</item>
+    </string-array>
+    <integer-array name="secondScreenBrightnessValues">
+        <item>0</item>
+        <item>1</item>
+        <item>2</item>
+    </integer-array>
 </resources>
