@@ -166,6 +166,7 @@ class MainActivity : AppCompatActivity(), ThemeProvider {
         if (!firstTimeSetup && NativeLibrary.isUpdateCheckerEnabled() && BooleanSetting.ENABLE_UPDATE_CHECKS.getBoolean()) {
              checkForUpdates()
         }
+        if (!firstTimeSetup) org.yuzu.yuzu_emu.duo.DuoUpdater.checkOnStart(this) // Eden Duo
         setInsets()
         applyFullscreenPreference()
     }

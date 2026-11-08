@@ -22,9 +22,9 @@ android {
 
         externalNativeBuild {
             cmake {
-                // The update checker asks upstream Eden's release feed and would offer to
-                // install upstream Eden (another app). It stays off in every build, nightly
-                // included, until it can point at Eden Duo's own releases.
+                // Upstream's update checker asks upstream Eden's release feed and would offer
+                // to install upstream Eden (another app). It stays off in every build, nightly
+                // included; Eden Duo's own releases are checked by duo/DuoUpdater.kt instead.
                 arguments.removeAll { it.startsWith('-DENABLE_UPDATE_CHECKER=') }
                 arguments.add('-DENABLE_UPDATE_CHECKER=OFF')
             }

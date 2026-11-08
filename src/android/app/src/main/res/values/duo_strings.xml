@@ -112,4 +112,20 @@
     <string name="duo_save_import_error_description">The zip could not be read, so your current saves were kept.\n\nDetails: %1$s</string>
     <string name="duo_save_import_failed_description">The saves in the zip could not be copied to %1$s.</string>
     <string name="duo_save_import_profile">Saves are imported into the profile %1$s.</string>
+    <!-- Eden Duo: in-app update (App Settings) -->
+    <string name="duo_update_checks">Check for Eden Duo updates</string>
+    <string name="duo_update_checks_description">Once a day at start, looks for a new Eden Duo release on GitHub and offers to install it. Games, settings and companions are kept.</string>
+    <string name="duo_update_check_now">Check now</string>
+    <string name="duo_update_check_now_description">Installed: Eden Duo %1$s</string>
+    <string name="duo_update_up_to_date">Eden Duo is up to date</string>
+    <string name="duo_update_check_failed">Could not check for Eden Duo updates</string>
+    <string name="duo_update_check_busy">GitHub is busy. Try again later.</string>
+    <string name="duo_update_available">Eden Duo %1$s is available</string>
+    <string name="duo_update_available_no_notes">It installs over your current Eden Duo (%1$s). Games, settings and companions are kept.</string>
+    <string name="duo_update_install">Update</string>
+    <string name="duo_update_view">View release</string>
+    <string name="duo_update_later">Later</string>
+    <string name="duo_update_skip">Skip this version</string>
+    <string name="duo_update_downloading">Downloading Eden Duo %1$s</string>
+    <string name="duo_update_failed">The Eden Duo update could not be downloaded</string>
 </resources>

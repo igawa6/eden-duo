@@ -1352,6 +1352,7 @@ class SettingsFragmentPresenter(
             if (NativeLibrary.isUpdateCheckerEnabled()) {
                 add(BooleanSetting.ENABLE_UPDATE_CHECKS.key)
             }
+            org.yuzu.yuzu_emu.duo.DuoUpdater.addTo(this, activity) // Eden Duo's own releases
 
             add(BooleanSetting.ENABLE_QUICK_SETTINGS.key)
             add(BooleanSetting.INVERT_CONFIRM_BACK_CONTROLLER_BUTTONS.key)
