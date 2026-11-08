@@ -3,12 +3,18 @@
 
 package org.yuzu.yuzu_emu.duo
 
+import android.app.PendingIntent
 import android.content.ActivityNotFoundException
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageInstaller
+import android.os.Build
+import android.provider.Settings
 import android.widget.Toast
+import androidx.activity.result.ActivityResultLauncher
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
-import androidx.core.content.FileProvider
 import androidx.core.content.edit
 import androidx.core.net.toUri
 import androidx.fragment.app.FragmentActivity
@@ -261,6 +267,7 @@ object DuoUpdater {
                     }.also { verifyPackage(activity, it) }
                 }
                 dialog.dismiss()
+                busy.set(false)
                 install(activity, apk)
             } catch (e: Cancelled) {
                 log("download of ${release.version} cancelled")
@@ -318,9 +325,14 @@ object DuoUpdater {
                 if (release.size > 0 && copied != release.size) {
                     throw IOException("incomplete download: $copied of ${release.size} bytes")
                 }
+                log("verified size $copied bytes" + if (release.size > 0) "" else " (none given)")
                 val actual = digest.digest().joinToString("") { "%02x".format(it) }
-                if (release.sha256 != null && actual != release.sha256) {
+                if (release.sha256 == null) {
+                    log("no digest given (sha256 $actual)")
+                } else if (actual != release.sha256) {
                     throw IOException("SHA-256 mismatch: $actual")
+                } else {
+                    log("verified sha256 $actual")
                 }
             }
             return apk
@@ -337,19 +349,144 @@ object DuoUpdater {
             apk.delete()
             throw IOException("not an update for ${context.packageName}: ${info?.packageName}")
         }
-        log("downloaded ${apk.name} (${info.versionName}), ${apk.length()} bytes")
+        log("verified package ${info.packageName} (versionName ${info.versionName})")
     }
 
+    /**
+     * Hands the verified [apk] to the system installer through a PackageInstaller session (a
+     * plain ACTION_VIEW opens an "Open with" chooser wherever file managers claim APKs). Without
+     * the "Install unknown apps" permission the user is sent to that setting first.
+     */
     private fun install(activity: FragmentActivity, apk: File) {
-        val uri = FileProvider.getUriForFile(activity, activity.packageName + ".provider", apk)
-        val intent = Intent(Intent.ACTION_VIEW)
-            .setDataAndType(uri, "application/vnd.android.package-archive")
-            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
-        activity.startActivity(intent)
+        if (activity.packageManager.canRequestPackageInstalls()) {
+            commitSession(activity, apk)
+            return
+        }
+        log("asking for the install-unknown-apps permission")
+        val registry = activity.activityResultRegistry
+        lateinit var launcher: ActivityResultLauncher<Intent>
+        launcher = registry.register(
+            "duo-update-unknown-sources",
+            ActivityResultContracts.StartActivityForResult()
+        ) {
+            launcher.unregister()
+            if (activity.packageManager.canRequestPackageInstalls()) {
+                commitSession(activity, apk)
+            } else {
+                log("install-unknown-apps permission not given")
+                apk.delete()
+                toast(activity, R.string.duo_update_unknown_sources)
+            }
+        }
+        try {
+            launcher.launch(
+                Intent(
+                    Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                    "package:${activity.packageName}".toUri()
+                )
+            )
+        } catch (e: ActivityNotFoundException) {
+            launcher.unregister()
+            log("no install-unknown-apps settings screen; trying the installer anyway")
+            commitSession(activity, apk)
+        }
     }
 
-    // A finished update restarts the app; its APK is removed on a later check (after an hour,
-    // so an installer still reading it is not disturbed).
+    private fun commitSession(activity: FragmentActivity, apk: File) {
+        val context = activity.applicationContext
+        activity.lifecycleScope.launch {
+            try {
+                withContext(Dispatchers.IO) { writeAndCommit(context, apk) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                log("installer could not start: ${e.message}")
+                toast(activity, R.string.duo_update_install_not_started)
+            } finally {
+                // The session holds its own copy once written.
+                apk.delete()
+            }
+        }
+    }
+
+    private fun writeAndCommit(context: Context, apk: File) {
+        val installer = context.packageManager.packageInstaller
+        // An earlier attempt that never finished (the app was closed meanwhile).
+        installer.mySessions.forEach { runCatching { installer.abandonSession(it.sessionId) } }
+        val params =
+            PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL)
+        params.setAppPackageName(context.packageName)
+        params.setSize(apk.length())
+        val sessionId = installer.createSession(params)
+        val session = installer.openSession(sessionId)
+        try {
+            session.openWrite("base.apk", 0, apk.length()).use { output ->
+                apk.inputStream().use { it.copyTo(output, 64 * 1024) }
+                session.fsync(output)
+            }
+            val intent = Intent(context, DuoInstallReceiver::class.java)
+                .setAction(DuoInstallReceiver.ACTION)
+            // Mutable: the installer adds the status extras to this explicit intent.
+            val mutable = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                PendingIntent.FLAG_MUTABLE
+            } else {
+                0
+            }
+            val flags = PendingIntent.FLAG_UPDATE_CURRENT or mutable
+            val pending = PendingIntent.getBroadcast(context, sessionId, intent, flags)
+            session.commit(pending.intentSender)
+            log("install session $sessionId committed (${apk.length()} bytes)")
+        } catch (e: Exception) {
+            runCatching { session.abandon() }
+            throw e
+        } finally {
+            session.close()
+        }
+    }
+
+    /** DuoInstallReceiver: the session's answer. */
+    internal fun onInstallStatus(context: Context, intent: Intent) {
+        val status =
+            intent.getIntExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE)
+        val message = intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE)
+        val sessionId = intent.getIntExtra(PackageInstaller.EXTRA_SESSION_ID, -1)
+        val outcome = DuoUpdate.installOutcome(status, message)
+        log("install session $sessionId: status $status ($outcome) ${message ?: ""}".trimEnd())
+        val text = when (outcome) {
+            DuoUpdate.InstallOutcome.NEEDS_CONFIRMATION -> {
+                val confirm = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    intent.getParcelableExtra(Intent.EXTRA_INTENT, Intent::class.java)
+                } else {
+                    @Suppress("DEPRECATION")
+                    intent.getParcelableExtra(Intent.EXTRA_INTENT)
+                }
+                try {
+                    context.startActivity(confirm!!.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                    null
+                } catch (e: Exception) {
+                    log("installer confirmation could not open: ${e.message}")
+                    val installer = context.packageManager.packageInstaller
+                    runCatching { installer.abandonSession(sessionId) }
+                    R.string.duo_update_install_not_started
+                }
+            }
+            DuoUpdate.InstallOutcome.SUCCESS -> R.string.duo_update_installed
+            DuoUpdate.InstallOutcome.CANCELLED -> R.string.duo_update_install_cancelled
+            DuoUpdate.InstallOutcome.DOWNGRADE -> R.string.duo_update_install_downgrade
+            DuoUpdate.InstallOutcome.CONFLICT -> R.string.duo_update_install_conflict
+            DuoUpdate.InstallOutcome.INVALID -> R.string.duo_update_install_invalid
+            DuoUpdate.InstallOutcome.INCOMPATIBLE -> R.string.duo_update_install_incompatible
+            DuoUpdate.InstallOutcome.STORAGE -> R.string.duo_update_install_storage
+            DuoUpdate.InstallOutcome.BLOCKED -> R.string.duo_update_install_blocked
+            DuoUpdate.InstallOutcome.FAILED -> R.string.duo_update_install_failed
+        }
+        if (outcome != DuoUpdate.InstallOutcome.NEEDS_CONFIRMATION) {
+            File(context.cacheDir, UPDATE_DIR).deleteRecursively()
+        }
+        text?.let { Toast.makeText(context, it, Toast.LENGTH_LONG).show() }
+    }
+
+    // Leftovers of an update that never reached the installer (the app was closed meanwhile).
     private fun removeOldDownloads(cacheDir: File) {
         val dir = File(cacheDir, UPDATE_DIR)
         val hourAgo = System.currentTimeMillis() - 60 * 60 * 1000
@@ -360,4 +497,15 @@ object DuoUpdater {
         Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
 
     private fun log(line: String) = Log.info("$TAG $line")
+}
+
+/** Eden Duo: receives the in-app update's PackageInstaller session status (DuoUpdater). */
+class DuoInstallReceiver : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent) {
+        if (intent.action == ACTION) DuoUpdater.onInstallStatus(context, intent)
+    }
+
+    companion object {
+        const val ACTION = "dev.igawa6.edenduo.UPDATE_INSTALL_STATUS"
+    }
 }

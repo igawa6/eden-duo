@@ -9,6 +9,7 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.yuzu.yuzu_emu.duo.DuoUpdate.InstallOutcome
 
 class DuoUpdateTest {
     private val sha = "e356526f90546ede25b7893bc8d69ac488388aa64ed8005550768a04f200b56e"
@@ -206,5 +207,34 @@ class DuoUpdateTest {
         assertTrue(long.startsWith(cut.removeSuffix("…")))
         assertFalse(cut.removeSuffix("…").endsWith(" "))
         assertEquals("short", DuoUpdate.plainNotes("short", maxChars = 100))
+    }
+
+    @Test
+    fun mapsInstallerStatuses() {
+        // PackageInstaller.STATUS_* values (public API constants).
+        assertEquals(InstallOutcome.SUCCESS, DuoUpdate.installOutcome(0, null))
+        assertEquals(InstallOutcome.NEEDS_CONFIRMATION, DuoUpdate.installOutcome(-1, null))
+        assertEquals(InstallOutcome.FAILED, DuoUpdate.installOutcome(1, "INSTALL_FAILED_INTERNAL"))
+        assertEquals(InstallOutcome.BLOCKED, DuoUpdate.installOutcome(2, null))
+        assertEquals(InstallOutcome.CANCELLED, DuoUpdate.installOutcome(3, null))
+        assertEquals(InstallOutcome.INVALID, DuoUpdate.installOutcome(4, "INSTALL_PARSE_FAILED"))
+        assertEquals(InstallOutcome.CONFLICT, DuoUpdate.installOutcome(5, "UPDATE_INCOMPATIBLE"))
+        assertEquals(InstallOutcome.STORAGE, DuoUpdate.installOutcome(6, null))
+        assertEquals(InstallOutcome.INCOMPATIBLE, DuoUpdate.installOutcome(7, null))
+        assertEquals(InstallOutcome.FAILED, DuoUpdate.installOutcome(8, null))
+        assertEquals(InstallOutcome.FAILED, DuoUpdate.installOutcome(42, null))
+    }
+
+    @Test
+    fun aLowerVersionCodeIsADowngrade() {
+        // Android's message for an older versionCode (status STATUS_FAILURE_INCOMPATIBLE).
+        val message = "INSTALL_FAILED_VERSION_DOWNGRADE: Downgrade detected: Update version " +
+            "code 34201485 is older than current 34254234"
+        assertEquals(InstallOutcome.DOWNGRADE, DuoUpdate.installOutcome(7, message))
+        assertEquals(InstallOutcome.DOWNGRADE, DuoUpdate.installOutcome(1, message))
+        assertEquals(
+            InstallOutcome.INCOMPATIBLE,
+            DuoUpdate.installOutcome(7, "INSTALL_FAILED_OLDER_SDK")
+        )
     }
 }

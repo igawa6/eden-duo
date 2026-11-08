@@ -128,4 +128,15 @@
     <string name="duo_update_skip">Skip this version</string>
     <string name="duo_update_downloading">Downloading Eden Duo %1$s</string>
     <string name="duo_update_failed">The Eden Duo update could not be downloaded</string>
+    <string name="duo_update_unknown_sources">To update, allow Eden Duo to install unknown apps, then tap Update again.</string>
+    <string name="duo_update_install_not_started">The update was downloaded, but the Android installer could not start. Try again later.</string>
+    <string name="duo_update_installed">Eden Duo was updated</string>
+    <string name="duo_update_install_cancelled">Update cancelled</string>
+    <string name="duo_update_install_downgrade">Not installed: the Eden Duo on this device is newer than this update.</string>
+    <string name="duo_update_install_conflict">Not installed: this update does not match the installed Eden Duo (different signature).</string>
+    <string name="duo_update_install_invalid">Not installed: Android could not read the downloaded update.</string>
+    <string name="duo_update_install_incompatible">Not installed: this update is not compatible with this device.</string>
+    <string name="duo_update_install_storage">Not installed: there is not enough free storage.</string>
+    <string name="duo_update_install_blocked">Not installed: Android blocked the update.</string>
+    <string name="duo_update_install_failed">The update was downloaded, but Android did not install it.</string>
 </resources>

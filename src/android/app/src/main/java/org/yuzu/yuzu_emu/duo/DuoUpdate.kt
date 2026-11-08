@@ -3,6 +3,7 @@
 
 package org.yuzu.yuzu_emu.duo
 
+import android.content.pm.PackageInstaller
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import java.math.BigInteger
 
@@ -139,6 +140,47 @@ object DuoUpdate {
             size = asset.path("size").asLong(0),
             sha256 = sha256
         )
+    }
+
+    /** What a PackageInstaller session status means for the user (DuoInstallReceiver). */
+    enum class InstallOutcome {
+        SUCCESS,
+        NEEDS_CONFIRMATION,
+        CANCELLED,
+        DOWNGRADE,
+        CONFLICT,
+        INVALID,
+        INCOMPATIBLE,
+        STORAGE,
+        BLOCKED,
+        FAILED
+    }
+
+    /**
+     * Maps PackageInstaller.EXTRA_STATUS (and EXTRA_STATUS_MESSAGE) to an [InstallOutcome]. A
+     * lower versionCode is reported as STATUS_FAILURE_INCOMPATIBLE with the message
+     * "INSTALL_FAILED_VERSION_DOWNGRADE"; it gets its own outcome.
+     */
+    fun installOutcome(status: Int, message: String?): InstallOutcome = when (status) {
+        PackageInstaller.STATUS_SUCCESS -> InstallOutcome.SUCCESS
+        PackageInstaller.STATUS_PENDING_USER_ACTION -> InstallOutcome.NEEDS_CONFIRMATION
+        PackageInstaller.STATUS_FAILURE_ABORTED -> InstallOutcome.CANCELLED
+        PackageInstaller.STATUS_FAILURE_CONFLICT -> InstallOutcome.CONFLICT
+        PackageInstaller.STATUS_FAILURE_INVALID -> InstallOutcome.INVALID
+        PackageInstaller.STATUS_FAILURE_STORAGE -> InstallOutcome.STORAGE
+        PackageInstaller.STATUS_FAILURE_BLOCKED -> InstallOutcome.BLOCKED
+        PackageInstaller.STATUS_FAILURE_INCOMPATIBLE ->
+            if (message?.contains("VERSION_DOWNGRADE") == true) {
+                InstallOutcome.DOWNGRADE
+            } else {
+                InstallOutcome.INCOMPATIBLE
+            }
+        else ->
+            if (message?.contains("VERSION_DOWNGRADE") == true) {
+                InstallOutcome.DOWNGRADE
+            } else {
+                InstallOutcome.FAILED
+            }
     }
 
     /**

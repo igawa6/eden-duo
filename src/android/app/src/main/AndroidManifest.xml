@@ -140,6 +140,11 @@ SPDX-License-Identifier: GPL-3.0-or-later
             </intent-filter>
         </service>
 
+        <!-- Eden Duo: the in-app update's PackageInstaller session status (DuoUpdater). -->
+        <receiver
+            android:name="org.yuzu.yuzu_emu.duo.DuoInstallReceiver"
+            android:exported="false" />
+
         <service android:name="org.yuzu.yuzu_emu.utils.ForegroundService" android:foregroundServiceType="specialUse">
             <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="Keep emulation running in background"/>
         </service>
