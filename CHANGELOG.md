@@ -10,6 +10,7 @@
 **Fixed**
 
 - The AYN Thor's second-screen brightness slider works again while a game runs on newer Thor firmware (Thor Max batch 7) too: the slider moved the lower screen only while it was dragged, then it snapped back to the main screen's level. Eden Duo now leaves the second screen's brightness to the device on any AYN dual-screen device, not only on firmware that keeps the older second-screen brightness setting (eden-duo #18).
+- Cult of the Lamb keeps its dual-screen badge and "not in your library" card even when the companion list cannot be loaded from GitHub (it was missing from the list that comes with the app).
 
 ## 1.3.4
 
