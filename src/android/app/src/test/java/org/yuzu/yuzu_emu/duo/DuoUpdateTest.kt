@@ -237,4 +237,14 @@ class DuoUpdateTest {
             DuoUpdate.installOutcome(7, "INSTALL_FAILED_OLDER_SDK")
         )
     }
+
+    @Test
+    fun aDowngradeReportedAsInvalidIsADowngrade() {
+        // The AYN Thor reports an older versionCode as STATUS_FAILURE_INVALID (4).
+        val message = "INSTALL_FAILED_VERSION_DOWNGRADE: Downgrade detected: Update version " +
+            "code 34201485 is older than current 34254460"
+        assertEquals(InstallOutcome.DOWNGRADE, DuoUpdate.installOutcome(4, message))
+        assertEquals(InstallOutcome.INVALID, DuoUpdate.installOutcome(4, "INSTALL_PARSE_FAILED"))
+        assertEquals(InstallOutcome.SUCCESS, DuoUpdate.installOutcome(0, message))
+    }
 }

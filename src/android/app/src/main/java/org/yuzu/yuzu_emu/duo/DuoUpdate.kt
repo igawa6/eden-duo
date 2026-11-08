@@ -158,29 +158,23 @@ object DuoUpdate {
 
     /**
      * Maps PackageInstaller.EXTRA_STATUS (and EXTRA_STATUS_MESSAGE) to an [InstallOutcome]. A
-     * lower versionCode is reported as STATUS_FAILURE_INCOMPATIBLE with the message
-     * "INSTALL_FAILED_VERSION_DOWNGRADE"; it gets its own outcome.
+     * lower versionCode fails with the message "INSTALL_FAILED_VERSION_DOWNGRADE"; the status
+     * that carries it varies by device (STATUS_FAILURE_INCOMPATIBLE on stock Android,
+     * STATUS_FAILURE_INVALID on the AYN Thor), so the message is checked first for every failure.
      */
-    fun installOutcome(status: Int, message: String?): InstallOutcome = when (status) {
-        PackageInstaller.STATUS_SUCCESS -> InstallOutcome.SUCCESS
-        PackageInstaller.STATUS_PENDING_USER_ACTION -> InstallOutcome.NEEDS_CONFIRMATION
-        PackageInstaller.STATUS_FAILURE_ABORTED -> InstallOutcome.CANCELLED
-        PackageInstaller.STATUS_FAILURE_CONFLICT -> InstallOutcome.CONFLICT
-        PackageInstaller.STATUS_FAILURE_INVALID -> InstallOutcome.INVALID
-        PackageInstaller.STATUS_FAILURE_STORAGE -> InstallOutcome.STORAGE
-        PackageInstaller.STATUS_FAILURE_BLOCKED -> InstallOutcome.BLOCKED
-        PackageInstaller.STATUS_FAILURE_INCOMPATIBLE ->
-            if (message?.contains("VERSION_DOWNGRADE") == true) {
-                InstallOutcome.DOWNGRADE
-            } else {
-                InstallOutcome.INCOMPATIBLE
-            }
-        else ->
-            if (message?.contains("VERSION_DOWNGRADE") == true) {
-                InstallOutcome.DOWNGRADE
-            } else {
-                InstallOutcome.FAILED
-            }
+    fun installOutcome(status: Int, message: String?): InstallOutcome = when {
+        status == PackageInstaller.STATUS_SUCCESS -> InstallOutcome.SUCCESS
+        status == PackageInstaller.STATUS_PENDING_USER_ACTION -> InstallOutcome.NEEDS_CONFIRMATION
+        message?.contains("VERSION_DOWNGRADE") == true -> InstallOutcome.DOWNGRADE
+        else -> when (status) {
+            PackageInstaller.STATUS_FAILURE_ABORTED -> InstallOutcome.CANCELLED
+            PackageInstaller.STATUS_FAILURE_CONFLICT -> InstallOutcome.CONFLICT
+            PackageInstaller.STATUS_FAILURE_INVALID -> InstallOutcome.INVALID
+            PackageInstaller.STATUS_FAILURE_STORAGE -> InstallOutcome.STORAGE
+            PackageInstaller.STATUS_FAILURE_BLOCKED -> InstallOutcome.BLOCKED
+            PackageInstaller.STATUS_FAILURE_INCOMPATIBLE -> InstallOutcome.INCOMPATIBLE
+            else -> InstallOutcome.FAILED
+        }
     }
 
     /**
