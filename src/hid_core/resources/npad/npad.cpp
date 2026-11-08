@@ -165,13 +165,6 @@ void NPad::ControllerUpdate(Kernel::KernelCore& kernel, Core::HID::ControllerTri
         return;
     }
 
-    // A frontend input event (Android's motion sensor) can reach this before the HID applet
-    // resource exists -- during the first seconds of a boot -- or after it is gone; there is
-    // nothing to update yet. (Eden Duo: seen as a SIGSEGV at launch on a device with a gyro.)
-    if (applet_resource_holder.applet_resource == nullptr) {
-        return;
-    }
-
     for (std::size_t aruid_index = 0; aruid_index < AruidIndexMax; aruid_index++) {
         if (controller_idx >= controller_data[aruid_index].size()) {
             return;

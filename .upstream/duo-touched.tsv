@@ -81,7 +81,7 @@ duo-only	A	-	167	0	src/android/app/src/main/java/org/yuzu/yuzu_emu/utils/DualScr
 duo-only	A	-	167	0	src/core/mods/mod_persist.cpp
 duo-only	A	-	169	0	src/android/app/src/test/java/org/yuzu/yuzu_emu/utils/ExternalContentBootRulesTest.kt
 duo-only	A	-	169	0	src/tests/core/mods/runtime16.cpp
-duo-only	A	-	169	0	.upstream/DIVERGENCES.md
+duo-only	A	-	170	0	.upstream/DIVERGENCES.md
 duo-only	A	-	173	0	src/video_core/renderer_vulkan/vk_dsmod_rt_probe.cpp
 duo-only	A	-	176	0	src/video_core/renderer_vulkan/vk_dsmod_aux.h
 duo-only	A	-	18	0	src/core/hle/service/dsm/dsm.h
@@ -200,8 +200,8 @@ duo-only	A	-	479	0	src/core/mods/mod_ui_widget_state.cpp
 duo-only	A	-	48	0	src/tests/core/mods/map_cache_identity.cpp
 duo-only	A	-	49	0	src/core/mods/mod_msbt.h
 duo-only	A	-	501	0	src/android/app/src/main/java/org/yuzu/yuzu_emu/utils/CompanionApp.kt
-duo-only	A	-	502	0	.upstream/duo-touched.tsv
 duo-only	A	-	504	0	src/core/mods/engine_mercury.cpp
+duo-only	A	-	504	0	.upstream/duo-touched.tsv
 duo-only	A	-	5	0	src/tests/core/mods/golden/MetroidDread/render.txt
 duo-only	A	-	51	0	src/android/app/src/main/res/values/duo_arrays.xml
 duo-only	A	-	514	0	src/core/mods/mod_pages.cpp
@@ -395,7 +395,6 @@ upstream-hook	M	4	9	6	src/video_core/renderer_opengl/renderer_opengl.cpp
 upstream-hook	M	3	10	0	src/input_common/drivers/android.cpp
 upstream-hook	M	3	14	0	src/core/file_sys/romfs_factory.h
 upstream-hook	M	3	14	1	src/android/app/src/main/java/org/yuzu/yuzu_emu/fragments/AboutFragment.kt
-upstream-hook	M	3	19	0	src/hid_core/resources/npad/npad.cpp
 upstream-hook	M	3	20	1	src/android/app/src/main/java/org/yuzu/yuzu_emu/model/Game.kt
 upstream-hook	M	3	22	1	src/android/app/src/main/res/layout-land/fragment_games.xml
 upstream-hook	M	3	26	1	src/core/loader/nso.h
@@ -410,6 +409,7 @@ upstream-hook	M	2	10	0	src/video_core/renderer_base.h
 upstream-hook	M	2	11	0	src/android/app/src/main/java/org/yuzu/yuzu_emu/fragments/ProgressDialogFragment.kt
 upstream-hook	M	2	11	1	src/core/hle/kernel/k_page_table_base.cpp
 upstream-hook	M	2	12	0	src/android/app/src/main/java/org/yuzu/yuzu_emu/model/GamesViewModel.kt
+upstream-hook	M	2	12	0	src/hid_core/resources/npad/npad.cpp
 upstream-hook	M	2	13	0	src/core/hle/kernel/k_process.cpp
 upstream-hook	M	2	13	5	src/core/file_sys/fssystem/fssystem_aes_ctr_storage.cpp
 upstream-hook	M	2	14	0	src/core/perf_stats.h
