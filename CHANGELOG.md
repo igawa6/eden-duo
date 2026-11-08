@@ -1,11 +1,15 @@
 # Changelog
 
-## Unreleased
+## 1.3.5
 
 **New**
 
 - In-app updates: Eden Duo looks for a new release on GitHub once a day when it starts (never during a game) and offers to install it over the current version, keeping games, settings and companions. Choose Update, Later or Skip this version; pre-releases are never offered. The update is checked (size, SHA-256, app id) and installed by Android's own installer; the first time, Android asks you to allow Eden Duo to install apps. App Settings → "Check for Eden Duo updates" turns it off, and "Check now" looks right away.
 - Graphics → Second Screen → "Second screen follows main brightness" (Auto, On, Off). Auto copies the main screen's brightness onto the second screen except on devices that light it from their own slider; On and Off decide for devices Eden Duo does not recognise.
+
+**Updated**
+
+- Based on the latest Eden nightly ([v1794086134.7f1bc0c9d1](https://git.eden-emu.dev/eden-ci/nightly/releases/tag/v1794086134.7f1bc0c9d1), 2026-11-08), with upstream's newest emulation fixes and improvements. All companions keep working.
 
 **Fixed**
 
