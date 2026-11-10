@@ -417,6 +417,10 @@ private:
     /// Prepare an image view to be used
     void PrepareImageView(ImageViewId image_view_id, bool is_modification, bool invalidate);
 
+    /// Eden Duo: colour-target history flags (ImageFlagBits::ColorTarget / ColorTargetRedrawn)
+    void DSModMarkColorTarget(ImageViewId image_view_id) noexcept;
+    void DSModInheritColorTarget(ImageBase& image, const ImageBase& from) noexcept;
+
     /// Execute copies from one image to the other, even if they are incompatible
     void CopyImage(ImageId dst_id, ImageId src_id, std::vector<ImageCopy> copies);
 

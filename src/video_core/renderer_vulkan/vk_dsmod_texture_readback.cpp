@@ -144,6 +144,8 @@ bool RasterizerVulkan::DSModReadbackTexture(const VideoCore::DSMod::ReadbackRequ
             .plain_2d = plain_2d,
             .current = False(image.flags & ImageFlagBits::CpuModified),
             .generation = image.modification_tick,
+            .render_target = True(image.flags & ImageFlagBits::ColorTarget),
+            .redrawn = True(image.flags & ImageFlagBits::ColorTargetRedrawn),
         });
         ids.push_back(id);
     });
@@ -152,6 +154,9 @@ bool RasterizerVulkan::DSModReadbackTexture(const VideoCore::DSMod::ReadbackRequ
     if (pick.status != ReadbackStatus::Ready) {
         DSModLogReadbackMiss(request, static_cast<int>(pick.status));
         return fail(pick.status);
+    }
+    if (pick.candidates > 1) {
+        DSModLogReadbackMiss(request, static_cast<int>(pick.status), pick.candidates);
     }
     Image& image = texture_cache.GetImage(ids[pick.index]);
     const HostOrder order = HostByteOrder(
@@ -195,10 +200,13 @@ bool RasterizerVulkan::DSModReadbackTexture(const VideoCore::DSMod::ReadbackRequ
 }
 
 // Developer aid (EDEN_DSMOD_TEXTURE_READBACK_LOG=1, dev-tools builds only): when a readback
-// finds nothing, list the resident images that share a side or the R8 format with the request,
-// at most every 5 s, so a module author can see what the game really allocated.
+// finds nothing, list the resident images that share a side or the R8 format with the request;
+// when a size-mode request matched more than one image (`ambiguous` = the count), list every
+// image of that size and format family. At most every 5 s, so a module author can see what the game really
+// allocated and which selector flags (rt = drawn into as a colour target, redrawn = in 2+ frames)
+// tell them apart.
 void RasterizerVulkan::DSModLogReadbackMiss(const VideoCore::DSMod::ReadbackRequest& request,
-                                            int status) {
+                                            int status, u32 ambiguous) {
     if constexpr (!Common::DSMod::DevToolsEnabled) {
         return;
     }
@@ -217,22 +225,43 @@ void RasterizerVulkan::DSModLogReadbackMiss(const VideoCore::DSMod::ReadbackRequ
     texture_cache.DSModForEachImage([&](VideoCommon::ImageId, const Image& image) {
         ++total;
         const auto& info = image.info;
-        const bool related = info.size.width == request.width || info.size.height == request.height ||
-                             info.format == VideoCore::Surface::PixelFormat::R8_UNORM ||
-                             (request.gpu_addr != 0 && image.gpu_addr == request.gpu_addr);
+        const bool same_size =
+            info.size.width == request.width && info.size.height == request.height;
+        const bool related = ambiguous != 0
+                                 ? same_size && VideoCore::DSMod::ReadbackFormatMatches(
+                                                    info.format, request.format)
+                                 : info.size.width == request.width ||
+                                       info.size.height == request.height ||
+                                       info.format == VideoCore::Surface::PixelFormat::R8_UNORM ||
+                                       (request.gpu_addr != 0 && image.gpu_addr == request.gpu_addr);
         if (!related || shown >= 32) {
             return;
         }
         ++shown;
-        list += std::format(" [{:#x} {}x{}x{} fmt={} type={} lv={} ly={} s={} flags={:#x} mod={}]",
+        using VideoCommon::ImageFlagBits;
+        list += std::format(" [{:#x} {}x{}x{} fmt={} type={} lv={} ly={} s={} flags={:#x} mod={} "
+                            "rt={} redrawn={} rt_frame={}]",
                             image.gpu_addr, info.size.width, info.size.height, info.size.depth,
                             static_cast<u32>(info.format), static_cast<u32>(info.type),
                             info.resources.levels, info.resources.layers, info.num_samples,
-                            static_cast<u32>(image.flags), image.modification_tick);
+                            static_cast<u32>(image.flags), image.modification_tick,
+                            True(image.flags & ImageFlagBits::ColorTarget) ? 1 : 0,
+                            True(image.flags & ImageFlagBits::ColorTargetRedrawn) ? 1 : 0,
+                            image.color_target_frame);
     });
-    LOG_INFO(Render_Vulkan, "DSMod texture readback miss ({}) for {:#x} {}x{} fmt {}: {} related of {} images:{}",
+    if (ambiguous != 0) {
+        LOG_INFO(Render_Vulkan,
+                 "DSMod texture readback: {} candidates for {}x{} fmt {} flags {:#x}; {} images of "
+                 "that size and family (of {}):{}",
+                 ambiguous, request.width, request.height, static_cast<u32>(request.format),
+                 request.flags, shown, total, list);
+        return;
+    }
+    LOG_INFO(Render_Vulkan,
+             "DSMod texture readback miss ({}) for {:#x} {}x{} fmt {} flags {:#x}: {} related of {} "
+             "images:{}",
              status, request.gpu_addr, request.width, request.height,
-             static_cast<u32>(request.format), shown, total, list);
+             static_cast<u32>(request.format), request.flags, shown, total, list);
 }
 
 void RasterizerVulkan::DSModCompleteTextureReadbacks() {

@@ -169,7 +169,8 @@ private:
     /// Hands every module texture readback whose copy the GPU has finished to its callback.
     /// GPU thread: from TickFrame and before each new readback.
     void DSModCompleteTextureReadbacks();
-    void DSModLogReadbackMiss(const VideoCore::DSMod::ReadbackRequest& request, int status);
+    void DSModLogReadbackMiss(const VideoCore::DSMod::ReadbackRequest& request, int status,
+                              u32 ambiguous = 0);
     struct DSModPendingReadback {
         StagingBufferRef staging;
         u64 tick;

@@ -466,6 +466,7 @@ void TextureCache<P>::UpdateRenderTargets(bool is_clear) {
         for (size_t index = 0; index < NUM_RT; ++index) {
             ImageViewId& color_buffer_id = render_targets.color_buffer_ids[index];
             PrepareImageView(color_buffer_id, true, is_clear && IsFullClear(color_buffer_id));
+            DSModMarkColorTarget(color_buffer_id);
         }
         const ImageViewId depth_buffer_id = render_targets.depth_buffer_id;
         PrepareImageView(depth_buffer_id, true, is_clear && IsFullClear(depth_buffer_id));
@@ -483,6 +484,7 @@ void TextureCache<P>::UpdateRenderTargets(bool is_clear) {
     for (size_t index = 0; index < NUM_RT; ++index) {
         ImageViewId& color_buffer_id = render_targets.color_buffer_ids[index];
         PrepareImageView(color_buffer_id, true, is_clear && IsFullClear(color_buffer_id));
+        DSModMarkColorTarget(color_buffer_id);
     }
     const ImageViewId depth_buffer_id = render_targets.depth_buffer_id;
 
@@ -1737,6 +1739,7 @@ ImageId TextureCache<P>::JoinImages(const ImageInfo& info, GPUVAddr gpu_addr, DA
         }
         if (True(overlap.flags & ImageFlagBits::GpuModified)) {
             new_image.flags |= ImageFlagBits::GpuModified;
+            DSModInheritColorTarget(new_image, overlap);
             const auto& resolution = Settings::values.resolution_info;
             const SubresourceBase base = new_image.TryFindBase(overlap.gpu_addr).value();
             const u32 up_scale = can_rescale ? resolution.up_scale : 1;
@@ -2550,6 +2553,35 @@ void TextureCache<P>::PrepareImage(ImageId image_id, bool is_modification, bool 
         MarkModification(image);
     }
     lru_cache.Touch(image.lru_index, frame_tick);
+}
+
+// Eden Duo: remember which images the GPU draws into as colour targets, and whether it does so
+// again in a later frame, so a module's texture readback can ask for a render target the game
+// keeps updating (core/mods/dsmod_module_extensions.h section 6). Flags only; nothing else reads
+// them.
+template <class P>
+void TextureCache<P>::DSModMarkColorTarget(ImageViewId image_view_id) noexcept {
+    if (!image_view_id || slot_image_views[image_view_id].IsBuffer()) {
+        return;
+    }
+    ImageBase& image = slot_images[slot_image_views[image_view_id].image_id];
+    if (False(image.flags & ImageFlagBits::ColorTarget)) {
+        image.flags |= ImageFlagBits::ColorTarget;
+        image.color_target_frame = frame_tick;
+    } else if (image.color_target_frame != frame_tick) {
+        image.flags |= ImageFlagBits::ColorTargetRedrawn;
+    }
+}
+
+template <class P>
+void TextureCache<P>::DSModInheritColorTarget(ImageBase& image, const ImageBase& from) noexcept {
+    if (False(from.flags & ImageFlagBits::ColorTarget)) {
+        return;
+    }
+    if (False(image.flags & ImageFlagBits::ColorTarget)) {
+        image.color_target_frame = from.color_target_frame;
+    }
+    image.flags |= from.flags & (ImageFlagBits::ColorTarget | ImageFlagBits::ColorTargetRedrawn);
 }
 
 template <class P>

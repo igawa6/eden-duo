@@ -24,6 +24,11 @@ static_assert(EDEN_DSMOD_TEXTURE_MAX_SIDE == VideoCore::DSMod::ReadbackMaxSide);
 static_assert(EDEN_DSMOD_TEXTURE_MAX_BYTES == VideoCore::DSMod::ReadbackMaxBytes);
 static_assert(EDEN_DSMOD_TEXTURE_R8 == static_cast<u32>(ReadbackFormat::R8));
 static_assert(EDEN_DSMOD_TEXTURE_RGBA8 == static_cast<u32>(ReadbackFormat::RGBA8));
+static_assert(EDEN_DSMOD_TEXTURE_REQUIRE_RENDER_TARGET ==
+              VideoCore::DSMod::ReadbackRequireRenderTarget);
+static_assert(EDEN_DSMOD_TEXTURE_REQUIRE_SRGB == VideoCore::DSMod::ReadbackRequireSrgb);
+static_assert(EDEN_DSMOD_TEXTURE_REQUIRE_UNORM == VideoCore::DSMod::ReadbackRequireUnorm);
+static_assert(EDEN_DSMOD_TEXTURE_REQUIRE_REDRAWN == VideoCore::DSMod::ReadbackRequireRedrawn);
 
 constexpr auto Timeout = std::chrono::milliseconds{EDEN_DSMOD_TEXTURE_TIMEOUT_MS};
 constexpr auto RateWindow = std::chrono::seconds{1};
@@ -58,7 +63,9 @@ u64 TextureReadbackBroker::Request(const EdenDsmodTextureRequest* request, s32* 
     s32 ignored{};
     s32& out = status ? *status : ignored;
     if (!request || request->struct_size != sizeof(EdenDsmodTextureRequest) ||
-        !VideoCore::DSMod::ValidReadbackFormat(request->format) || request->flags != 0 ||
+        !VideoCore::DSMod::ValidReadbackFormat(request->format) ||
+        !VideoCore::DSMod::ValidReadbackFlags(request->flags,
+                                              static_cast<ReadbackFormat>(request->format)) ||
         request->reserved != 0 ||
         !VideoCore::DSMod::ReadbackRequestInBounds(request->width, request->height,
                                                    static_cast<ReadbackFormat>(request->format))) {
@@ -94,6 +101,7 @@ u64 TextureReadbackBroker::Request(const EdenDsmodTextureRequest* request, s32* 
         .width = request->width,
         .height = request->height,
         .format = static_cast<ReadbackFormat>(request->format),
+        .flags = request->flags,
     };
     // The completion may run on the GPU thread long after this broker is gone (or, for a
     // synchronous backend, before Submit returns): it only ever touches the shared state.

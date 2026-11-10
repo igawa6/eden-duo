@@ -45,6 +45,10 @@ enum class ImageFlagBits : u32 {
 
     AsynchronousDecode = 1 << 16,
     IsDecoding = 1 << 17, ///< Is currently being decoded asynchronously.
+
+    // Eden Duo: render-target history for module texture readback selectors
+    ColorTarget = 1 << 18,        ///< Has been drawn into as a colour render target
+    ColorTargetRedrawn = 1 << 19, ///< Drawn into as a colour target again in a later frame
 };
 DECLARE_ENUM_FLAG_OPERATORS(ImageFlagBits)
 
@@ -106,6 +110,7 @@ struct ImageBase {
 
     u64 modification_tick = 0;
     size_t lru_index = SIZE_MAX;
+    u64 color_target_frame = 0; ///< Eden Duo: frame of the first colour-target draw
 
     std::array<u32, MAX_MIP_LEVELS> mip_level_offsets{};
 

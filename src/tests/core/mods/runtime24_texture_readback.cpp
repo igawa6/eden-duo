@@ -221,6 +221,132 @@ TEST_CASE("DSMod texture readback: picking the image", "[dsmod][runtime24]") {
     }
 }
 
+TEST_CASE("DSMod texture readback: selector flags", "[dsmod][runtime24]") {
+    using namespace VideoCore::DSMod;
+    REQUIRE(EDEN_DSMOD_TEXTURE_REQUIRE_RENDER_TARGET == 1u);
+    REQUIRE(EDEN_DSMOD_TEXTURE_REQUIRE_SRGB == 2u);
+    REQUIRE(EDEN_DSMOD_TEXTURE_REQUIRE_UNORM == 4u);
+    REQUIRE(EDEN_DSMOD_TEXTURE_REQUIRE_REDRAWN == 8u);
+    // 0 is today's behaviour; every known combination is valid except SRGB+UNORM and SRGB on R8.
+    for (u32 flags = 0; flags <= ReadbackKnownFlags; ++flags) {
+        const bool both = (flags & ReadbackRequireSrgb) && (flags & ReadbackRequireUnorm);
+        REQUIRE(ValidReadbackFlags(flags, ReadbackFormat::RGBA8) == !both);
+        REQUIRE(ValidReadbackFlags(flags, ReadbackFormat::R8) ==
+                ((flags & ReadbackRequireSrgb) == 0));
+    }
+    for (u32 bit = 4; bit < 32; ++bit) {
+        REQUIRE_FALSE(ValidReadbackFlags(1u << bit, ReadbackFormat::RGBA8));
+        REQUIRE_FALSE(ValidReadbackFlags(1u << bit, ReadbackFormat::R8));
+    }
+
+    auto image = Candidate(0x1000, 256, 256, PixelFormat::A8B8G8R8_SRGB);
+    REQUIRE(ReadbackFlagsMatch(image, 0));
+    REQUIRE_FALSE(ReadbackFlagsMatch(image, ReadbackRequireRenderTarget));
+    REQUIRE_FALSE(ReadbackFlagsMatch(image, ReadbackRequireRedrawn));
+    REQUIRE(ReadbackFlagsMatch(image, ReadbackRequireSrgb));
+    REQUIRE_FALSE(ReadbackFlagsMatch(image, ReadbackRequireUnorm));
+    image.redrawn = true; // inconsistent input (redrawn without render target) never matches
+    REQUIRE_FALSE(ReadbackFlagsMatch(image, ReadbackRequireRedrawn));
+    image.render_target = true;
+    REQUIRE(ReadbackFlagsMatch(image, ReadbackRequireRedrawn | ReadbackRequireRenderTarget |
+                                          ReadbackRequireSrgb));
+    for (const auto f : {PixelFormat::A8B8G8R8_UNORM, PixelFormat::B8G8R8A8_UNORM,
+                         PixelFormat::R8_UNORM}) {
+        const auto unorm = Candidate(0x1000, 256, 256, f);
+        REQUIRE(ReadbackFlagsMatch(unorm, ReadbackRequireUnorm));
+        REQUIRE_FALSE(ReadbackFlagsMatch(unorm, ReadbackRequireSrgb));
+    }
+    REQUIRE(ReadbackFlagsMatch(Candidate(0x1000, 256, 256, PixelFormat::B8G8R8A8_SRGB),
+                               ReadbackRequireSrgb));
+}
+
+// The resident 256x256 RGBA8 images of a real title in gameplay (My Time at Sandrock, indoors,
+// desktop 2026-11-10, evidence rt24-fog-selector/investigation/inv4): one fog-of-war mask the game
+// keeps painting (sRGB, drawn into in many frames, *not* the newest write), six one-off sRGB
+// render targets drawn once at scene load and then only sampled, one UNORM one-off render target
+// at the same address as one of them, two UNORM copy/blit targets, one stale mipmapped texture.
+TEST_CASE("DSMod texture readback: selector flags pick one of many", "[dsmod][runtime24]") {
+    using namespace VideoCore::DSMod;
+    const auto rt = [](u64 gpu, PixelFormat format, u64 generation, bool redrawn) {
+        auto c = Candidate(gpu, 256, 256, format, generation);
+        c.render_target = true;
+        c.redrawn = redrawn;
+        return c;
+    };
+    auto stale = Candidate(0x50bc30000, 256, 256, PixelFormat::A8B8G8R8_SRGB, 0);
+    stale.current = false;
+    constexpr u64 fog = 0x5108c0000;
+    const std::vector<ReadbackCandidate> images{
+        rt(0x510110000, PixelFormat::A8B8G8R8_UNORM, 38593, false),
+        rt(fog, PixelFormat::A8B8G8R8_SRGB, 1056116, true),
+        rt(0x510670000, PixelFormat::A8B8G8R8_SRGB, 1063082, false),
+        rt(0x510630000, PixelFormat::A8B8G8R8_SRGB, 1063068, false),
+        Candidate(0x5104c0000, 256, 256, PixelFormat::A8B8G8R8_UNORM, 1063081),
+        rt(0x510110000, PixelFormat::A8B8G8R8_SRGB, 1063030, false),
+        stale,
+        rt(0x510420000, PixelFormat::A8B8G8R8_SRGB, 1092282, false),
+        rt(0x5103e0000, PixelFormat::A8B8G8R8_SRGB, 1092268, false),
+        Candidate(0x510250000, 256, 256, PixelFormat::A8B8G8R8_UNORM, 1092281),
+        rt(0x510210000, PixelFormat::A8B8G8R8_SRGB, 1092230, false),
+    };
+    const auto size = [&](u32 flags) {
+        return PickReadbackImage(ReadbackRequest{.gpu_addr = 0,
+                                                 .width = 256,
+                                                 .height = 256,
+                                                 .format = ReadbackFormat::RGBA8,
+                                                 .flags = flags},
+                                 images);
+    };
+    // flags 0: today's behaviour -- ten candidates, the newest write (a one-off target) wins.
+    auto pick = size(0);
+    REQUIRE(pick.status == ReadbackStatus::Ready);
+    REQUIRE(pick.candidates == 10);
+    REQUIRE(images[pick.index].gpu_addr == 0x510420000);
+    REQUIRE(size(ReadbackRequireRenderTarget).candidates == 8);
+    REQUIRE(size(ReadbackRequireSrgb).candidates == 7);
+    REQUIRE(size(ReadbackRequireRenderTarget | ReadbackRequireSrgb).candidates == 7);
+    REQUIRE(size(ReadbackRequireUnorm).candidates == 3);
+    REQUIRE(size(ReadbackRequireRenderTarget | ReadbackRequireUnorm).candidates == 1);
+    // The redrawn render target is the only one, although it is not the newest write.
+    for (const u32 flags :
+         {ReadbackRequireRedrawn, ReadbackRequireRenderTarget | ReadbackRequireSrgb |
+                                      ReadbackRequireRedrawn}) {
+        pick = size(flags);
+        REQUIRE(pick.status == ReadbackStatus::Ready);
+        REQUIRE(pick.candidates == 1);
+        REQUIRE(images[pick.index].gpu_addr == fog);
+    }
+    REQUIRE(size(ReadbackRequireUnorm | ReadbackRequireRedrawn).status ==
+            ReadbackStatus::NotFound);
+    REQUIRE(size(ReadbackRequireUnorm | ReadbackRequireRedrawn).candidates == 0);
+
+    // Address mode applies the same flags: the fog still matches, a one-off target is a mismatch.
+    const auto at = [&](u64 gpu, u32 flags) {
+        return PickReadbackImage(ReadbackRequest{.gpu_addr = gpu,
+                                                 .width = 256,
+                                                 .height = 256,
+                                                 .format = ReadbackFormat::RGBA8,
+                                                 .flags = flags},
+                                 images);
+    };
+    constexpr u32 fog_flags =
+        ReadbackRequireRenderTarget | ReadbackRequireSrgb | ReadbackRequireRedrawn;
+    pick = at(fog, fog_flags);
+    REQUIRE(pick.status == ReadbackStatus::Ready);
+    REQUIRE(pick.candidates == 1);
+    REQUIRE(images[pick.index].gpu_addr == fog);
+    REQUIRE(at(0x510420000, fog_flags).status == ReadbackStatus::Mismatch);
+    REQUIRE(at(0x510420000, 0).status == ReadbackStatus::Ready);
+    // Two images based at one address: the flags choose between them.
+    pick = at(0x510110000, ReadbackRequireSrgb);
+    REQUIRE(pick.status == ReadbackStatus::Ready);
+    REQUIRE(images[pick.index].format == PixelFormat::A8B8G8R8_SRGB);
+    pick = at(0x510110000, ReadbackRequireUnorm);
+    REQUIRE(pick.status == ReadbackStatus::Ready);
+    REQUIRE(images[pick.index].format == PixelFormat::A8B8G8R8_UNORM);
+    REQUIRE(at(0x510110000, ReadbackRequireRedrawn).status == ReadbackStatus::Mismatch);
+}
+
 TEST_CASE("DSMod texture readback: packing rows", "[dsmod][runtime24]") {
     using VideoCore::DSMod::PackReadbackPixels;
     std::vector<u8> out;
@@ -251,11 +377,18 @@ TEST_CASE("DSMod texture readback broker: invalid requests never reach the rende
     auto bad_format = Req(256, 256, 3);
     auto zero_format = Req(256, 256, 0);
     auto flags = Req(256, 256);
-    flags.flags = 1;
+    flags.flags = 1u << 4; // unknown selector bit
+    auto high_flags = Req(256, 256, EDEN_DSMOD_TEXTURE_RGBA8);
+    high_flags.flags = 0x80000000u | EDEN_DSMOD_TEXTURE_REQUIRE_RENDER_TARGET;
+    auto srgb_and_unorm = Req(256, 256, EDEN_DSMOD_TEXTURE_RGBA8);
+    srgb_and_unorm.flags = EDEN_DSMOD_TEXTURE_REQUIRE_SRGB | EDEN_DSMOD_TEXTURE_REQUIRE_UNORM;
+    auto srgb_r8 = Req(256, 256, EDEN_DSMOD_TEXTURE_R8);
+    srgb_r8.flags = EDEN_DSMOD_TEXTURE_REQUIRE_SRGB;
     auto reserved = Req(256, 256);
     reserved.reserved = 1;
-    for (const auto& request : {bad_size, bad_format, zero_format, flags, reserved, Req(0, 256),
-                                Req(256, 0), Req(2049, 16), Req(16, 4096)}) {
+    for (const auto& request :
+         {bad_size, bad_format, zero_format, flags, high_flags, srgb_and_unorm, srgb_r8, reserved,
+          Req(0, 256), Req(256, 0), Req(2049, 16), Req(16, 4096)}) {
         status = 99;
         REQUIRE(f.broker->Request(&request, &status, f.t0) == 0);
         REQUIRE(status == EDEN_DSMOD_TEXTURE_INVALID);
@@ -265,6 +398,25 @@ TEST_CASE("DSMod texture readback broker: invalid requests never reach the rende
     // A null status pointer is fine.
     const auto good = Req(256, 256);
     REQUIRE(f.broker->Request(&good, nullptr, f.t0) != 0);
+}
+
+TEST_CASE("DSMod texture readback broker: selector flags reach the renderer",
+          "[dsmod][runtime24]") {
+    Fixture f;
+    auto request = Req(256, 256, EDEN_DSMOD_TEXTURE_RGBA8, 0);
+    request.flags = EDEN_DSMOD_TEXTURE_REQUIRE_RENDER_TARGET | EDEN_DSMOD_TEXTURE_REQUIRE_SRGB |
+                    EDEN_DSMOD_TEXTURE_REQUIRE_REDRAWN;
+    s32 status{};
+    REQUIRE(f.broker->Request(&request, &status, f.t0) != 0);
+    REQUIRE(status == EDEN_DSMOD_TEXTURE_PENDING);
+    auto unorm_r8 = Req(256, 256, EDEN_DSMOD_TEXTURE_R8, 0x2000);
+    unorm_r8.flags = EDEN_DSMOD_TEXTURE_REQUIRE_UNORM | EDEN_DSMOD_TEXTURE_REQUIRE_RENDER_TARGET;
+    REQUIRE(f.broker->Request(&unorm_r8, &status, f.t0) != 0);
+    REQUIRE(f.renderer->requests.size() == 2);
+    REQUIRE(f.renderer->requests[0].flags == 0xBu);
+    REQUIRE(f.renderer->requests[0].gpu_addr == 0);
+    REQUIRE(f.renderer->requests[1].flags == 0x5u);
+    REQUIRE(f.renderer->requests[1].format == ReadbackFormat::R8);
 }
 
 TEST_CASE("DSMod texture readback broker: unavailable renderer", "[dsmod][runtime24]") {
@@ -299,6 +451,7 @@ TEST_CASE("DSMod texture readback broker: a readback lands", "[dsmod][runtime24]
     REQUIRE(f.renderer->requests.size() == 1);
     REQUIRE(f.renderer->requests[0].gpu_addr == 0xABC000);
     REQUIRE(f.renderer->requests[0].format == ReadbackFormat::RGBA8);
+    REQUIRE(f.renderer->requests[0].flags == 0);
 
     std::vector<u8> out(32, 0);
     auto info = Info();

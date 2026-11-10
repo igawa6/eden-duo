@@ -281,6 +281,23 @@ const EdenDsmodModuleDataExtensions* eden_dsmod_get_data_extensions(uint32_t ver
 #define EDEN_DSMOD_TEXTURE_MAX_PER_SECOND 2u
 #define EDEN_DSMOD_TEXTURE_TIMEOUT_MS 2000u
 
+// Optional selector flags for EdenDsmodTextureRequest::flags (0 = none: any plain texture of the
+// size and format family). Each one narrows which textures match, in both modes: by address the
+// texture there must satisfy them (else MISMATCH); with gpu_address 0 only matching textures are
+// candidates. Unknown bits, SRGB together with UNORM, or SRGB with R8 -> INVALID.
+// Only textures the GPU has drawn into as a colour render target (not ones only uploaded by the
+// CPU, copied or blitted into).
+#define EDEN_DSMOD_TEXTURE_REQUIRE_RENDER_TARGET (1u << 0)
+// Only sRGB formats (A8B8G8R8_SRGB / B8G8R8A8_SRGB). RGBA8 requests only.
+#define EDEN_DSMOD_TEXTURE_REQUIRE_SRGB (1u << 1)
+// Only UNORM (linear) formats.
+#define EDEN_DSMOD_TEXTURE_REQUIRE_UNORM (1u << 2)
+// Only render targets the GPU has drawn into in at least two different frames: a texture the game
+// keeps and updates (a fog-of-war or paint mask), not a one-off render it then only samples.
+// Implies REQUIRE_RENDER_TARGET. A texture drawn once so far (e.g. cleared but not yet painted)
+// does not match until it is drawn into again.
+#define EDEN_DSMOD_TEXTURE_REQUIRE_REDRAWN (1u << 3)
+
 enum {
     // One byte per pixel: R8_UNORM textures.
     EDEN_DSMOD_TEXTURE_R8 = 1u,
@@ -292,16 +309,17 @@ enum {
 enum {
     EDEN_DSMOD_TEXTURE_PENDING = 0,
     EDEN_DSMOD_TEXTURE_READY = 1,
-    // request: a bad argument (struct size, format, zero/oversized dimensions, flags/reserved not
-    // 0). poll: the output buffer is null or smaller than info.size -- the ticket stays open.
+    // request: a bad argument (struct size, format, zero/oversized dimensions, unknown or
+    // conflicting flags, reserved not 0). poll: the output buffer is null or smaller than
+    // info.size -- the ticket stays open.
     EDEN_DSMOD_TEXTURE_INVALID = -1,
     EDEN_DSMOD_TEXTURE_RATE_LIMITED = -2, // MAX_PER_SECOND requests were accepted in the last 1 s
     EDEN_DSMOD_TEXTURE_BUSY = -3,         // MAX_IN_FLIGHT tickets are still open
-    // No resident texture is based at gpu_address (or, with gpu_address 0, none has this size and
-    // format). A texture the game has not drawn with yet, or has freed, is not resident.
+    // No resident texture is based at gpu_address (or, with gpu_address 0, none has this size,
+    // format and flags). A texture the game has not drawn with yet, or has freed, is not resident.
     EDEN_DSMOD_TEXTURE_NOT_FOUND = -4,
-    // A texture is based there, but its size, format or kind (array, MSAA, compressed, 3D,
-    // modified by the CPU since the GPU last wrote it) does not match the request.
+    // A texture is based there, but its size, format, kind (array, MSAA, compressed, 3D,
+    // modified by the CPU since the GPU last wrote it) or the selector flags do not match.
     EDEN_DSMOD_TEXTURE_MISMATCH = -5,
     EDEN_DSMOD_TEXTURE_UNSUPPORTED = -6, // this renderer/host cannot read textures back now
     EDEN_DSMOD_TEXTURE_FAILED = -7,      // the renderer gave up, or TIMEOUT_MS passed
@@ -313,12 +331,12 @@ typedef struct EdenDsmodTextureRequest {
     uint32_t format;      // EDEN_DSMOD_TEXTURE_R8 or EDEN_DSMOD_TEXTURE_RGBA8
     // The texture's base address in the title's GPU virtual address space (what an NVN texture
     // or render target's storage is bound at). 0 = the newest resident texture with exactly this
-    // width, height and format family; the result reports its address and how many candidates
-    // there were, so a module can confirm it once and then ask by address.
+    // width, height, format family and flags; the result reports its address and how many
+    // candidates there were, so a module can confirm it once and then ask by address.
     uint64_t gpu_address;
     uint32_t width;  // must equal the texture's width (level 0)
     uint32_t height; // must equal the texture's height (level 0)
-    uint32_t flags;    // 0
+    uint32_t flags;    // 0 or EDEN_DSMOD_TEXTURE_REQUIRE_* bits
     uint32_t reserved; // 0
 } EdenDsmodTextureRequest;
 
@@ -329,7 +347,7 @@ typedef struct EdenDsmodTextureInfo {
     uint32_t width;
     uint32_t height;
     uint32_t format;     // as requested
-    uint32_t candidates; // resident textures that matched (see gpu_address 0)
+    uint32_t candidates; // resident textures that matched, flags included (see gpu_address 0)
     // Changes whenever the GPU has written the texture since: equal generations mean equal
     // contents, so a module can skip its own work.
     uint64_t generation;

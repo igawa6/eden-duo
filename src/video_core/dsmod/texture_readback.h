@@ -41,6 +41,15 @@ enum class ReadbackStatus : s32 {
 inline constexpr u32 ReadbackMaxSide = 2048;
 inline constexpr size_t ReadbackMaxBytes = size_t{16} << 20;
 
+/// Optional selector flags (EdenDsmodTextureRequest::flags). Each narrows which images match, in
+/// both modes; 0 = any plain current image of the size and format family.
+inline constexpr u32 ReadbackRequireRenderTarget = 1u << 0; ///< drawn into as a colour target
+inline constexpr u32 ReadbackRequireSrgb = 1u << 1;         ///< an sRGB format (RGBA8 only)
+inline constexpr u32 ReadbackRequireUnorm = 1u << 2;        ///< a UNORM (linear) format
+inline constexpr u32 ReadbackRequireRedrawn = 1u << 3; ///< drawn into as a colour target in 2+ frames
+inline constexpr u32 ReadbackKnownFlags = ReadbackRequireRenderTarget | ReadbackRequireSrgb |
+                                          ReadbackRequireUnorm | ReadbackRequireRedrawn;
+
 struct ReadbackRequest {
     /// The texture's base address in the title's GPU address space; 0 = the single newest
     /// resident texture with this size and format (the result reports which one it took).
@@ -48,6 +57,7 @@ struct ReadbackRequest {
     u32 width{};
     u32 height{};
     ReadbackFormat format{ReadbackFormat::R8};
+    u32 flags{}; ///< Readback* selector flags (validated: ValidReadbackFlags)
 };
 
 struct ReadbackResult {
@@ -82,6 +92,24 @@ using ReadbackCallback = std::function<void(ReadbackResult&&)>;
            size_t{width} * height * BytesPerPixel(format) <= ReadbackMaxBytes;
 }
 
+/// Selector flags a request may carry: only known bits, not sRGB and UNORM together, and no sRGB
+/// requirement for R8 (there is no sRGB R8 format).
+[[nodiscard]] constexpr bool ValidReadbackFlags(u32 flags, ReadbackFormat format) {
+    if ((flags & ~ReadbackKnownFlags) != 0) {
+        return false;
+    }
+    if ((flags & ReadbackRequireSrgb) != 0 &&
+        ((flags & ReadbackRequireUnorm) != 0 || format == ReadbackFormat::R8)) {
+        return false;
+    }
+    return true;
+}
+
+[[nodiscard]] constexpr bool IsSrgbReadbackFormat(Surface::PixelFormat guest) {
+    return guest == Surface::PixelFormat::A8B8G8R8_SRGB ||
+           guest == Surface::PixelFormat::B8G8R8A8_SRGB;
+}
+
 /// Whether a guest surface format belongs to the requested family. Only plain 8-bit unorm/srgb
 /// colour formats qualify: compressed, depth, float or packed formats are never converted.
 [[nodiscard]] constexpr bool ReadbackFormatMatches(Surface::PixelFormat guest,
@@ -106,7 +134,26 @@ struct ReadbackCandidate {
     bool plain_2d{};  ///< one 2D (or pitch-linear) level-0 single-sample colour surface
     bool current{};   ///< the host copy is up to date (not modified by the CPU since)
     u64 generation{}; ///< modification tick
+    bool render_target{}; ///< the GPU has drawn into it as a colour target
+    bool redrawn{};       ///< ... in at least two different frames
 };
+
+/// Whether an image satisfies a request's selector flags (format family checked separately).
+[[nodiscard]] constexpr bool ReadbackFlagsMatch(const ReadbackCandidate& image, u32 flags) {
+    if ((flags & ReadbackRequireRenderTarget) != 0 && !image.render_target) {
+        return false;
+    }
+    if ((flags & ReadbackRequireRedrawn) != 0 && !(image.render_target && image.redrawn)) {
+        return false;
+    }
+    if ((flags & ReadbackRequireSrgb) != 0 && !IsSrgbReadbackFormat(image.format)) {
+        return false;
+    }
+    if ((flags & ReadbackRequireUnorm) != 0 && IsSrgbReadbackFormat(image.format)) {
+        return false;
+    }
+    return true;
+}
 
 struct ReadbackPick {
     ReadbackStatus status{ReadbackStatus::NotFound};
@@ -115,9 +162,10 @@ struct ReadbackPick {
 };
 
 /// Chooses the image a request reads. Address mode: the image based exactly at gpu_addr must
-/// have the requested size, a format of the requested family and be a plain current 2D surface,
-/// else Mismatch (NotFound when nothing is based there). Size/format mode (gpu_addr 0): the
-/// newest (highest generation) plain current image of that size and family.
+/// have the requested size, a format of the requested family, be a plain current 2D surface and
+/// satisfy the selector flags, else Mismatch (NotFound when nothing is based there). Size/format
+/// mode (gpu_addr 0): the newest (highest generation) such image of that size and family;
+/// `candidates` counts every image that matched (size, family and flags).
 template <typename Range>
 [[nodiscard]] ReadbackPick PickReadbackImage(const ReadbackRequest& request, const Range& images) {
     ReadbackPick pick;
@@ -128,7 +176,8 @@ template <typename Range>
         const size_t index = i++;
         const bool fits = image.plain_2d && image.current && image.width == request.width &&
                           image.height == request.height &&
-                          ReadbackFormatMatches(image.format, request.format);
+                          ReadbackFormatMatches(image.format, request.format) &&
+                          ReadbackFlagsMatch(image, request.flags);
         if (request.gpu_addr != 0) {
             if (image.gpu_addr != request.gpu_addr) {
                 continue;
