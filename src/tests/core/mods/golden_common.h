@@ -21,6 +21,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
+#include <format>
 #include <fstream>
 #include <optional>
 #include <span>
@@ -28,8 +29,6 @@
 #include <string>
 #include <string_view>
 #include <vector>
-
-#include <fmt/format.h>
 
 #include "common/common_types.h"
 #include "common/stb.h"
@@ -127,7 +126,7 @@ inline u64 Fnv64(const void* data, size_t size, u64 h = 0xCBF29CE484222325ull) {
     return Fnv64(std::string_view{static_cast<const char*>(data), size}, h);
 }
 inline std::string Hex64(u64 v) {
-    return fmt::format("{:016x}", v);
+    return std::format("{:016x}", v);
 }
 
 /// Compares a text golden. Returns "" when equal (or when written in update mode), else a
@@ -147,7 +146,7 @@ inline std::string CompareText(const std::filesystem::path& golden, const std::s
             bytes.assign(packed.begin(), packed.end());
         }
         return WriteFile(golden, bytes) ? std::string{}
-                                        : fmt::format("cannot write golden {}", golden.string());
+                                        : std::format("cannot write golden {}", golden.string());
     }
     auto expected = ReadFile(golden);
     if (expected && zst) {
@@ -157,7 +156,7 @@ inline std::string CompareText(const std::filesystem::path& golden, const std::s
     }
     if (!expected) {
         WriteFile(actual_path, actual);
-        return fmt::format("missing golden {} (actual written to {}; regenerate with "
+        return std::format("missing golden {} (actual written to {}; regenerate with "
                            "EDEN_DSMOD_GOLDEN_UPDATE=1)",
                            golden.string(), actual_path.string());
     }
@@ -191,7 +190,7 @@ inline std::string CompareText(const std::filesystem::path& golden, const std::s
         return s.size() > 600 ? s.substr(0, 600) + " ...(" + std::to_string(s.size()) + " chars)"
                               : s;
     };
-    std::string report = fmt::format(
+    std::string report = std::format(
         "{} differs: {} golden lines, {} actual lines; {} only in golden, {} only in actual.\n"
         "actual: {}\n(diff -u {} {})\n",
         golden.string(), a.size(), b.size(), only_a.size(), only_b.size(), actual_path.string(),
@@ -257,7 +256,7 @@ inline std::optional<Picture> ReadPng(const std::filesystem::path& path) {
 /// pixels and the first one.
 inline std::string ComparePictures(const Picture& expected, const Picture& actual) {
     if (expected.w != actual.w || expected.h != actual.h) {
-        return fmt::format("size {}x{} != golden {}x{}", actual.w, actual.h, expected.w,
+        return std::format("size {}x{} != golden {}x{}", actual.w, actual.h, expected.w,
                            expected.h);
     }
     size_t count = 0;
@@ -270,7 +269,7 @@ inline std::string ComparePictures(const Picture& expected, const Picture& actua
                 continue;
             }
             if (count++ == 0) {
-                first = fmt::format("first at ({},{}): golden {:08X} actual {:08X}", x, y,
+                first = std::format("first at ({},{}): golden {:08X} actual {:08X}", x, y,
                                     expected.argb[i], actual.argb[i]);
             }
             x0 = std::min(x0, x);
@@ -282,7 +281,7 @@ inline std::string ComparePictures(const Picture& expected, const Picture& actua
     if (count == 0) {
         return {};
     }
-    return fmt::format("{} pixels differ in box x={}..{} y={}..{}; {}", count, x0, x1, y0, y1,
+    return std::format("{} pixels differ in box x={}..{} y={}..{}; {}", count, x0, x1, y0, y1,
                        first);
 }
 

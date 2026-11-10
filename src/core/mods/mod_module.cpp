@@ -7,11 +7,11 @@
 #include <cerrno>
 #include <chrono>
 #include <cstring>
+#include <format>
 #include <mutex>
 #include <stdexcept>
 #include <vector>
 
-#include <fmt/format.h>
 #include <nlohmann/json.hpp>
 #include <openssl/sha.h>
 
@@ -114,7 +114,7 @@ std::string Digest(const std::vector<u8>& bytes) {
     std::string result;
     result.reserve(hash.size() * 2);
     for (const auto byte : hash) {
-        result += fmt::format("{:02x}", byte);
+        result += std::format("{:02x}", byte);
     }
     return result;
 }
@@ -205,7 +205,7 @@ std::unique_ptr<GameModule> GameModule::Load(FileSys::VirtualDir assets, u64 tit
             }
             return nullptr;
         }
-        const auto title = fmt::format("{:016X}", title_id);
+        const auto title = std::format("{:016X}", title_id);
         const auto declared_title = manifest.at("title_id").get<std::string>();
         if (!IsHex(declared_title, 16) || Upper(declared_title) != title) {
             throw std::runtime_error("module title ID does not match the running game");
@@ -235,10 +235,10 @@ std::unique_ptr<GameModule> GameModule::Load(FileSys::VirtualDir assets, u64 tit
         }
         const auto& libraries = module.at("libraries");
         if (!libraries.contains(platform)) {
-            throw std::runtime_error(fmt::format("package has no {} module", platform));
+            throw std::runtime_error(std::format("package has no {} module", platform));
         }
         const auto& entry = libraries.at(platform);
-        const auto expected_path = fmt::format("modules/{}/{}.so", platform, title);
+        const auto expected_path = std::format("modules/{}/{}.so", platform, title);
         if (entry.at("path").get<std::string>() != expected_path) {
             throw std::runtime_error("invalid title-ID module filename");
         }

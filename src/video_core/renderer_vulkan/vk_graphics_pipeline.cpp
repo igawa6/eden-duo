@@ -11,7 +11,7 @@
 
 #include <boost/container/small_vector.hpp>
 #include <boost/container/static_vector.hpp>
-#include <fmt/format.h>
+#include <format>
 
 #include "video_core/renderer_vulkan/pipeline_helper.h"
 
@@ -268,6 +268,13 @@ GraphicsPipeline::GraphicsPipeline(
         if (!info) {
             continue;
         }
+        has_side_effects |= info->stores_global_memory ||
+                            std::ranges::any_of(info->storage_buffers_descriptors,
+                                                [](const auto& d) { return d.is_written; }) ||
+                            std::ranges::any_of(info->image_buffer_descriptors,
+                                                [](const auto& d) { return d.is_written; }) ||
+                            std::ranges::any_of(info->image_descriptors,
+                                                [](const auto& d) { return d.is_written; });
         stage_infos[stage] = *info;
         enabled_uniform_buffer_masks[stage] = info->constant_buffer_mask;
         std::ranges::copy(info->constant_buffer_used_sizes, uniform_buffer_sizes[stage].begin());
@@ -619,7 +626,7 @@ bool GraphicsPipeline::ConfigureDraw(const RescalingPushConstant& rescaling,
     // Log graphics pipeline binding
     if (bind_pipeline && GPU::Logging::IsActive() &&
         Settings::values.gpu_log_vulkan_calls.GetValue()) {
-        const std::string pipeline_info = fmt::format("hash={:#016x}", key.Hash());
+        const std::string pipeline_info = std::format("hash={:#016x}", key.Hash());
         GPU::Logging::GPULogger::GetInstance().LogPipelineBind(false, pipeline_info);
     }
 
@@ -885,6 +892,16 @@ void GraphicsPipeline::MakePipeline(VkRenderPass render_pass) {
     if (device.IsExtProvokingVertexSupported()) {
         provoking_vertex.pNext = std::exchange(rasterization_ci.pNext, &provoking_vertex);
     }
+    VkPipelineRasterizationDepthClipStateCreateInfoEXT depth_clip{
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_DEPTH_CLIP_STATE_CREATE_INFO_EXT,
+        .pNext = nullptr,
+        .flags = 0,
+        .depthClipEnable =
+            static_cast<VkBool32>(dynamic.depth_clip_disabled == 0 ? VK_TRUE : VK_FALSE),
+    };
+    if (device.IsExtDepthClipEnableSupported()) {
+        depth_clip.pNext = std::exchange(rasterization_ci.pNext, &depth_clip);
+    }
 
     const bool supports_alpha_output = fragment_has_color0_output;
     const bool alpha_to_one_supported = device.SupportsAlphaToOne();
@@ -1103,7 +1120,7 @@ void GraphicsPipeline::MakePipeline(VkRenderPass render_pass) {
 
     // Log graphics pipeline creation
     if (GPU::Logging::IsActive()) {
-        const std::string pipeline_info = fmt::format(
+        const std::string pipeline_info = std::format(
             "GraphicsPipeline created: stages={}, attachments={}",
             shader_stages.size(),
             color_blend_ci.attachmentCount

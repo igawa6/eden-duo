@@ -24,6 +24,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <format>
 #include <span>
 
 #include <cstdlib>
@@ -300,7 +301,7 @@ void ModRuntime::UpdateWheel(const StateSnapshot& snapshot,
             continue;
         }
         const Widget& w = expanded[static_cast<size_t>(hit)];
-        const std::string target = fmt::format("{}:{}:{}:{}:{}:{}", current_page, hit,
+        const std::string target = std::format("{}:{}:{}:{}:{}:{}", current_page, hit,
                                                w.on_swipe_left, w.on_swipe_right,
                                                w.on_swipe_up, w.on_swipe_down);
         if (wheel_target != target) {
@@ -442,7 +443,7 @@ void ModRuntime::UpdateGestures(const StateSnapshot& snapshot,
                 const Widget& b = expanded[static_cast<size_t>(block)];
                 LOG_INFO(Core, "DSMod gesture at ({},{}) blocked by input_block widget '{}'",
                          gesture_down_x, gesture_down_y,
-                         b.id.empty() ? fmt::format("#{}", block) : b.id);
+                         b.id.empty() ? std::format("#{}", block) : b.id);
             }
             if (!gesture_blocked) {
                 const s64 callback = CallbackAt(expanded, snapshot, gesture_down_x, gesture_down_y);
@@ -766,7 +767,7 @@ void ModRuntime::UpdateGestures(const StateSnapshot& snapshot,
             LOG_INFO(Core, "DSMod: drag of payload {} started at canvas({},{})", drag_state.payload,
                      gesture_down_x, gesture_down_y);
             QueueHaptic(HapticKind::Drag, drag_state.widget.haptic, -1,
-                        fmt::format("drag of payload {}", drag_state.payload));
+                        std::format("drag of payload {}", drag_state.payload));
         }
         if (drag_state.active) {
             drag_state.hover = DropTargetAt(snapshot, drag_state.x, drag_state.y);
@@ -808,7 +809,7 @@ void ModRuntime::UpdateGestures(const StateSnapshot& snapshot,
                 if (const char* const p = Common::DSMod::DevEnvironment("EDEN_DSMOD_CMD")) {
                     std::ofstream f(std::string(p) + ".out", std::ios::app);
                     if (f) {
-                        f << fmt::format("DSMod drag cancelled ({},{}) payload {}\n", drag_state.x,
+                        f << std::format("DSMod drag cancelled ({},{}) payload {}\n", drag_state.x,
                                          drag_state.y, drag_state.payload);
                     }
                 }
@@ -1015,7 +1016,7 @@ void ModRuntime::UpdateScrollGesture(const StateSnapshot& snapshot, size_t finge
         if (scroll_dragging) {
             std::string fling;
             if (st.flinging || st.flinging_x) {
-                fling = fmt::format(", fling {:.0f},{:.0f} px/s", st.velocity_x, st.velocity);
+                fling = std::format(", fling {:.0f},{:.0f} px/s", st.velocity_x, st.velocity);
             }
             LOG_INFO(Core, "DSMod: scroll '{}' released at offset {:.0f},{:.0f}{}", scroll_target,
                      st.offset_x, st.offset, fling);
@@ -1265,12 +1266,12 @@ void ModRuntime::DrainTaps(const StateSnapshot& snapshot) {
             LOG_WARNING(Core, "DSMod: widget references unknown action '{}'", name);
             return {};
         }
-        const std::string carried = payload ? fmt::format(" payload {}", *payload) : std::string{};
+        const std::string carried = payload ? std::format(" payload {}", *payload) : std::string{};
         LOG_INFO(Core, "DSMod: {} ({},{}) -> action '{}'{}", how, x, y, name, carried);
         if (const char* const p = Common::DSMod::DevEnvironment("EDEN_DSMOD_CMD")) {
             std::ofstream f(std::string(p) + ".out", std::ios::app);
             if (f) {
-                f << fmt::format("DSMod {} ({},{}) -> action '{}'{}\n", how, x, y, name, carried);
+                f << std::format("DSMod {} ({},{}) -> action '{}'{}\n", how, x, y, name, carried);
             }
         }
         return Ran{RunAction(it->second, snapshot, payload, origin), &it->second};
@@ -1325,9 +1326,9 @@ void ModRuntime::DrainTaps(const StateSnapshot& snapshot) {
             const auto v = ResolveActionRef(ex.tap_enabled.point, snapshot, std::nullopt);
             const bool nonzero = v.has_value() && v->f.value_or(static_cast<f64>(v->i)) != 0.0;
             if (!v.has_value() || nonzero == ex.tap_enabled.negate) {
-                out_line(fmt::format("DSMod map tap ({},{}) ignored: view only ({}{} = {})", tap.x,
+                out_line(std::format("DSMod map tap ({},{}) ignored: view only ({}{} = {})", tap.x,
                                      tap.y, ex.tap_enabled.negate ? "!" : "", ex.tap_enabled.point,
-                                     v ? fmt::format("{}", v->f.value_or(static_cast<f64>(v->i)))
+                                     v ? std::format("{}", v->f.value_or(static_cast<f64>(v->i)))
                                        : std::string{"missing"}));
                 return;
             }
@@ -1349,7 +1350,7 @@ void ModRuntime::DrainTaps(const StateSnapshot& snapshot) {
             }
         }
         if (!rec.has_value()) {
-            out_line(fmt::format("DSMod map tap ({},{}) ignored: the map is not drawn yet", tap.x,
+            out_line(std::format("DSMod map tap ({},{}) ignored: the map is not drawn yet", tap.x,
                                  tap.y));
             return;
         }
@@ -1381,14 +1382,14 @@ void ModRuntime::DrainTaps(const StateSnapshot& snapshot) {
                 QueueHaptic(HapticKind::Marker, w.haptic,
                             marker_action != manifest.actions.end() ? marker_action->second.haptic
                                                                     : HapticOverride{-1},
-                            fmt::format("marker {} slot {}", best->group, best->index));
+                            std::format("marker {} slot {}", best->group, best->index));
                 if (clear) {
                     map_selections.erase(sel);
                 } else {
                     map_selections[best->group] = best->index;
                     map_selection_tick[best->group] = tick_count;
                 }
-                out_line(fmt::format("DSMod map marker tap ({},{}) group '{}' slot {} at "
+                out_line(std::format("DSMod map marker tap ({},{}) group '{}' slot {} at "
                                      "({:.3f},{:.3f}) -> {}",
                                      tap.x, tap.y, best->group, best->index, best->vx, best->vy,
                                      clear ? "deselected" : "selected"));
@@ -1414,7 +1415,7 @@ void ModRuntime::DrainTaps(const StateSnapshot& snapshot) {
             }
         }
         if (had_selection && ex.empty_tap_deselects && !ex.on_marker_tap.empty()) {
-            out_line(fmt::format("DSMod map tap ({},{}) cleared the selection", tap.x, tap.y));
+            out_line(std::format("DSMod map tap ({},{}) cleared the selection", tap.x, tap.y));
             QueueHaptic(HapticKind::Marker, w.haptic, -1, "map tap deselect");
             return;
         }
@@ -1427,7 +1428,7 @@ void ModRuntime::DrainTaps(const StateSnapshot& snapshot) {
         const f64 wx = world[0];
         const f64 wy = world[1];
         if (wx < rec->min_x || wx > rec->max_x || wy < rec->min_y || wy > rec->max_y) {
-            out_line(fmt::format("DSMod map tap ({},{}) ignored: world ({:.1f},{:.1f}) is outside "
+            out_line(std::format("DSMod map tap ({},{}) ignored: world ({:.1f},{:.1f}) is outside "
                                  "the area",
                                  tap.x, tap.y, wx, wy));
             return;
@@ -1444,7 +1445,7 @@ void ModRuntime::DrainTaps(const StateSnapshot& snapshot) {
         }
         last_map_tap = std::pair{wx, wy};
         ++map_tap_seq;
-        out_line(fmt::format("DSMod map tap ({},{}) -> world ({:.3f},{:.3f}) map ({:.3f},{:.3f})",
+        out_line(std::format("DSMod map tap ({},{}) -> world ({:.3f},{:.3f}) map ({:.3f},{:.3f})",
                              tap.x, tap.y, wx, wy, vx, vy));
         map_tap_ctx = {true, vx, vy, wx, wy, -1, {}};
         const Ran ran = run_named(ex.on_map_tap, std::nullopt, "map tap", tap.x, tap.y, &w.rect);
@@ -1455,7 +1456,7 @@ void ModRuntime::DrainTaps(const StateSnapshot& snapshot) {
         if (page_anim_request.has_value()) {
             // A tap just started a page transition: the rest of this tick's taps would land on the
             // page sliding in, which input does not reach until the transition ends.
-            out_line(fmt::format("DSMod tap ({},{}) dropped (page transition)", tap.x, tap.y));
+            out_line(std::format("DSMod tap ({},{}) dropped (page transition)", tap.x, tap.y));
             continue;
         }
         if (!tap.gesture_action.empty()) {
@@ -1502,8 +1503,8 @@ void ModRuntime::DrainTaps(const StateSnapshot& snapshot) {
                 if (w.input_block && w.on_tap.empty() && w.select_group.empty() &&
                     w.drop_action.empty()) {
                     out_line(
-                        fmt::format("DSMod tap ({},{}) swallowed by an input_block widget '{}'",
-                                    tap.x, tap.y, w.id.empty() ? fmt::format("#{}", hit) : w.id));
+                        std::format("DSMod tap ({},{}) swallowed by an input_block widget '{}'",
+                                    tap.x, tap.y, w.id.empty() ? std::format("#{}", hit) : w.id));
                     continue;
                 }
             }
@@ -1541,11 +1542,11 @@ void ModRuntime::DrainTaps(const StateSnapshot& snapshot) {
                         }
                     }
                     const std::string line =
-                        fmt::format("DSMod select ({},{}) group '{}' = {}", tap.x, tap.y,
+                        std::format("DSMod select ({},{}) group '{}' = {}", tap.x, tap.y,
                                     w.select_group, clear ? -1 : *carried);
                     QueueHaptic(
                         HapticKind::Select, w.haptic, -1,
-                        fmt::format("select {} = {}", w.select_group, clear ? -1 : *carried));
+                        std::format("select {} = {}", w.select_group, clear ? -1 : *carried));
                     LOG_INFO(Core, "{}", line);
                     if (const char* const p = Common::DSMod::DevEnvironment("EDEN_DSMOD_CMD")) {
                         std::ofstream f(std::string(p) + ".out", std::ios::app);
@@ -1578,12 +1579,12 @@ void ModRuntime::DrainTaps(const StateSnapshot& snapshot) {
         // A widget with a payload hands it to its on_tap action (a picker cell -> set_value);
         // "$tap" carries the content-relative tap point instead (TapPayload).
         const auto carried = TapPayload(page, tapped, snapshot, tap.x, tap.y);
-        const std::string suffix = carried ? fmt::format(" payload {}", *carried) : std::string{};
+        const std::string suffix = carried ? std::format(" payload {}", *carried) : std::string{};
         LOG_INFO(Core, "DSMod: tap ({},{}) -> action '{}'{}", tap.x, tap.y, action_name, suffix);
         if (const char* const p = Common::DSMod::DevEnvironment("EDEN_DSMOD_CMD")) {
             std::ofstream f(std::string(p) + ".out", std::ios::app);
             if (f) {
-                f << fmt::format("DSMod tap ({},{}) -> action '{}'{}\n", tap.x, tap.y, action_name,
+                f << std::format("DSMod tap ({},{}) -> action '{}'{}\n", tap.x, tap.y, action_name,
                                  suffix);
             }
         }
@@ -1679,7 +1680,7 @@ void ModRuntime::FlushHaptic() {
         return;
     }
     const PendingHaptic event = std::exchange(pending_haptic, PendingHaptic{});
-    const std::string line = fmt::format(
+    const std::string line = std::format(
         "DSMod haptic {} ({}: {})", HapticStrengthNames[static_cast<size_t>(event.strength)],
         HapticKindNames[static_cast<size_t>(event.kind)], event.source);
     LOG_INFO(Core, "{}", line);

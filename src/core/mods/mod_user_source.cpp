@@ -5,10 +5,9 @@
 
 #include "core/mods/mod_user_source.h"
 
+#include <format>
 #include <memory>
 #include <system_error>
-
-#include <fmt/format.h>
 
 #include "common/fs/fs_util.h"
 #include "common/fs/path_util.h"
@@ -24,7 +23,7 @@ std::filesystem::path UserSourceRoot() {
 }
 
 std::filesystem::path UserSourceDir(const std::filesystem::path& root, u64 title_id) {
-    return root / fmt::format("{:016X}", title_id);
+    return root / std::format("{:016X}", title_id);
 }
 
 bool IsSafeUserSourcePath(std::string_view path) {

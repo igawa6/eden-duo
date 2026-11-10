@@ -23,6 +23,7 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <format>
 
 #include <cstdlib>
 #include <filesystem>
@@ -374,9 +375,9 @@ ModRuntime::ActionResult ModRuntime::RunAction(const Action& action, const State
         const bool open = gate.has_value() && (*gate != 0.0) != action.enabled.negate;
         if (!open) {
             const std::string line =
-                fmt::format("DSMod: action '{}' refused: enabled_bind '{}{}' = {}", action.name,
+                std::format("DSMod: action '{}' refused: enabled_bind '{}{}' = {}", action.name,
                             action.enabled.negate ? "!" : "", action.enabled.point,
-                            gate ? fmt::format("{}", *gate) : std::string{"missing"});
+                            gate ? std::format("{}", *gate) : std::string{"missing"});
             LOG_INFO(Core, "{}", line);
             trace(line);
             return ActionResult::Refused;
@@ -430,7 +431,7 @@ ModRuntime::ActionResult ModRuntime::RunAction(const Action& action, const State
         }
         if (found < 0) {
             const std::string line =
-                fmt::format("DSMod: slot_write '{}' refused: no free slot in '{}' ({} of {} used)",
+                std::format("DSMod: slot_write '{}' refused: no free slot in '{}' ({} of {} used)",
                             action.name, action.slot, used, n);
             LOG_INFO(Core, "{}", line);
             trace(line);
@@ -501,8 +502,8 @@ ModRuntime::ActionResult ModRuntime::RunAction(const Action& action, const State
                 return ActionResult::Skipped;
             }
             stores.push_back(*store);
-            written += p.value.f ? fmt::format(" {}={:.3f}", p.name, *p.value.f)
-                                 : fmt::format(" {}={}", p.name, p.value.i);
+            written += p.value.f ? std::format(" {}={:.3f}", p.name, *p.value.f)
+                                 : std::format(" {}={}", p.name, p.value.i);
         }
         if (!ApplyGuestStores(expects, stores)) {
             LOG_WARNING(Core, "DSMod: slot_write '{}': slot {} changed while writing; nothing written",
@@ -514,7 +515,7 @@ ModRuntime::ActionResult ModRuntime::RunAction(const Action& action, const State
             map_selection_tick[action.select] = tick_count;
         }
         const std::string line =
-            fmt::format("DSMod: slot_write '{}' slot {}:{}", action.name, found, written);
+            std::format("DSMod: slot_write '{}' slot {}:{}", action.name, found, written);
         LOG_INFO(Core, "{}", line);
         trace(line);
         return ActionResult::Done;
@@ -539,7 +540,7 @@ ModRuntime::ActionResult ModRuntime::RunAction(const Action& action, const State
         if (RunModuleAction(action.module_action,
                             action.value_from_payload ? *payload : action.value) ==
             ModuleActionOutcome::Declined) {
-            const std::string line = fmt::format("DSMod: action '{}' refused: module declined '{}'",
+            const std::string line = std::format("DSMod: action '{}' refused: module declined '{}'",
                                                  action.name, action.module_action);
             LOG_INFO(Core, "{}", line);
             trace(line);
@@ -552,7 +553,7 @@ ModRuntime::ActionResult ModRuntime::RunAction(const Action& action, const State
             const auto expanded = ExpandActionName(point_name, snapshot, payload);
             if (!expanded) {
                 const std::string line =
-                    fmt::format("DSMod: action '{}' skipped: '{}' has no usable index", action.name,
+                    std::format("DSMod: action '{}' skipped: '{}' has no usable index", action.name,
                                 action.point);
                 LOG_INFO(Core, "{}", line);
                 trace(line);
@@ -610,10 +611,10 @@ ModRuntime::ActionResult ModRuntime::RunAction(const Action& action, const State
         }
         if (resolved->f) {
             LOG_INFO(Core, "DSMod: wrote {} = {:.3f}", point_name, *resolved->f);
-            trace(fmt::format("DSMod: wrote {} = {:.3f}", point_name, *resolved->f));
+            trace(std::format("DSMod: wrote {} = {:.3f}", point_name, *resolved->f));
         } else {
             LOG_INFO(Core, "DSMod: wrote {} = {}", point_name, value);
-            trace(fmt::format("DSMod: wrote {} = {}", point_name, value));
+            trace(std::format("DSMod: wrote {} = {}", point_name, value));
         }
         break;
     }
@@ -770,7 +771,7 @@ ModRuntime::ActionResult ModRuntime::RunAction(const Action& action, const State
             current = current != 0 ? 0 : 1;
         }
         LOG_INFO(Core, "DSMod: flag '{}' = {}", action.flag, current);
-        trace(fmt::format("DSMod: flag '{}' = {}", action.flag, current));
+        trace(std::format("DSMod: flag '{}' = {}", action.flag, current));
         flag_persistence.SaveIfChanged(flags); // only "persist_flags", only when one changed
         break;
     }

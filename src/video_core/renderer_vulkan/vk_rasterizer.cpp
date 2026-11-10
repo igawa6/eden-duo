@@ -9,7 +9,7 @@
 #include <memory>
 #include <mutex>
 
-#include <fmt/format.h>
+#include <format>
 
 #include "video_core/renderer_vulkan/renderer_vulkan.h"
 
@@ -385,10 +385,10 @@ void RasterizerVulkan::Draw(bool is_indexed, u32 instance_count) {
         if (GPU::Logging::IsActive() &&
             Settings::values.gpu_log_vulkan_calls.GetValue()) {
             const std::string params = is_indexed ?
-                fmt::format("vertices={}, instances={}, firstIndex={}, baseVertex={}, baseInstance={}",
+                std::format("vertices={}, instances={}, firstIndex={}, baseVertex={}, baseInstance={}",
                     draw_params.num_vertices, draw_params.num_instances,
                     draw_params.first_index, draw_params.base_vertex, draw_params.base_instance) :
-                fmt::format("vertices={}, instances={}, firstVertex={}, firstInstance={}",
+                std::format("vertices={}, instances={}, firstVertex={}, firstInstance={}",
                     draw_params.num_vertices, draw_params.num_instances,
                     draw_params.base_vertex, draw_params.base_instance);
             GPU::Logging::GPULogger::GetInstance().LogVulkanCall(
@@ -445,7 +445,7 @@ void RasterizerVulkan::DrawIndirect() {
         // Log indirect draw call
         if (GPU::Logging::IsActive() &&
             Settings::values.gpu_log_vulkan_calls.GetValue()) {
-            const std::string log_params = fmt::format("drawCount={}, stride={}",
+            const std::string log_params = std::format("drawCount={}, stride={}",
                 params.max_draw_counts, params.stride);
             GPU::Logging::GPULogger::GetInstance().LogVulkanCall(
                 params.is_indexed ? "vkCmdDrawIndexedIndirect" : "vkCmdDrawIndirect",
@@ -743,7 +743,7 @@ void RasterizerVulkan::DispatchCompute() {
     // Log compute dispatch
     if (GPU::Logging::IsActive() &&
         Settings::values.gpu_log_vulkan_calls.GetValue()) {
-        const std::string params = fmt::format("groupCountX={}, groupCountY={}, groupCountZ={}",
+        const std::string params = std::format("groupCountX={}, groupCountY={}, groupCountZ={}",
             dim[0], dim[1], dim[2]);
         GPU::Logging::GPULogger::GetInstance().LogVulkanCall(
             "vkCmdDispatch", params, VK_SUCCESS);
@@ -1762,12 +1762,8 @@ void RasterizerVulkan::UpdateDepthClampEnable(Tegra::Engines::Maxwell3D::Regs& r
     if (!device.SupportsDynamicState3DepthClampEnable()) {
         return;
     }
-    bool is_enabled = !(regs.viewport_clip_control.geometry_clip ==
-                            Maxwell::ViewportClipControl::GeometryClip::Passthrough ||
-                        regs.viewport_clip_control.geometry_clip ==
-                            Maxwell::ViewportClipControl::GeometryClip::FrustumXYZ ||
-                        regs.viewport_clip_control.geometry_clip ==
-                            Maxwell::ViewportClipControl::GeometryClip::FrustumZ);
+    const bool is_enabled =
+        MaxwellDepthClampClip(regs, device.IsExtDepthClipEnableSupported()).clamp;
     scheduler.Record(
         [is_enabled](vk::CommandBuffer cmdbuf) { cmdbuf.SetDepthClampEnableEXT(is_enabled); });
 }

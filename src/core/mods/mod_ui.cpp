@@ -32,7 +32,7 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
-#include <fmt/format.h>
+#include <format>
 
 #include "common/logging.h"
 #include "core/mods/mod_ui.h"
@@ -54,7 +54,7 @@ std::string FadeBindSignature(const StateSnapshot& snapshot, const std::string& 
         return t->second;
     }
     if (const auto n = SnapshotNumber(snapshot, bind)) {
-        return fmt::format("{}", *n);
+        return std::format("{}", *n);
     }
     return {};
 }
@@ -1489,7 +1489,7 @@ bool RenderPage(Canvas& canvas, const Manifest& manifest, const Page& page,
             ++cost.calls;
             if (cost.what.empty()) {
                 const std::string& src = widget.src;
-                cost.what = fmt::format("type {} id '{}' rect {}x{} src '{}'",
+                cost.what = std::format("type {} id '{}' rect {}x{} src '{}'",
                                         static_cast<int>(widget.type), widget.id, rw, rh,
                                         src.substr(src.find_last_of('#') == std::string::npos
                                                        ? 0

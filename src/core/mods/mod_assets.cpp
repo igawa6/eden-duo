@@ -26,6 +26,7 @@
 #include <array>
 #include <atomic>
 #include <cstring>
+#include <format>
 #include <span>
 
 #include "bc_decoder.h"
@@ -437,7 +438,7 @@ void ModRuntime::LoadFont() {
     font_metrics = std::move(decoded);
     LOG_INFO(Core, "DSMod: font '{}' has {} glyph(s), line height {} (via {}{})",
              manifest.font_metrics_src, font_metrics.glyphs.size(), font_metrics.line_height,
-             font_source, redecode ? fmt::format(", font epoch {}", font_epoch.decoded) : "");
+             font_source, redecode ? std::format(", font epoch {}", font_epoch.decoded) : "");
     if (redecode) {
         // The atlas goes with the metrics: drop the cached picture so the next draw asks the
         // module again (text is blank until it lands, then the landed image repaints the page),

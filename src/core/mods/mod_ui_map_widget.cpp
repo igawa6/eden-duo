@@ -40,7 +40,7 @@
 #include <unordered_map>
 #include <utility>
 #include <vector>
-#include <fmt/format.h>
+#include <format>
 
 #include "common/logging.h"
 #include "core/mods/mod_map_view_rect.h"
@@ -81,7 +81,7 @@ std::shared_ptr<const LabelBitmap> MapLabelBitmap(const Canvas& target, const st
         !target.HasFont() ? nullptr
         : target.font_atlas != nullptr ? static_cast<const void*>(target.font_atlas)
                                        : static_cast<const void*>(target.font_pages);
-    const std::string key = fmt::format(
+    const std::string key = std::format(
         "{}\x1f{}\x1f{:08X}\x1f{:08X}\x1f{}\x1f{}\x1f{}\x1f{}", text, scale, color, outline_color,
         outline, atlas_id, static_cast<const void*>(fm), fm != nullptr ? fm->line_height : 0);
     if (const auto it = cache.find(key); it != cache.end()) {
@@ -945,7 +945,7 @@ bool GeometryMapDraw::DrawBaseLayer() {
             iw = std::max(16, static_cast<s32>(lf * span_x / span_y));
         }
     }
-    const std::string key = image_mode ? base_image : fmt::format("map:{}@{}x{}", area, iw, ih);
+    const std::string key = image_mode ? base_image : std::format("map:{}@{}x{}", area, iw, ih);
     // The whole area's on-screen rectangle; the visible slice of the (possibly huge,
     // when zoomed) image is what gets blitted, and door boxes snap to its raster grid.
     img_l = to_x(min_x);

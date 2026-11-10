@@ -2,13 +2,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Persisted runtime flags ("persist_flags"); format and location in mod_persist.h.
 
+#include <format>
 #include <fstream>
 #include <limits>
 #include <sstream>
 #include <system_error>
 #include <utility>
 
-#include <fmt/format.h>
 #include <nlohmann/json.hpp>
 
 #include "common/fs/fs_util.h"
@@ -41,7 +41,7 @@ std::string Utf8(const std::filesystem::path& p) {
 
 std::filesystem::path PersistFlagsPath(const std::filesystem::path& root, u64 title_id,
                                        std::string_view package) {
-    return root / fmt::format("{:016X}", title_id) / (SafeName(package) + ".json");
+    return root / std::format("{:016X}", title_id) / (SafeName(package) + ".json");
 }
 
 std::filesystem::path PersistFlagsRoot() {

@@ -18,6 +18,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <deque>
+#include <format>
 #include <fstream>
 #include <mutex>
 #include <stop_token>
@@ -686,8 +687,8 @@ LocateStatus NxAssetState::Locate(const std::string& src, const Roots& roots, Lo
     }
     if (!out.file) {
         error = prefix == "file" ? std::string{"no such package file"}
-                : roots->Root(prefix) ? fmt::format("no such {} file", prefix)
-                                      : fmt::format("game {} unavailable", prefix);
+                : roots->Root(prefix) ? std::format("no such {} file", prefix)
+                                      : std::format("game {} unavailable", prefix);
         return LocateStatus::NotFound;
     }
     out.size = out.file->GetSize();
@@ -1984,7 +1985,7 @@ void ModRuntime::PumpNxAssets(const StateSnapshot& snapshot) {
             for (size_t i = 0; i < text->size();) {
                 const char32_t c = Msbt::NextUtf8(*text, i);
                 if (c >= TextIconBase && c <= TextIconLast) {
-                    shown += fmt::format("{{U+{:04X}}}", static_cast<u32>(c - TextIconBase));
+                    shown += std::format("{{U+{:04X}}}", static_cast<u32>(c - TextIconBase));
                 } else if (c == '\n') {
                     shown += "\\n";
                 } else {
@@ -1992,9 +1993,9 @@ void ModRuntime::PumpNxAssets(const StateSnapshot& snapshot) {
                 }
             }
         }
-        EmitConsole(text != nullptr ? fmt::format("DSMod msbt {} [{}/{}] = {}", it->ref,
+        EmitConsole(text != nullptr ? std::format("DSMod msbt {} [{}/{}] = {}", it->ref,
                                                   s.msbt.chosen.first, s.msbt.chosen.second, shown)
-                                    : fmt::format("DSMod msbt {} FAILED ({})", it->ref,
+                                    : std::format("DSMod msbt {} FAILED ({})", it->ref,
                                                   timeout ? "timeout" : "no such text"));
         it = s.msbt.console.erase(it);
     }
@@ -2101,12 +2102,12 @@ void ModRuntime::PumpNxAssets(const StateSnapshot& snapshot) {
             const bool ok = stbi_write_png(it->out.c_str(), static_cast<int>(cached->w),
                                            static_cast<int>(cached->h), 4, rgba.data(),
                                            static_cast<int>(cached->w) * 4) != 0;
-            EmitConsole(fmt::format(
+            EmitConsole(std::format(
                 "DSMod imgdump {} '{}' {}x{} -> {} ({:.0f} ms)", ok ? "ok" : "write-failed",
                 it->src, cached->w, cached->h, it->out,
                 std::chrono::duration<double, std::milli>(now - it->requested).count()));
         } else {
-            EmitConsole(fmt::format("DSMod imgdump FAILED '{}' ({})", it->src,
+            EmitConsole(std::format("DSMod imgdump FAILED '{}' ({})", it->src,
                                     timeout ? "timeout" : "not decodable"));
         }
         it = s.dumps.erase(it);
@@ -2187,12 +2188,12 @@ void ModRuntime::NxImageDump(const std::string& args) {
         const bool ok =
             stbi_write_png(out.c_str(), static_cast<int>(image->w), static_cast<int>(image->h), 4,
                            rgba.data(), static_cast<int>(image->w) * 4) != 0;
-        EmitConsole(fmt::format("DSMod imgdump {} '{}' {}x{} -> {} (0 ms)",
+        EmitConsole(std::format("DSMod imgdump {} '{}' {}x{} -> {} (0 ms)",
                                 ok ? "ok" : "write-failed", src, image->w, image->h, out));
         return;
     }
     nx_assets->dumps.push_back({src, out, NxClock::now()});
-    EmitConsole(fmt::format("DSMod imgdump queued '{}'", src));
+    EmitConsole(std::format("DSMod imgdump queued '{}'", src));
 }
 #endif // EDEN_DSMOD_BUILD_DEV_TOOLS
 
@@ -2388,14 +2389,14 @@ bool ModRuntime::AcceptMsbt(const MsbtResult& r) {
     // Unknown tags and unmapped icons: stripped, each reported once per session (one line).
     std::string tags, icons;
     for (const u32 tag : r.stripped) {
-        if (m.logged.insert(fmt::format("tag {}", tag)).second) {
-            tags += fmt::format(" {}{}.{}", (tag >> 31) != 0 ? "/" : "", (tag >> 16) & 0x7FFF,
+        if (m.logged.insert(std::format("tag {}", tag)).second) {
+            tags += std::format(" {}{}.{}", (tag >> 31) != 0 ? "/" : "", (tag >> 16) & 0x7FFF,
                                 tag & 0xFFFF);
         }
     }
     for (const u32 index : r.unmapped_icons) {
-        if (m.logged.insert(fmt::format("icon {}", index)).second) {
-            icons += fmt::format(" {}", index);
+        if (m.logged.insert(std::format("icon {}", index)).second) {
+            icons += std::format(" {}", index);
         }
     }
     if (!tags.empty() || !icons.empty()) {
@@ -2409,13 +2410,13 @@ bool ModRuntime::AcceptMsbt(const MsbtResult& r) {
     if (!usable && !m.on_fallback && manifest.msbt.has_fallback && m.chosen != fallback) {
         std::string why;
         if (!r.ok) {
-            why = fmt::format("'{}' could not be read ({})", r.path, r.error);
+            why = std::format("'{}' could not be read ({})", r.path, r.error);
         } else {
             std::string sample;
             for (const char32_t c : r.uncovered_sample) {
-                sample += fmt::format(" U+{:04X}", static_cast<u32>(c));
+                sample += std::format(" U+{:04X}", static_cast<u32>(c));
             }
-            why = fmt::format("{} character(s) of the used labels are not in {} (e.g.{})",
+            why = std::format("{} character(s) of the used labels are not in {} (e.g.{})",
                               r.uncovered, r.font_used, sample);
         }
         LOG_WARNING(Core, "DSMod msbt: {}/{} not usable: {} -> fallback {}/{}", m.chosen.first,
@@ -2533,7 +2534,7 @@ void ModRuntime::MsbtConsole(const std::string& args) {
         ResolveMsbtLanguage();
     }
     if (ref.empty()) {
-        EmitConsole(fmt::format("DSMod msbt lang: settings {} ({}), game given '{}', NACP {:08X}, "
+        EmitConsole(std::format("DSMod msbt lang: settings {} ({}), game given '{}', NACP {:08X}, "
                                 "key '{}' -> {}/{}{}{}",
                                 m.settings_index, m.settings_name, m.desired, m.nacp_languages,
                                 m.matched_key, m.chosen.first, m.chosen.second,

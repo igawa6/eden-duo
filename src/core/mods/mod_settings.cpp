@@ -6,8 +6,8 @@
 #include "core/mods/mod_settings.h"
 
 #include <algorithm>
+#include <format>
 
-#include <fmt/format.h>
 #include <nlohmann/json.hpp>
 
 #include "common/logging.h"
@@ -135,7 +135,7 @@ void ApplySettings(const std::vector<SettingDef>& settings, Manifest& manifest) 
     back_button.align = 1;
     back_button.text = "< BACK";
     back_button.text_scale = std::max(3, title_h / 20);
-    back_button.on_tap = fmt::format("{}back", SettingsActionPrefix);
+    back_button.on_tap = std::format("{}back", SettingsActionPrefix);
     page.widgets.push_back(std::move(back_button));
 
     Widget title;
@@ -167,11 +167,11 @@ void ApplySettings(const std::vector<SettingDef>& settings, Manifest& manifest) 
     for (s32 i = 0; i < count; ++i) {
         const SettingDef& def = settings[static_cast<size_t>(i)];
         const s32 y = rows_y + i * pitch;
-        const std::string action = fmt::format("{}{}", SettingsActionPrefix, def.flag);
+        const std::string action = std::format("{}{}", SettingsActionPrefix, def.flag);
 
         Widget row;
         row.type = WidgetType::Button;
-        row.id = fmt::format("@settings.row.{}", def.flag);
+        row.id = std::format("@settings.row.{}", def.flag);
         row.rect = {margin, y, w - 2 * margin, row_h};
         row.bg = SettingsRow;
         row.color = SettingsText;
@@ -183,7 +183,7 @@ void ApplySettings(const std::vector<SettingDef>& settings, Manifest& manifest) 
 
         Widget value;
         value.type = WidgetType::Value;
-        value.id = fmt::format("@settings.value.{}", def.flag);
+        value.id = std::format("@settings.value.{}", def.flag);
         value.rect = {w - margin - std::max(inset, 12), y + inset, 0, 0};
         value.align = 2;
         value.bind = "@flag:" + def.flag;
@@ -209,7 +209,7 @@ void ApplySettings(const std::vector<SettingDef>& settings, Manifest& manifest) 
 
     Action leave;
     leave.kind = ActionKind::Page;
-    leave.name = fmt::format("{}back", SettingsActionPrefix);
+    leave.name = std::format("{}back", SettingsActionPrefix);
     leave.page = std::string{SettingsBackPageId};
     manifest.actions.insert_or_assign(leave.name, std::move(leave));
 

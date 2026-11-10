@@ -12,11 +12,10 @@
 #include <array>
 #include <chrono>
 #include <cstring>
+#include <format>
 #include <span>
 #include <string>
 #include <vector>
-
-#include <fmt/format.h>
 
 #include "common/dsmod_dev_tools.h"
 #include "common/logging.h"
@@ -225,7 +224,7 @@ void RasterizerVulkan::DSModLogReadbackMiss(const VideoCore::DSMod::ReadbackRequ
             return;
         }
         ++shown;
-        list += fmt::format(" [{:#x} {}x{}x{} fmt={} type={} lv={} ly={} s={} flags={:#x} mod={}]",
+        list += std::format(" [{:#x} {}x{}x{} fmt={} type={} lv={} ly={} s={} flags={:#x} mod={}]",
                             image.gpu_addr, info.size.width, info.size.height, info.size.depth,
                             static_cast<u32>(info.format), static_cast<u32>(info.type),
                             info.resources.levels, info.resources.layers, info.num_samples,

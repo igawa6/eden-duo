@@ -13,6 +13,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <format>
 #include <limits>
 #include <numeric>
 #include <set>
@@ -119,8 +120,8 @@ void ModRuntime::DriveCmdImpl() {
         if (dev.cmd_find_cursor >= HeapHigh() || dev.cmd_find_hits.size() >= 60) {
             std::string out;
             for (VAddr a : dev.cmd_find_hits)
-                out += fmt::format(" {:012X}", a);
-            emit(fmt::format("DSMod find {}: {} hit(s){}", dev.cmd_find_label, dev.cmd_find_hits.size(),
+                out += std::format(" {:012X}", a);
+            emit(std::format("DSMod find {}: {} hit(s){}", dev.cmd_find_label, dev.cmd_find_hits.size(),
                              out));
             dev.cmd_find_active = false;
         }
@@ -165,7 +166,7 @@ void ModRuntime::DriveCmdImpl() {
                     continue;
                 const VAddr slot_off = (page + at) - main_region_begin;
                 if (sig(static_cast<VAddr>(g))) {
-                    dev.cmd_mgr_hits.push_back(fmt::format("P@main+{:X}->{:012X}", slot_off, g));
+                    dev.cmd_mgr_hits.push_back(std::format("P@main+{:X}->{:012X}", slot_off, g));
                 } else {
                     const u8* hb0 = memory.GetPointerSilent(static_cast<VAddr>(g) + 0xB0);
                     if (hb0 != nullptr) {
@@ -173,7 +174,7 @@ void ModRuntime::DriveCmdImpl() {
                         std::memcpy(&pl, hb0, 8);
                         if (pl >= 0x1000000ULL && sig(static_cast<VAddr>(pl)))
                             dev.cmd_mgr_hits.push_back(
-                                fmt::format("M@main+{:X}->{:012X}+B0->{:012X}", slot_off, g, pl));
+                                std::format("M@main+{:X}->{:012X}+B0->{:012X}", slot_off, g, pl));
                     }
                 }
                 if (dev.cmd_mgr_hits.size() >= 40)
@@ -185,7 +186,7 @@ void ModRuntime::DriveCmdImpl() {
             std::string out;
             for (const auto& hh : dev.cmd_mgr_hits)
                 out += " " + hh;
-            emit(fmt::format("DSMod mgrfind={}: {} hit(s){}", dev.cmd_mgr_target, dev.cmd_mgr_hits.size(),
+            emit(std::format("DSMod mgrfind={}: {} hit(s){}", dev.cmd_mgr_target, dev.cmd_mgr_hits.size(),
                              out));
             dev.cmd_mgr_active = false;
         }
@@ -214,7 +215,7 @@ void ModRuntime::DriveCmdImpl() {
                     u32 w{};
                     std::memcpy(&w, p2 + o, 4);
                     if (w == dev.cmd_vfind_want) {
-                        dev.cmd_vfind_hits.push_back(fmt::format("{:012X}(vt=main+{:X},@+{:#x})", obj,
+                        dev.cmd_vfind_hits.push_back(std::format("{:012X}(vt=main+{:X},@+{:#x})", obj,
                                                              vt - main_region_begin, o));
                         break;
                     }
@@ -266,9 +267,9 @@ void ModRuntime::DriveCmdImpl() {
                 if (v == dev.cmd_ptr_want) {
                     const VAddr loc = page + at;
                     if (in_module)
-                        dev.cmd_ptr_hits.push_back(fmt::format("main+{:X}", loc - main_region_begin));
+                        dev.cmd_ptr_hits.push_back(std::format("main+{:X}", loc - main_region_begin));
                     else
-                        dev.cmd_ptr_hits.push_back(fmt::format("{:012X}", loc));
+                        dev.cmd_ptr_hits.push_back(std::format("{:012X}", loc));
                     if (dev.cmd_ptr_hits.size() >= 30)
                         break;
                 }
@@ -283,7 +284,7 @@ void ModRuntime::DriveCmdImpl() {
             std::string out;
             for (auto& h : dev.cmd_ptr_hits)
                 out += " " + h;
-            emit(fmt::format("DSMod ptrto {:012X}: {} holder(s){}", dev.cmd_ptr_want,
+            emit(std::format("DSMod ptrto {:012X}: {} holder(s){}", dev.cmd_ptr_want,
                              dev.cmd_ptr_hits.size(), out.empty() ? std::string(" -") : out));
             dev.cmd_ptr_active = false;
         }
@@ -345,17 +346,17 @@ void ModRuntime::DriveCmdImpl() {
                 o.write(row.data(), static_cast<std::streamsize>(row.size()));
             }
             ++written;
-            emit(fmt::format("DSMod mapdump: wrote {} ({}x{}) for '{}'", path + "." + safe + ".ppm",
+            emit(std::format("DSMod mapdump: wrote {} ({}x{}) for '{}'", path + "." + safe + ".ppm",
                              img->w, img->h, key));
         }
-        emit(fmt::format("DSMod mapdump '{}': {} image(s)", prefix, written));
+        emit(std::format("DSMod mapdump '{}': {} image(s)", prefix, written));
     } else if (op == "walls") {
         // Debug console reader, tick thread; map_walls is also written from AcceptModuleMap (tick
         // thread, so no hazard there) and read from GetImage (redraw worker) -- locked for
         // consistency with every other map_state_mutex member.
         std::scoped_lock lk{map_state_mutex};
         for (const auto& [area, tiles] : map_walls) {
-            emit(fmt::format("map walls '{}': {} tiles", area, tiles.size()));
+            emit(std::format("map walls '{}': {} tiles", area, tiles.size()));
         }
     } else if (op == "action") {
         // Fire a manifest action once (a sequence, a page, a flag) from the console -- the way a
@@ -364,7 +365,7 @@ void ModRuntime::DriveCmdImpl() {
         f >> name >> when;
         dev.cmd_action = name;
         dev.cmd_action_ingame = when == "ingame";
-        emit(fmt::format("DSMod action '{}' queued{}", name,
+        emit(std::format("DSMod action '{}' queued{}", name,
                          dev.cmd_action_ingame ? " (once in play)" : ""));
     } else if (op == "readf" || op == "readi") {
         std::string addr;
@@ -382,11 +383,11 @@ void ModRuntime::DriveCmdImpl() {
             if (op == "readf") {
                 f32 v{};
                 std::memcpy(&v, &r, sizeof(v));
-                out += fmt::format(" +{}:{:g}", i * 4, v);
+                out += std::format(" +{}:{:g}", i * 4, v);
             } else
-                out += fmt::format(" +{}:{}", i * 4, static_cast<s32>(r));
+                out += std::format(" +{}:{}", i * 4, static_cast<s32>(r));
         }
-        emit(fmt::format("DSMod read {:012X}:{}", base, out));
+        emit(std::format("DSMod read {:012X}:{}", base, out));
     } else if (op == "page") {
         // Switch the bottom-screen page by id or index (headless verification helper).
         std::string which;
@@ -405,9 +406,9 @@ void ModRuntime::DriveCmdImpl() {
         }
         if (target < manifest.pages.size()) {
             current_page = target;
-            emit(fmt::format("DSMod page -> {} '{}'", target, manifest.pages[target].id));
+            emit(std::format("DSMod page -> {} '{}'", target, manifest.pages[target].id));
         } else {
-            emit(fmt::format("DSMod page: no page '{}'", which));
+            emit(std::format("DSMod page: no page '{}'", which));
         }
     } else if (op == "findi" || op == "findf") {
         std::string val;
@@ -463,11 +464,11 @@ void ModRuntime::DriveCmdImpl() {
             std::memcpy(&now, &r, 4);
             const f32 d = now - dev.cmd_snap_val[i];
             if (std::isfinite(now) && std::fabs(d) > 0.3f && std::fabs(d) < 800.0f) {
-                out += fmt::format(" {:012X}:{:g}->{:g}", dev.cmd_snap_addr[i], dev.cmd_snap_val[i], now);
+                out += std::format(" {:012X}:{:g}->{:g}", dev.cmd_snap_addr[i], dev.cmd_snap_val[i], now);
                 ++shown;
             }
         }
-        emit(fmt::format("DSMod diff:{}",
+        emit(std::format("DSMod diff:{}",
                          out.empty() ? std::string(" (no walking-sized changes)") : out));
     } else if (op == "pairfind") {
         // "pairfind <hexbase> <nints> <v1> <v2> <maxdelta>" -- where do two values sit near each
@@ -498,7 +499,7 @@ void ModRuntime::DriveCmdImpl() {
             while (j < b_hits.size() && b_hits[j] + maxd < a)
                 ++j;
             for (size_t k = j; k < b_hits.size() && b_hits[k] <= a + maxd; ++k) {
-                out += fmt::format(" {:012X}{:+#x}", a,
+                out += std::format(" {:012X}{:+#x}", a,
                                    static_cast<s64>(b_hits[k]) - static_cast<s64>(a));
                 if (++shown >= 40)
                     break;
@@ -508,7 +509,7 @@ void ModRuntime::DriveCmdImpl() {
                 break;
             }
         }
-        emit(fmt::format("DSMod pairfind {}/{}: {} & {} hits, {} pair(s){}", v1, v2, a_hits.size(),
+        emit(std::format("DSMod pairfind {}/{}: {} & {} hits, {} pair(s){}", v1, v2, a_hits.size(),
                          b_hits.size(), shown, out.empty() ? " -" : out));
     } else if (op == "sfind") {
         // Find an inline UTF-32 ASCII string: "sfind <hexbase> <nints> <text>". The game stores
@@ -536,14 +537,14 @@ void ModRuntime::DriveCmdImpl() {
                 }
                 if (!all)
                     continue;
-                out += fmt::format(" {:012X}", at);
+                out += std::format(" {:012X}", at);
                 if (++shown >= 30) {
                     out += " ...";
                     break;
                 }
             }
         }
-        emit(fmt::format("DSMod sfind '{}': {} hit(s){}", want, shown, out.empty() ? " -" : out));
+        emit(std::format("DSMod sfind '{}': {} hit(s){}", want, shown, out.empty() ? " -" : out));
     } else if (op == "cscan") {
         // Stateful differential scanner (Cheat Engine style). cscan <hexaddr> <n> resets a
         // candidate set = every int in the region; then cnarrow same/diff/inc/dec/in keeps the ones
@@ -563,7 +564,7 @@ void ModRuntime::DriveCmdImpl() {
             dev.cmd_scan_cand.push_back(i);
         }
         emit(
-            fmt::format("DSMod cscan {:012X}: {} candidates", dev.cmd_scan_base, dev.cmd_scan_cand.size()));
+            std::format("DSMod cscan {:012X}: {} candidates", dev.cmd_scan_base, dev.cmd_scan_cand.size()));
     } else if (op == "cnarrow") {
         std::string mode;
         f >> mode;
@@ -602,20 +603,20 @@ void ModRuntime::DriveCmdImpl() {
             dev.cmd_scan_snap[i] = now; // refresh baseline for the next pass
         }
         dev.cmd_scan_cand.swap(keep);
-        emit(fmt::format("DSMod cnarrow {}: {} left", mode, dev.cmd_scan_cand.size()));
+        emit(std::format("DSMod cnarrow {}: {} left", mode, dev.cmd_scan_cand.size()));
     } else if (op == "clist") {
         std::string out;
         u32 shown = 0;
         for (const u32 i : dev.cmd_scan_cand) {
             const VAddr a = dev.cmd_scan_base + i * 4;
-            out += fmt::format(" {:012X}:{}", a,
+            out += std::format(" {:012X}:{}", a,
                                static_cast<s32>(AddressIsSane(a, 4) ? memory.Read32(a) : 0));
             if (++shown >= 60) {
                 out += " ...";
                 break;
             }
         }
-        emit(fmt::format("DSMod clist ({}){}", dev.cmd_scan_cand.size(), out.empty() ? " -" : out));
+        emit(std::format("DSMod clist ({}){}", dev.cmd_scan_cand.size(), out.empty() ? " -" : out));
     } else if (op == "msbt") {
         // msbt [<alias>#<label>]: the language decision, or one decoded text (icons as {U+XXXX})
         std::string rest;
@@ -633,11 +634,11 @@ void ModRuntime::DriveCmdImpl() {
         f >> addr >> val;
         const VAddr a = std::strtoull(addr.c_str(), nullptr, 16);
         if (!AddressIsSane(a, 1) || val.empty()) {
-            emit(fmt::format("DSMod writeb {:012X}: refused", a));
+            emit(std::format("DSMod writeb {:012X}: refused", a));
         } else {
             const u8 before = memory.Read8(a);
             memory.Write8(a, static_cast<u8>(std::strtoul(val.c_str(), nullptr, 0)));
-            emit(fmt::format("DSMod writeb {:012X}: {:#04x} -> {:#04x}", a, before,
+            emit(std::format("DSMod writeb {:012X}: {:#04x} -> {:#04x}", a, before,
                              memory.Read8(a)));
         }
     } else if (op == "tap") {
@@ -649,7 +650,7 @@ void ModRuntime::DriveCmdImpl() {
             std::scoped_lock lk{tap_mutex};
             pending_taps.push_back(PendingTap{tx, ty});
         }
-        emit(fmt::format("DSMod tap queued ({},{})", tx, ty));
+        emit(std::format("DSMod tap queued ({},{})", tx, ty));
     } else if (op == "drag") {
         // "drag x0 y0 x1 y1 [ms] [fling]": a synthetic finger through the aux touch path. Values
         // all in 0..1 are normalised to the aux panel (like the .btn driver); otherwise canvas
@@ -683,7 +684,7 @@ void ModRuntime::DriveCmdImpl() {
             cmd_drag.end_dwell = fling ? 0 : 4;
             cmd_drag.start = tick_count;
             cmd_drag.active = true;
-            emit(fmt::format("DSMod drag queued ({},{}) -> ({},{}) {} over {} ticks", v[0], v[1],
+            emit(std::format("DSMod drag queued ({},{}) -> ({},{}) {} over {} ticks", v[0], v[1],
                              v[2], v[3], cmd_drag.normalised ? "normalised" : "canvas px",
                              cmd_drag.move_ticks));
         }
@@ -699,7 +700,7 @@ void ModRuntime::DriveCmdImpl() {
             const VAddr a = dev.cmd_isnap_base + i * 4;
             dev.cmd_isnap_vals.push_back(AddressIsSane(a, 4) ? memory.Read32(a) : 0u);
         }
-        emit(fmt::format("DSMod isnap {:012X}: {} ints", dev.cmd_isnap_base, dev.cmd_isnap_vals.size()));
+        emit(std::format("DSMod isnap {:012X}: {} ints", dev.cmd_isnap_base, dev.cmd_isnap_vals.size()));
     } else if (op == "idiff") {
         // Report every int that changed since isnap (offset : old -> new). Optional filter: "idiff
         // small" keeps only |old|<=255 and |new|<=255 (indices / tool ids), cutting live-game
@@ -720,13 +721,13 @@ void ModRuntime::DriveCmdImpl() {
             const s32 nv = static_cast<s32>(now);
             if (small && (std::abs(ov) > 255 || std::abs(nv) > 255))
                 continue;
-            out += fmt::format(" +{:#x}:{}->{}", i * 4, ov, nv);
+            out += std::format(" +{:#x}:{}->{}", i * 4, ov, nv);
             if (++shown >= 40) {
                 out += " ...";
                 break;
             }
         }
-        emit(fmt::format("DSMod idiff{}", out.empty() ? " (none)" : out));
+        emit(std::format("DSMod idiff{}", out.empty() ? " (none)" : out));
     } else if (op == "chain") {
         // Follow a main-relative pointer chain (Joe-style, NO scan). "chain <mainoff> <off1>
         // <off2>..." addr = main+mainoff; ptr = [addr]; then for each off: addr = ptr+off, ptr =
@@ -734,27 +735,27 @@ void ModRuntime::DriveCmdImpl() {
         std::string moff;
         f >> moff;
         VAddr addr = main_region_begin + std::strtoull(moff.c_str(), nullptr, 16);
-        std::string out = fmt::format("main+{}: ", moff);
+        std::string out = std::format("main+{}: ", moff);
         u64 ptr = AddressIsSane(addr, 8) ? memory.Read64(addr) : 0;
-        out += fmt::format("[{:012X}]={:012X}", addr, ptr);
+        out += std::format("[{:012X}]={:012X}", addr, ptr);
         std::string off;
         while (f >> off) {
             const s64 o = std::strtoll(off.c_str(), nullptr, 0);
             addr = ptr + o;
             if (!AddressIsSane(addr, 8)) {
-                out += fmt::format(" +{:#x}->BAD", o);
+                out += std::format(" +{:#x}->BAD", o);
                 break;
             }
             ptr = memory.Read64(addr);
-            out += fmt::format(" +{:#x}->{:012X}", o, ptr);
+            out += std::format(" +{:#x}->{:012X}", o, ptr);
         }
         // also show what's at the final pointer (as ints, first few words)
         if (AddressIsSane(addr, 16)) {
             out += " | @dst:";
             for (u32 k = 0; k < 4; ++k)
-                out += fmt::format(" {}", static_cast<s32>(memory.Read32(addr + k * 4)));
+                out += std::format(" {}", static_cast<s32>(memory.Read32(addr + k * 4)));
         }
-        emit(fmt::format("DSMod chain {}", out));
+        emit(std::format("DSMod chain {}", out));
     } else if (op == "ptrto") {
         // Find 8-aligned locations (heap + main statics) holding a pointer to <hexaddr>. Sliced.
         // Static hits (main+X) are the durable route anchors. Also scans the main module region.
@@ -801,7 +802,7 @@ void ModRuntime::DriveCmdImpl() {
                 if (!AddressIsSane(fld, 4))
                     continue;
                 if (memory.Read32(fld) == want) {
-                    out += fmt::format(" {:012X}(vt=main+{:X})", page + at, vt - main_region_begin);
+                    out += std::format(" {:012X}(vt=main+{:X})", page + at, vt - main_region_begin);
                     if (++hits >= 20)
                         break;
                 }
@@ -846,7 +847,7 @@ void ModRuntime::DriveCmdImpl() {
                         continue;
                     if (memory.Read32(b) == want[k]) {
                         found = true;
-                        offs += fmt::format(" v{}@{:+#x}", k, off);
+                        offs += std::format(" v{}@{:+#x}", k, off);
                     }
                 }
                 if (!found) {
@@ -855,7 +856,7 @@ void ModRuntime::DriveCmdImpl() {
                 }
             }
             if (all) {
-                out += fmt::format(" [{:012X}{}]", a, offs);
+                out += std::format(" [{:012X}{}]", a, offs);
                 if (++shown >= 12)
                     break;
             }
@@ -876,22 +877,22 @@ void ModRuntime::DriveCmdImpl() {
         deref_len = std::min<u64>(deref_len, 0x400);
         const auto words = [&](VAddr at, u64 n, const char* ind) {
             for (u64 off = 0; off < n; off += 32) {
-                std::string line = fmt::format("{}+{:04X}:", ind, off);
+                std::string line = std::format("{}+{:04X}:", ind, off);
                 for (u64 k = 0; k < 32 && off + k < n; k += 8) {
                     line += AddressIsSane(at + off + k, 8)
-                                ? fmt::format(" {:016X}", memory.Read64(at + off + k))
+                                ? std::format(" {:016X}", memory.Read64(at + off + k))
                                 : std::string{" ????????????????"};
                 }
                 emit(line);
             }
         };
-        emit(fmt::format("{} base={:012X} len={:X}", op, base, len));
+        emit(std::format("{} base={:012X} len={:X}", op, base, len));
         if (base != 0 && AddressIsSane(base, 8)) {
             words(base, len, "  ");
             for (u64 off = 0; off + 8 <= len; off += 8) {
                 const u64 v = memory.Read64(base + off);
                 if (v >= HeapLow() && v < HeapHigh() && AddressIsSane(v, deref_len)) {
-                    emit(fmt::format("  [+{:03X}] -> {:012X}:", off, v));
+                    emit(std::format("  [+{:03X}] -> {:012X}:", off, v));
                     words(v, deref_len, "      ");
                 }
             }
@@ -918,7 +919,7 @@ void ModRuntime::DriveCmdImpl() {
         if (const auto area = manifest.map_areas.find(live_scenario);
             area != manifest.map_areas.end()) {
             for (const auto& marker : area->second.markers) {
-                emit(fmt::format("{} hidden={} opened={} collected={} unveiled={} veiled={}",
+                emit(std::format("{} hidden={} opened={} collected={} unveiled={} veiled={}",
                                  marker.name, marker.hidden, marker.opened, marker.collected,
                                  marker.unveiled, marker.veiled));
             }
@@ -929,34 +930,34 @@ void ModRuntime::DriveCmdImpl() {
         std::string name;
         while (f >> name) {
             if (const auto fl = tick_snapshot.floats.find(name); fl != tick_snapshot.floats.end()) {
-                line += fmt::format(" {}={:.4f}f", name, fl->second);
+                line += std::format(" {}={:.4f}f", name, fl->second);
             } else if (const auto in = tick_snapshot.ints.find(name);
                        in != tick_snapshot.ints.end()) {
-                line += fmt::format(" {}={}", name, in->second);
+                line += std::format(" {}={}", name, in->second);
             } else if (const auto tx = tick_snapshot.texts.find(name);
                        tx != tick_snapshot.texts.end()) {
-                line += fmt::format(" {}=\"{}\"", name, tx->second.substr(0, 200));
+                line += std::format(" {}=\"{}\"", name, tx->second.substr(0, 200));
             } else {
-                line += fmt::format(" {}=missing", name);
+                line += std::format(" {}=missing", name);
             }
         }
         emit(line);
     } else if (op == "animinfo") {
         // animinfo: page transition + widget-group animation state, haptics raised so far.
         std::string line =
-            fmt::format("DSMod animinfo page {} transition {} groups:", current_page,
-                        page_anim.active ? fmt::format("active {}->{} frame {}", page_anim.req.from,
+            std::format("DSMod animinfo page {} transition {} groups:", current_page,
+                        page_anim.active ? std::format("active {}->{} frame {}", page_anim.req.from,
                                                        page_anim.req.to, page_anim.frames)
                                          : std::string{"idle"});
         for (const auto& def : group_defs) {
             const auto g = group_anims.find(def.anim->key);
-            line += fmt::format(" ['{}' box {},{},{},{} {} pos {:.2f}{}]", def.anim->key,
+            line += std::format(" ['{}' box {},{},{},{} {} pos {:.2f}{}]", def.anim->key,
                                 def.box[0], def.box[1], def.box[2], def.box[3],
                                 g != group_anims.end() && g->second.open ? "open" : "closed",
                                 g != group_anims.end() ? g->second.pos : -1.0f,
                                 g != group_anims.end() && g->second.moving ? " moving" : "");
         }
-        line += fmt::format(" haptics raised {}", system.GPU().DSModAux().haptic_raised.load());
+        line += std::format(" haptics raised {}", system.GPU().DSModAux().haptic_raised.load());
         emit(line);
     } else if (op == "mapinfo") {
         // mapinfo [wx wy]: each Map widget's last drawn transform and on-screen dynamic markers;
@@ -967,28 +968,28 @@ void ModRuntime::DriveCmdImpl() {
         // developer-only, not a hot path.
         std::scoped_lock rlk{map_records_mutex};
         std::string line =
-            fmt::format("DSMod mapinfo page {} (records for page {}):", current_page,
+            std::format("DSMod mapinfo page {} (records for page {}):", current_page,
                         map_records_page == ~size_t{0} ? -1 : static_cast<s64>(map_records_page));
         for (const auto& r : map_draw_records_published) {
-            line += fmt::format(" [widget {} area '{}' rect {},{},{},{} centre ({:.3f},{:.3f}) "
+            line += std::format(" [widget {} area '{}' rect {},{},{},{} centre ({:.3f},{:.3f}) "
                                 "ppw {:.5f}",
                                 r.widget_index, r.area, r.rect[0], r.rect[1], r.rect[2], r.rect[3],
                                 r.cx, r.cy, r.ppw);
             if (!sx.empty() && !sy.empty()) {
                 const float wx = std::strtof(sx.c_str(), nullptr);
                 const float wy = std::strtof(sy.c_str(), nullptr);
-                line += fmt::format(" world ({:.3f},{:.3f}) at canvas ({:.1f},{:.1f})", wx, wy,
+                line += std::format(" world ({:.3f},{:.3f}) at canvas ({:.1f},{:.1f})", wx, wy,
                                     r.rect[0] + r.rect[2] * 0.5f + (wx - r.cx) * r.ppw,
                                     r.rect[1] + r.rect[3] * 0.5f - (wy - r.cy) * r.ppw);
             }
-            line += fmt::format(" hits {}", r.hits.size());
+            line += std::format(" hits {}", r.hits.size());
             for (const auto& h : r.hits) {
-                line += fmt::format(" {}#{}@({:.0f},{:.0f})", h.group, h.index, h.sx, h.sy);
+                line += std::format(" {}#{}@({:.0f},{:.0f})", h.group, h.index, h.sx, h.sy);
             }
             line += "]";
         }
         for (const auto& [g, v] : map_selections) {
-            line += fmt::format(" sel {}={}", g, v);
+            line += std::format(" sel {}={}", g, v);
         }
         emit(line);
     } else if (op == "markers" || op == "mlog") {
@@ -1020,9 +1021,9 @@ void ModRuntime::DriveCmdImpl() {
                 ++found;
                 std::string dump;
                 for (int k = 0; k < 6 && AddressIsSane(node + k * 8, 8); ++k) {
-                    dump += fmt::format(" {:016X}", memory.Read64(node + k * 8));
+                    dump += std::format(" {:016X}", memory.Read64(node + k * 8));
                 }
-                emit(fmt::format("DSMod bb @{:012X}:{}", node, dump));
+                emit(std::format("DSMod bb @{:012X}:{}", node, dump));
                 // Recursively dump a few pointer levels, and flag any run of bytes that reads like
                 // an array (the decoded FOW cells we are hunting for).
                 const std::function<void(VAddr, int)> descend = [&](VAddr p, int depth) {
@@ -1031,7 +1032,7 @@ void ModRuntime::DriveCmdImpl() {
                     }
                     std::string d;
                     for (int k = 0; k < 8 && AddressIsSane(p + k * 8, 8); ++k) {
-                        d += fmt::format(" {:016X}", memory.Read64(p + k * 8));
+                        d += std::format(" {:016X}", memory.Read64(p + k * 8));
                     }
                     // count how many of the next 256 bytes are small (0..3) -- a cell-state array.
                     int small = 0, nonzero = 0;
@@ -1042,7 +1043,7 @@ void ModRuntime::DriveCmdImpl() {
                         if (b != 0)
                             ++nonzero;
                     }
-                    emit(fmt::format("  {}L{} @{:012X} small={}/256 nz={}:{}",
+                    emit(std::format("  {}L{} @{:012X} small={}/256 nz={}:{}",
                                      std::string(depth * 2, ' '), depth, p, small, nonzero, d));
                     for (int voff = 0; voff < 24;
                          voff += 8) { // follow the first few child pointers
@@ -1063,7 +1064,7 @@ void ModRuntime::DriveCmdImpl() {
                 }
             }
         }
-        emit(fmt::format("DSMod bbwalk {:016X}: {} hit(s)", want, found));
+        emit(std::format("DSMod bbwalk {:016X}: {} hit(s)", want, found));
     } else if (op == "bbget" || op == "bbhex") {
         emit("Blackboard diagnostics belong to the installed title module.");
     }

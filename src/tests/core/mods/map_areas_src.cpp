@@ -8,12 +8,12 @@
 
 #include <cstdlib>
 #include <cstring>
+#include <format>
 #include <fstream>
 #include <map>
 #include <sstream>
 #include <string>
 
-#include <fmt/format.h>
 #include <nlohmann/json.hpp>
 
 #include "core/mods/mod_runtime.h"
@@ -25,16 +25,16 @@ namespace {
 std::string Bits(float v) {
     u32 b;
     std::memcpy(&b, &v, 4);
-    return fmt::format("{:08x}", b);
+    return std::format("{:08x}", b);
 }
 
 /// Every parsed field the map renderer and module use, in a canonical order.
 std::string Dump(const MapArea& a) {
-    std::string s = fmt::format("geo={} image={} nopin={} pad={} clamp={} box={},{},{},{}\n", a.geo,
+    std::string s = std::format("geo={} image={} nopin={} pad={} clamp={} box={},{},{},{}\n", a.geo,
                                 a.image, a.no_pin, Bits(a.follow_pad), a.clamp_view, Bits(a.min_x),
                                 Bits(a.min_y), Bits(a.max_x), Bits(a.max_y));
     for (const auto& m : a.markers) {
-        s += fmt::format("M {} {} {} {} {} {} {} op={} sz={} g={} b{}={},{},{},{} p{}={},{},{},{} "
+        s += std::format("M {} {} {} {} {} {} {} op={} sz={} g={} b{}={},{},{},{} p{}={},{},{},{} "
                          "h{}={},{},{},{} {} {} s{} c{}\n",
                          m.kind, m.icon, Bits(m.x), Bits(m.y), m.name, m.vignette, m.hidden,
                          Bits(m.opacity), m.size, m.group, m.has_box, Bits(m.bx0), Bits(m.by0),
@@ -45,11 +45,11 @@ std::string Dump(const MapArea& a) {
                          m.collectible ? int(*m.collectible) : -1);
     }
     for (const auto& l : a.layers) {
-        s += fmt::format("L {} {} {:08x} {} {} {} {} {}\n", l.geo, l.kind, l.color, l.color_bind,
+        s += std::format("L {} {} {:08x} {} {} {} {} {}\n", l.geo, l.kind, l.color, l.color_bind,
                          l.category, l.live_clip, l.post_fog, l.color_map ? l.color_map->size() : 0);
     }
     for (const auto& c : a.room_categories) {
-        s += fmt::format("C {} {:08x} {} {} {} {} {} {} {}\n", c.id, c.color, c.color_bind,
+        s += std::format("C {} {:08x} {} {} {} {} {} {} {}\n", c.id, c.color, c.color_bind,
                          Bits(c.class_gain), c.reveal_before_unlock, c.bake.mode,
                          Bits(c.bake.gain), c.visited_amount, c.polys.size());
         for (const auto& p : c.polys) {
@@ -61,7 +61,7 @@ std::string Dump(const MapArea& a) {
     }
     const auto tris = [&s](const char* tag, const auto& list) {
         for (const auto& o : list) {
-            s += fmt::format("{} {} ", tag, o.name);
+            s += std::format("{} {} ", tag, o.name);
             for (const auto& t : o.tris) {
                 for (float v : t) {
                     s += Bits(v);
@@ -73,7 +73,7 @@ std::string Dump(const MapArea& a) {
     tris("O", a.occluders);
     tris("V", a.vignettes);
     for (const auto& r : a.camera_rects) {
-        s += fmt::format("R {}{}{}{}\n", Bits(r[0]), Bits(r[1]), Bits(r[2]), Bits(r[3]));
+        s += std::format("R {}{}{}{}\n", Bits(r[0]), Bits(r[1]), Bits(r[2]), Bits(r[3]));
     }
     if (a.overview_regions) {
         for (const auto& r : *a.overview_regions) {

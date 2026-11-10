@@ -18,10 +18,9 @@
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
+#include <format>
 #include <fstream>
 #include <limits>
-
-#include <fmt/format.h>
 
 #include "common/dsmod_dev_tools.h"
 #include "common/logging.h"
@@ -456,7 +455,7 @@ void ModRuntime::LatchNavPad() const {
 void ModRuntime::NavOff(const char* why) {
     if (nav_state.controller.Active()) {
         nav_state.controller.ForceOff();
-        NavOutLine(fmt::format("DSMod nav: off ({})", why));
+        NavOutLine(std::format("DSMod nav: off ({})", why));
     }
     if (nav_state.gate_on) {
         LatchNavPad();
@@ -493,13 +492,13 @@ void ModRuntime::UpdateNav(StateSnapshot& snapshot) {
                           static_cast<s32>(canvas.Height()));
         if (Nav::Order(entry_cands, entry_page.nav_order).empty()) {
             nav_state.controller.ForceOff();
-            NavOutLine(fmt::format("DSMod nav: not entered (page '{}' has nothing to focus)",
+            NavOutLine(std::format("DSMod nav: not entered (page '{}' has nothing to focus)",
                                    entry_page.id));
             snapshot.ints["@nav.active"] = 0;
             return;
         }
         nav_state.has_focus = false;
-        NavOutLine(fmt::format("DSMod nav: on (page '{}')", manifest.pages[current_page].id));
+        NavOutLine(std::format("DSMod nav: on (page '{}')", manifest.pages[current_page].id));
     }
     if (ev.left) {
         NavOutLine("DSMod nav: off");
@@ -625,8 +624,8 @@ void ModRuntime::UpdateNav(StateSnapshot& snapshot) {
         const auto& c = cands[*focus];
         const s32 x = c.shown[0] + c.shown[2] / 2;
         const s32 y = c.shown[1] + c.shown[3] / 2;
-        NavOutLine(fmt::format("DSMod nav: A on '{}' -> tap ({},{})",
-                               c.id.empty() ? fmt::format("#{}", c.source) : c.id, x, y));
+        NavOutLine(std::format("DSMod nav: A on '{}' -> tap ({},{})",
+                               c.id.empty() ? std::format("#{}", c.source) : c.id, x, y));
         std::scoped_lock lk{tap_mutex};
         pending_taps.push_back(PendingTap{x, y, {}, {}});
     }

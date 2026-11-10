@@ -12,8 +12,7 @@
 #include <cctype>
 #include <cmath>
 #include <cstdlib>
-
-#include <fmt/format.h>
+#include <format>
 
 namespace Core::Mods {
 
@@ -40,7 +39,7 @@ public:
         const u32 root = Ternary();
         SkipSpace();
         if (pos < src.size()) {
-            Fail(fmt::format("unexpected '{}'", src[pos]));
+            Fail(std::format("unexpected '{}'", src[pos]));
         }
         return root;
     }
@@ -52,7 +51,7 @@ private:
     u32 depth{0};
 
     [[noreturn]] void Fail(const std::string& what) const {
-        throw ParseError{fmt::format("{} at column {}", what, pos + 1)};
+        throw ParseError{std::format("{} at column {}", what, pos + 1)};
     }
 
     void SkipSpace() {
@@ -255,7 +254,7 @@ private:
             used = static_cast<size_t>(stop - text.c_str());
         }
         if (used != text.size() || used == 0) {
-            Fail(fmt::format("bad number '{}'", text));
+            Fail(std::format("bad number '{}'", text));
         }
         pos += used;
         return Add({Op::Const, 0, 0, 0, value});
@@ -279,7 +278,7 @@ private:
         }};
         const auto it = std::ranges::find(fns, fn, &Fn::name);
         if (it == fns.end()) {
-            Fail(fmt::format("unknown function '{}'", fn));
+            Fail(std::format("unknown function '{}'", fn));
         }
         std::vector<u32> args;
         if (!Eat(")")) {
@@ -291,7 +290,7 @@ private:
             }
         }
         if (args.size() < it->min_args || (it->max_args != 0 && args.size() > it->max_args)) {
-            Fail(fmt::format("wrong number of arguments to {}()", fn));
+            Fail(std::format("wrong number of arguments to {}()", fn));
         }
         switch (it->op) {
         case Op::Min:
@@ -368,7 +367,7 @@ private:
             }
             return Ref(std::string{name});
         }
-        Fail(fmt::format("unexpected '{}'", c));
+        Fail(std::format("unexpected '{}'", c));
     }
 };
 
@@ -493,7 +492,7 @@ private:
 std::shared_ptr<const ExprProgram> CompileExpr(std::string_view source) {
     auto program = std::make_shared<ExprProgram>();
     if (source.size() > ExprMaxSource) {
-        program->error = fmt::format("expression longer than {} characters", ExprMaxSource);
+        program->error = std::format("expression longer than {} characters", ExprMaxSource);
         return program;
     }
     try {

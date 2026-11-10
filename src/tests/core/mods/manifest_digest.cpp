@@ -19,6 +19,11 @@
 // When a struct gains a field the dumper must learn it: the layout guard at the bottom fails
 // with the struct's name when a size changes (libstdc++ x86-64 only).
 
+#include <algorithm>
+#include <charconv>
+#include <cmath>
+#include <format>
+#include <limits>
 #include <map>
 #include <set>
 #include <string>
@@ -26,7 +31,6 @@
 #include <vector>
 
 #include <catch2/catch_test_macros.hpp>
-#include <fmt/format.h>
 #include <nlohmann/json.hpp>
 
 #include "core/mods/mod_runtime.h"
@@ -45,24 +49,45 @@ std::string R(const std::string& s) {
 std::string R(bool v) {
     return v ? "true" : "false";
 }
+// Shortest round-trip digits, laid out as the goldens were written (fmt's "{}"): fixed notation
+// while the decimal exponent is in [-4, digits10 + 1), scientific otherwise. std::format's "{}"
+// picks whichever of the two is shorter (0.0001 -> "1e-04"), which would churn the goldens.
+template <typename T>
+std::string ShortestFloat(T v) {
+    if (!std::isfinite(v)) {
+        return std::format("{}", v);
+    }
+    char sci[64];
+    const auto sci_end = std::to_chars(sci, sci + sizeof(sci), v, std::chars_format::scientific).ptr;
+    const std::string_view s{sci, static_cast<size_t>(sci_end - sci)};
+    const int exp = std::stoi(std::string{s.substr(s.find('e') + 1)});
+    constexpr int exp_upper = std::min(16, std::numeric_limits<T>::digits10 + 1);
+    if (exp < -4 || exp >= exp_upper) {
+        return std::string{s};
+    }
+    char fixed[384];
+    const auto fixed_end = std::to_chars(fixed, fixed + sizeof(fixed), v, std::chars_format::fixed).ptr;
+    return std::string{fixed, fixed_end};
+}
+
 std::string R(float v) {
-    return fmt::format("{}", v);
+    return ShortestFloat(v);
 }
 std::string R(double v) {
-    return fmt::format("{}", v);
+    return ShortestFloat(v);
 }
 std::string R(char32_t c) {
-    return fmt::format("U+{:04X}", static_cast<u32>(c));
+    return std::format("U+{:04X}", static_cast<u32>(c));
 }
 template <typename T>
     requires(std::is_integral_v<T> && !std::is_same_v<T, bool> && !std::is_same_v<T, char32_t>)
 std::string R(T v) {
-    return fmt::format("{}", static_cast<std::conditional_t<std::is_signed_v<T>, s64, u64>>(v));
+    return std::format("{}", static_cast<std::conditional_t<std::is_signed_v<T>, s64, u64>>(v));
 }
 template <typename T>
     requires std::is_enum_v<T>
 std::string R(T v) {
-    return fmt::format("#{}", static_cast<s64>(v));
+    return std::format("#{}", static_cast<s64>(v));
 }
 template <typename T>
 std::string R(const std::optional<T>& v);
@@ -195,13 +220,13 @@ struct Dumper {
     void Field(const char* name, const V& value, const V& def) {
         std::string v = R(value);
         if (v != R(def)) {
-            out += fmt::format("{}{}={}", out.empty() ? "" : " ", name, v);
+            out += std::format("{}{}={}", out.empty() ? "" : " ", name, v);
         }
     }
     /// A colour field, in hex.
     void Color(const char* name, u32 value, u32 def) {
         if (value != def) {
-            out += fmt::format("{}{}=0x{:08X}", out.empty() ? "" : " ", name, value);
+            out += std::format("{}{}=0x{:08X}", out.empty() ? "" : " ", name, value);
         }
     }
     std::string Done() const {
@@ -295,7 +320,7 @@ std::string R(const std::shared_ptr<const ExprProgram>& o) {
     if (!o) {
         return "-";
     }
-    return o->Ok() ? fmt::format("ok:{}n/{}r", o->nodes.size(), o->refs.size())
+    return o->Ok() ? std::format("ok:{}n/{}r", o->nodes.size(), o->refs.size())
                    : "err:" + o->error;
 }
 std::string R(const DerivedPoint::CmpOperand& o) {
@@ -786,7 +811,7 @@ std::string R(const DynamicMarkerDef& o) {
     F(tint_bind);
     if (!o.frames.empty()) { F(frames); F(frame_ms); }
     if (o.pulse.period_ms > 0) {
-        dd.out += fmt::format(" pulse={}:{}/{}:{}/{}:{}", o.pulse.period_ms, o.pulse.alpha_lo,
+        dd.out += std::format(" pulse={}:{}/{}:{}/{}:{}", o.pulse.period_ms, o.pulse.alpha_lo,
                               o.pulse.alpha_hi, o.pulse.scale_lo, o.pulse.scale_hi,
                               o.pulse.grow ? "grow" : "breathe");
     }
@@ -925,7 +950,7 @@ std::string R(const CompositeDef& o) {
     F(levels);
     F(flat);
     // Layers go on their own lines (DumpManifest); here only their count.
-    dd.out += fmt::format("{}layers#={}", dd.out.empty() ? "" : " ", o.layers.size());
+    dd.out += std::format("{}layers#={}", dd.out.empty() ? "" : " ", o.layers.size());
     DUMP_END;
 }
 std::string R(const MsbtConfig& o) {
@@ -1036,10 +1061,10 @@ std::string AreaHeader(const MapArea& o) {
     F(max_x);
     F(max_y);
     F(camera_rects);
-    dd.out += fmt::format(
+    dd.out += std::format(
         " overview_regions#={} markers#={} dynamic_markers#={} labels#={} "
         "layers#={} room_categories#={} occluders#={} vignettes#={}",
-        o.overview_regions ? fmt::format("{}", o.overview_regions->size()) : std::string{"none"},
+        o.overview_regions ? std::format("{}", o.overview_regions->size()) : std::string{"none"},
         o.markers.size(), o.dynamic_markers.size(), o.labels.size(), o.layers.size(),
         o.room_categories.size(), o.occluders.size(), o.vignettes.size());
     DUMP_END;
@@ -1053,7 +1078,7 @@ std::string PageHeader(const Page& o) {
     F(mirror_rect);
     F(no_auto_leave);
     F(nav_order);
-    dd.out += fmt::format(" widgets#={} scrolls#={}", o.widgets.size(), o.scrolls.size());
+    dd.out += std::format(" widgets#={} scrolls#={}", o.widgets.size(), o.scrolls.size());
     DUMP_END;
 }
 
@@ -1108,7 +1133,7 @@ std::string DumpManifest(const Manifest& o) {
         F(haptics);
         F(nav);
         F(anim_hz);
-        if (!o.preload.empty()) { dd.out += fmt::format(" preload={}", o.preload.size()); }
+        if (!o.preload.empty()) { dd.out += std::format(" preload={}", o.preload.size()); }
         F(find_spec);
         F(trace_target);
         F(dump_registry);
@@ -1116,11 +1141,11 @@ std::string DumpManifest(const Manifest& o) {
         F(uses_host_keys);
         F(describe_string);
         F(valid);
-        dd.out += fmt::format(" asset_dir={}", o.asset_dir ? "set" : "null");
+        dd.out += std::format(" asset_dir={}", o.asset_dir ? "set" : "null");
         line("manifest", dd.Done());
     }
     line("counts",
-         fmt::format("pages={} tables={} sprite_map={} map_rooms={} zone_area={} map_areas={} "
+         std::format("pages={} tables={} sprite_map={} map_rooms={} zone_area={} map_areas={} "
                      "icon_cells={} icon_ink={} flags={} actions={} sequences={} points={} "
                      "derived={} page_binds={} enforce={} spies={} patches={} symbols={} "
                      "composites={}",
@@ -1140,7 +1165,7 @@ std::string DumpManifest(const Manifest& o) {
         line("map_rooms." + k, R(o.map_rooms.at(k)));
     }
     for (const auto& k : SortedKeys(o.zone_area)) {
-        line(fmt::format("zone_area.{}", k), R(o.zone_area.at(k)));
+        line(std::format("zone_area.{}", k), R(o.zone_area.at(k)));
     }
     for (const auto& k : SortedKeys(o.icon_cells)) {
         line("icon_cells." + k, R(o.icon_cells.at(k)));
@@ -1154,29 +1179,29 @@ std::string DumpManifest(const Manifest& o) {
         line(p, AreaHeader(a));
         if (a.overview_regions) {
             for (size_t i = 0; i < a.overview_regions->size(); ++i) {
-                line(fmt::format("{}.overview_regions[{}]", p, i), R((*a.overview_regions)[i]));
+                line(std::format("{}.overview_regions[{}]", p, i), R((*a.overview_regions)[i]));
             }
         }
         for (size_t i = 0; i < a.markers.size(); ++i) {
-            line(fmt::format("{}.markers[{}]", p, i), R(a.markers[i]));
+            line(std::format("{}.markers[{}]", p, i), R(a.markers[i]));
         }
         for (size_t i = 0; i < a.dynamic_markers.size(); ++i) {
-            line(fmt::format("{}.dynamic_markers[{}]", p, i), R(a.dynamic_markers[i]));
+            line(std::format("{}.dynamic_markers[{}]", p, i), R(a.dynamic_markers[i]));
         }
         for (size_t i = 0; i < a.labels.size(); ++i) {
-            line(fmt::format("{}.labels[{}]", p, i), R(a.labels[i]));
+            line(std::format("{}.labels[{}]", p, i), R(a.labels[i]));
         }
         for (size_t i = 0; i < a.layers.size(); ++i) {
-            line(fmt::format("{}.layers[{}]", p, i), R(a.layers[i]));
+            line(std::format("{}.layers[{}]", p, i), R(a.layers[i]));
         }
         for (size_t i = 0; i < a.room_categories.size(); ++i) {
-            line(fmt::format("{}.room_categories[{}]", p, i), R(a.room_categories[i]));
+            line(std::format("{}.room_categories[{}]", p, i), R(a.room_categories[i]));
         }
         for (size_t i = 0; i < a.occluders.size(); ++i) {
-            line(fmt::format("{}.occluders[{}]", p, i), R(a.occluders[i]));
+            line(std::format("{}.occluders[{}]", p, i), R(a.occluders[i]));
         }
         for (size_t i = 0; i < a.vignettes.size(); ++i) {
-            line(fmt::format("{}.vignettes[{}]", p, i), R(a.vignettes[i]));
+            line(std::format("{}.vignettes[{}]", p, i), R(a.vignettes[i]));
         }
     }
     for (const auto& k : SortedKeys(o.flag_defaults)) {
@@ -1199,19 +1224,19 @@ std::string DumpManifest(const Manifest& o) {
         line("points." + k, R(o.points.at(k)));
     }
     for (size_t i = 0; i < o.derived.size(); ++i) {
-        line(fmt::format("derived[{}]", i), R(o.derived[i]));
+        line(std::format("derived[{}]", i), R(o.derived[i]));
     }
     for (size_t i = 0; i < o.page_binds.size(); ++i) {
-        line(fmt::format("page_binds[{}]", i), R(o.page_binds[i]));
+        line(std::format("page_binds[{}]", i), R(o.page_binds[i]));
     }
     for (size_t i = 0; i < o.enforce.size(); ++i) {
-        line(fmt::format("enforce[{}]", i), R(o.enforce[i]));
+        line(std::format("enforce[{}]", i), R(o.enforce[i]));
     }
     for (size_t i = 0; i < o.spies.size(); ++i) {
-        line(fmt::format("spies[{}]", i), R(o.spies[i]));
+        line(std::format("spies[{}]", i), R(o.spies[i]));
     }
     for (size_t i = 0; i < o.patches.size(); ++i) {
-        line(fmt::format("patches[{}]", i), R(o.patches[i]));
+        line(std::format("patches[{}]", i), R(o.patches[i]));
     }
     for (const auto& k : SortedKeys(o.symbols)) {
         line("symbols." + k, R(o.symbols.at(k)));
@@ -1220,19 +1245,19 @@ std::string DumpManifest(const Manifest& o) {
         line("composites." + k, R(def));
         if (def) {
             for (size_t i = 0; i < def->layers.size(); ++i) {
-                line(fmt::format("composites.{}.layers[{}]", k, i), R(def->layers[i]));
+                line(std::format("composites.{}.layers[{}]", k, i), R(def->layers[i]));
             }
         }
     }
     for (size_t pi = 0; pi < o.pages.size(); ++pi) {
         const Page& page = o.pages[pi];
-        const std::string p = fmt::format("pages[{}]", pi);
+        const std::string p = std::format("pages[{}]", pi);
         line(p, PageHeader(page));
         for (size_t i = 0; i < page.scrolls.size(); ++i) {
-            line(fmt::format("{}.scrolls[{}]", p, i), R(page.scrolls[i]));
+            line(std::format("{}.scrolls[{}]", p, i), R(page.scrolls[i]));
         }
         for (size_t i = 0; i < page.widgets.size(); ++i) {
-            line(fmt::format("{}.widgets[{}]", p, i), R(page.widgets[i]));
+            line(std::format("{}.widgets[{}]", p, i), R(page.widgets[i]));
         }
     }
     return text;
@@ -1302,7 +1327,7 @@ void CheckLayouts() {
     std::string report;
     for (const auto& s : sizes) {
         if (s.actual != s.expected) {
-            report += fmt::format("{}: sizeof {} (was {})\n", s.name, s.actual, s.expected);
+            report += std::format("{}: sizeof {} (was {})\n", s.name, s.actual, s.expected);
         }
     }
     INFO("A parsed-model struct changed size. If it gained a field, add the field to its R() in "
@@ -1325,15 +1350,15 @@ std::string DigestPackage(const std::string& name, const std::filesystem::path& 
     }
     std::string text = "# DSMod V1 manifest digest: " + name +
                        " (generated by src/tests/core/mods/manifest_digest.cpp; do not edit)\n";
-    text += fmt::format("package_json = {}\n", package ? "present" : "absent");
-    text += fmt::format(
+    text += std::format("package_json = {}\n", package ? "present" : "absent");
+    text += std::format(
         "min_runtime = {} (manifest {}, package.json {})\n",
         PackageMinRuntime(&json, package ? &*package : nullptr), PackageMinRuntime(&json, nullptr),
-        package ? fmt::format("{}", PackageMinRuntime(nullptr, &*package)) : std::string{"-"});
-    text += fmt::format("usable = {}\n", R(IsUsableDualScreenManifest(json)));
+        package ? std::format("{}", PackageMinRuntime(nullptr, &*package)) : std::string{"-"});
+    text += std::format("usable = {}\n", R(IsUsableDualScreenManifest(json)));
     Manifest manifest;
     const bool parsed = ParseDualScreenManifest(json, manifest);
-    text += fmt::format("parsed = {}\n", R(parsed));
+    text += std::format("parsed = {}\n", R(parsed));
     text += DumpManifest(manifest);
     // Per-build data files: fingerprinted only (their parse lives in ModRuntime::Discover).
     std::vector<std::string> files;
@@ -1355,11 +1380,11 @@ std::string DigestPackage(const std::string& name, const std::filesystem::path& 
         std::string keys;
         if (dj.is_object()) {
             for (const auto& [k, v] : dj.items()) {
-                keys += fmt::format("{}{}#{}", keys.empty() ? "" : ",", k,
+                keys += std::format("{}{}#{}", keys.empty() ? "" : ",", k,
                                     v.is_structured() ? v.size() : 1);
             }
         }
-        text += fmt::format("data_file.{} = {{canonical_fnv64={} keys=[{}]}}\n", file,
+        text += std::format("data_file.{} = {{canonical_fnv64={} keys=[{}]}}\n", file,
                             DsmodGolden::Hex64(DsmodGolden::Fnv64(canonical)), keys);
     }
     return text;

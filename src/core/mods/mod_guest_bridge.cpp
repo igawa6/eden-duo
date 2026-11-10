@@ -26,6 +26,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <format>
 
 #include <cstdlib>
 #include "common/dsmod_dev_tools.h"
@@ -669,7 +670,7 @@ bool ModRuntime::OnGuestBreakpoint(Kernel::KThread& thread, Core::ArmInterface& 
             // is a question about its signature, and a spy only ever fires once.
             std::string args;
             for (u32 i = 0; i < 8; ++i) {
-                args += fmt::format(" x{}={}", i, DescribeGuestValue(ctx.r[i]));
+                args += std::format(" x{}={}", i, DescribeGuestValue(ctx.r[i]));
             }
             // d0 as well: a float argument is itself a signature (lua_pushnumber takes one where
             // the integer registers carry nothing).
@@ -678,7 +679,7 @@ bool ModRuntime::OnGuestBreakpoint(Kernel::KThread& thread, Core::ArmInterface& 
             std::memcpy(&d0, &d0_bits, sizeof(d0));
             LOG_INFO(Core, "DSMod: caught {} at main+{:X} lr={}{} d0={}", name,
                      address - main_region_begin, DescribeGuestValue(ctx.lr), args,
-                     std::isfinite(d0) ? fmt::format("{:g}", d0) : std::string{"-"});
+                     std::isfinite(d0) ? std::format("{:g}", d0) : std::string{"-"});
             spy_armed.erase(name);
             arm_interface.SetContext(ctx);
             return true;
@@ -841,13 +842,13 @@ bool ModRuntime::OnGuestBreakpoint(Kernel::KThread& thread, Core::ArmInterface& 
         }
         std::string published;
         for (const auto& [key, value] : pending_sequence_values) {
-            published += fmt::format(" {}={:g}", key, value);
+            published += std::format(" {}={:g}", key, value);
         }
         for (const auto& [key, value] : pending_sequence_addresses) {
-            published += fmt::format(" {}={:X}", key, value);
+            published += std::format(" {}={:X}", key, value);
         }
         for (const auto& [key, value] : pending_sequence_texts) {
-            published += fmt::format(" {}=\"{}\"", key, value);
+            published += std::format(" {}=\"{}\"", key, value);
         }
         LOG_INFO(Core, "DSMod: sequence '{}' ran {} step(s):{}", call_seq_name, call_seq_step + 1,
                  published.empty() ? std::string{" (no output)"} : published);

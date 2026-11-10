@@ -8,11 +8,10 @@
 #include <chrono>
 #include <cstdio>
 #include <cstring>
+#include <format>
 #include <span>
 #include <string>
 #include <vector>
-
-#include <fmt/format.h>
 
 #include "common/dsmod_dev_tools.h"
 #include "common/logging.h"
@@ -159,7 +158,7 @@ void RasterizerVulkan::DSModProbeRenderTargets(DSModProbeState*& state) {
         if (rt_draws >= 3000) {
             std::string report;
             for (size_t i = 0; i < rt_seq.size() && i < 40; ++i) {
-                report += fmt::format(" {}:{}x{}/{}", static_cast<void*>(rt_seq[i].handle),
+                report += std::format(" {}:{}x{}/{}", static_cast<void*>(rt_seq[i].handle),
                                       rt_seq[i].w, rt_seq[i].h, rt_seq[i].draws);
             }
             LOG_INFO(Render_Vulkan, "DSMod rt seq ({} passes, {} draws):{}", rt_seq.size(),

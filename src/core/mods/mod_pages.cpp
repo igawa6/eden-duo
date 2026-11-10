@@ -19,6 +19,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <format>
 #include <span>
 #include "common/stb.h"
 
@@ -101,7 +102,7 @@ void ModRuntime::DrivePageBinds(const StateSnapshot& snapshot) {
             continue;
         }
         Action action;
-        action.name = fmt::format("page_bind:{}", bind.point);
+        action.name = std::format("page_bind:{}", bind.point);
         action.kind = ActionKind::Page;
         action.page = target.page;
         action.transition = target.transition;
@@ -146,7 +147,7 @@ void ModRuntime::DumpAnimFrame(std::span<const u32> pixels, u32 w, u32 h,
         rgba[i * 4 + 2] = static_cast<u8>(p);
         rgba[i * 4 + 3] = 0xFF;
     }
-    const std::string path = fmt::format("{}/{:04}_{}.png", dir, anim_dump_seq++, label);
+    const std::string path = std::format("{}/{:04}_{}.png", dir, anim_dump_seq++, label);
     std::thread([path, w, h, rgba = std::move(rgba)] {
         stbi_write_png(path.c_str(), static_cast<int>(w), static_cast<int>(h), 4, rgba.data(),
                        static_cast<int>(w) * 4);
@@ -374,12 +375,12 @@ bool ModRuntime::DrivePageTransition(const StateSnapshot& snapshot, u64 sig, u32
                                         static_cast<s32>(target_h) / 2, 0, 0};
                 origin_note = " origin unresolved, using canvas centre";
             } else {
-                origin_note = fmt::format(" origin [{},{},{},{}]", page_anim.req.origin[0],
+                origin_note = std::format(" origin [{},{},{},{}]", page_anim.req.origin[0],
                                           page_anim.req.origin[1], page_anim.req.origin[2],
                                           page_anim.req.origin[3]);
             }
         }
-        const std::string line = fmt::format(
+        const std::string line = std::format(
             "DSMod transition {} '{}' -> '{}' {} ms: start {:.2f} ms ({}){}",
             TransitionLogName(req.kind), pages[req.from].id, pages[req.to].id, req.duration_ms,
             page_anim.start_ms, reuse ? "old page reused, new page drawn" : "both pages drawn",
@@ -475,7 +476,7 @@ bool ModRuntime::DrivePageTransition(const StateSnapshot& snapshot, u64 sig, u32
                              page_anim.req.kind, eased, page_anim.req.shadow);
         }
         DumpAnimFrame(out, target_w, target_h,
-                      fmt::format("{}_f{:02}_p{:03}", TransitionLogName(page_anim.req.kind),
+                      std::format("{}_f{:02}_p{:03}", TransitionLogName(page_anim.req.kind),
                                   page_anim.frames, static_cast<int>(t * 1000.0f)));
     });
     const double ms =
@@ -485,7 +486,7 @@ bool ModRuntime::DrivePageTransition(const StateSnapshot& snapshot, u64 sig, u32
     page_anim.compose_max_ms = std::max(page_anim.compose_max_ms, ms);
     if (t >= 1.0f) {
         page_anim.active = false;
-        const std::string line = fmt::format(
+        const std::string line = std::format(
             "DSMod transition done: {} frame(s) in {:.0f} ms, frame avg {:.2f} ms max {:.2f} ms, "
             "target redrawn {}x",
             page_anim.frames, elapsed, page_anim.compose_ms / page_anim.frames,

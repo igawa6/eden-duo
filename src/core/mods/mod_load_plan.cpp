@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstring>
+#include <format>
 #include <limits>
 
 #include <nlohmann/json.hpp>
@@ -385,7 +386,7 @@ std::optional<SelectedLoadPlanPackage> SelectLoadPlanPackage(System& system, u64
             std::ranges::transform(manifest_title, manifest_title.begin(), [](unsigned char c) {
                 return static_cast<char>(std::toupper(c));
             });
-            if (manifest_title != fmt::format("{:016X}", title_id)) {
+            if (manifest_title != std::format("{:016X}", title_id)) {
                 continue;
             }
         }
@@ -507,7 +508,7 @@ LoadPlanDiscovery ReadModLoadPlan(const FileSys::VirtualDir& assets,
         }
         const u32 format = json->value("format", 0u);
         if ((format != 1u && format != 2u) ||
-            json->value("title_id", std::string{}) != fmt::format("{:016X}", title_id) ||
+            json->value("title_id", std::string{}) != std::format("{:016X}", title_id) ||
             json->value("build_id", std::string{}) != build) {
             return fail(Unsupported, "load plan is for another title or build");
         }

@@ -4,6 +4,7 @@
 // Eden Duo: the eden-cli test harness, see dsmod_harness.h. Moved out of yuzu.cpp so upstream's
 // frontend file only carries hook calls.
 
+#include <format>
 #include <optional>
 #include <algorithm>
 #include <array>
@@ -21,8 +22,6 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
-
-#include <fmt/format.h>
 
 #include "common/assert.h"
 #include "common/logging.h"

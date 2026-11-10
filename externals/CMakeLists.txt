@@ -83,6 +83,10 @@ AddJsonPackage(unordered-dense)
 # JSON, which upstream replaced with jacinth (#4412).
 AddJsonPackage(nlohmann)
 
+# Companion native modules (eden-duo-companions native/modules) build header-only against
+# fmt 12.1.0 from this CPM cache; upstream removed fmt (#4677). Download only, nothing links it.
+AddJsonPackage(NAME fmt DOWNLOAD_ONLY)
+
 # biscuit
 if (ARCHITECTURE_riscv64)
     AddJsonPackage(biscuit)

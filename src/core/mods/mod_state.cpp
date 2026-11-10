@@ -26,6 +26,7 @@
 #include <bit>
 #include <cmath>
 #include <cstring>
+#include <format>
 
 #include <cstdlib>
 #include <filesystem>
@@ -108,25 +109,25 @@ std::string ModRuntime::DescribeGuestValue(u64 value) const {
         return "0";
     }
     if (value < 0x10000) {
-        return fmt::format("{}", value); // an index, a count, a small enum
+        return std::format("{}", value); // an index, a count, a small enum
     }
     // Negative ints matter more than they look: Lua's pseudo-indices are constants like
     // LUA_GLOBALSINDEX (-10002), so a small negative argument names the API family outright.
     // A 32-bit int arrives with the top half cleared, having been written through a w register.
     const auto small_negative = [](s64 v) { return v < 0 && v > -0x10000; };
     if (small_negative(static_cast<s64>(value))) {
-        return fmt::format("{}", static_cast<s64>(value));
+        return std::format("{}", static_cast<s64>(value));
     }
     if ((value >> 32) == 0 && small_negative(static_cast<s32>(value))) {
-        return fmt::format("{}", static_cast<s32>(value));
+        return std::format("{}", static_cast<s32>(value));
     }
     // The "main region" the loader hands us spans the heap as well as the module, so an offset
     // into it is not on its own evidence of anything -- read the bytes first and only fall back
     // to the label.
     const std::string label = (main_region_size != 0 && value >= main_region_begin &&
                                value < main_region_begin + main_region_size)
-                                  ? fmt::format("main+{:X}", value - main_region_begin)
-                                  : fmt::format("{:X}", value);
+                                  ? std::format("main+{:X}", value - main_region_begin)
+                                  : std::format("{:X}", value);
     if (!AddressIsSane(value, sizeof(u64))) {
         return label; // not a pointer we can follow
     }
@@ -145,9 +146,9 @@ std::string ModRuntime::DescribeGuestValue(u64 value) const {
         text.push_back(static_cast<char>(ch));
     }
     if (text.size() >= 2) { // "_G" is a real Lua key: two characters is already a strong hit
-        return fmt::format("\"{}\"", text);
+        return std::format("\"{}\"", text);
     }
-    return fmt::format("{}->{:X}", label, memory.Read64(value));
+    return std::format("{}->{:X}", label, memory.Read64(value));
 }
 
 /// Reads another point purely to use as an array index. Guarded so a data file that points a

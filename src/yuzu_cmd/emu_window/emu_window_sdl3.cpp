@@ -33,7 +33,7 @@ EmuWindow_SDL3::EmuWindow_SDL3(InputCommon::InputSubsystem* input_subsystem_, Co
     titlebar_timer = SDL_AddTimer(2000, [](void *userdata, SDL_TimerID, Uint32) -> Uint32 {
         auto* this_ = (EmuWindow_SDL3*)userdata;
         auto const results = this_->system.GetAndResetPerfStats();
-        auto* title = new std::string(fmt::format("{} | {}-{} | FPS: {:.0f} ({:.0f}%)", Common::g_build_fullname, Common::g_scm_branch, Common::g_scm_desc, results.average_game_fps, results.emulation_speed * 100.0f));
+        auto* title = new std::string(std::format("{} | {}-{} | FPS: {:.0f} ({:.0f}%)", std::string_view{Common::g_build_fullname}, std::string_view{Common::g_scm_branch}, std::string_view{Common::g_scm_desc}, results.average_game_fps, results.emulation_speed * 100.0f));
         // SDL timers fire on SDL's timer thread; setting the title from there reaches the Wayland
         // decoration plugin (libdecor-gtk showed a GTK widget off the main thread and aborted in
         // malloc). Hand the update to the main thread instead.

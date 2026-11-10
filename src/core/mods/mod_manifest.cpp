@@ -26,6 +26,7 @@
 #include <array>
 #include <cctype>
 #include <cmath>
+#include <format>
 #include <limits>
 #include <sstream>
 #include <tuple>
@@ -2376,7 +2377,7 @@ bool PrepareDualScreenManifestReload(const nlohmann::json& json, const Manifest&
             std::ranges::transform(value, value.begin(), [](unsigned char c) {
                 return static_cast<char>(std::toupper(c));
             });
-            if (value != fmt::format("{:016X}", current.title_id)) {
+            if (value != std::format("{:016X}", current.title_id)) {
                 return false;
             }
         }
@@ -2494,8 +2495,8 @@ Manifest ModRuntime::UpdateRequiredManifest(u64 title_id, u32 required,
     label("update_line1", 500, "This package needs a newer Eden Duo", 7, 0xFFE6ECF2u);
     const std::string runtime =
         required == std::numeric_limits<u32>::max()
-            ? fmt::format("runtime ?, have {}", DualScreenRuntimeVersion)
-            : fmt::format("runtime {}, have {}", required, DualScreenRuntimeVersion);
+            ? std::format("runtime ?, have {}", DualScreenRuntimeVersion)
+            : std::format("runtime {}, have {}", required, DualScreenRuntimeVersion);
     label("update_line2", 580, runtime, 7, 0xFFFFC040u);
     label("update_line3", 660, "Update Eden Duo to use it.", 7, 0xFFE6ECF2u);
     std::string dir = mod_dir.substr(0, 60);
@@ -2607,7 +2608,7 @@ std::optional<Manifest> ModRuntime::Discover(System& system, u64 title_id,
                 std::ranges::transform(title, title.begin(), [](unsigned char c) {
                     return static_cast<char>(std::toupper(c));
                 });
-                if (title != fmt::format("{:016X}", title_id)) {
+                if (title != std::format("{:016X}", title_id)) {
                     LOG_WARNING(Core, "DSMod: '{}' belongs to a different title",
                                 subdir->GetName());
                     continue;

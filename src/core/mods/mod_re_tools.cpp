@@ -16,6 +16,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <format>
 #include <limits>
 #include <numeric>
 #include <set>
@@ -134,8 +135,8 @@ void ModRuntime::DumpOneWatchImpl([[maybe_unused]] const std::string& spec) {
         const u32 raw = memory.Read32(base + i);
         float value{};
         std::memcpy(&value, &raw, sizeof(value));
-        words += fmt::format(" {:08X}", raw);
-        floats += fmt::format(" {:g}", std::isfinite(value) ? value : 0.0f);
+        words += std::format(" {:08X}", raw);
+        floats += std::format(" {:g}", std::isfinite(value) ? value : 0.0f);
     }
     LOG_INFO(Core, "DSMod dump {}:{} @{:016X} words:{}", name, path, base, words);
     LOG_INFO(Core, "DSMod dump {}:{} floats:{}", name, path, floats);
@@ -255,7 +256,7 @@ void ModRuntime::ScanForMovingFloatsImpl() {
         LOG_INFO(Core, "DSMod scan: {:016X} swung {:.1f} ({:.1f} .. {:.1f})", dev.scan_addresses[i],
                  dev.scan_high[i] - dev.scan_low[i], dev.scan_low[i], dev.scan_high[i]);
         if (rank == 0 && dev.scan_high[i] - dev.scan_low[i] > 1.0f) {
-            dev.scan_best = fmt::format("{:016X}", dev.scan_addresses[i]);
+            dev.scan_best = std::format("{:016X}", dev.scan_addresses[i]);
             TraceChainTo(dev.scan_addresses[i]);
         }
     }
@@ -274,7 +275,7 @@ void ModRuntime::ScanForMovingFloatsImpl() {
             const u32 bits = memory.Read32(at);
             float value{};
             std::memcpy(&value, &bits, sizeof(value));
-            hood += fmt::format(" [{:+#x}]={:.2f}/{:08X}", off, value, bits);
+            hood += std::format(" [{:+#x}]={:.2f}/{:08X}", off, value, bits);
         }
         LOG_INFO(Core, "DSMod scan hood:{}", hood);
         for (VAddr back = hit & ~7ULL; back > hit - 0x800 && AddressIsSane(back, 8); back -= 8) {
@@ -473,7 +474,7 @@ void ModRuntime::RecheckRoutesImpl() {
         if (ok) {
             ++route.good;
         }
-        report += fmt::format(" main+{:X}[{}]:{}/{}", route.root, route.hops.size(), route.good,
+        report += std::format(" main+{:X}[{}]:{}/{}", route.root, route.hops.size(), route.good,
                               dev.path_checks);
     }
     LOG_INFO(Core, "DSMod path: routes still resolving after {} check(s):{}", dev.path_checks, report);
@@ -647,7 +648,7 @@ void ModRuntime::TraceWithSlackImpl([[maybe_unused]] VAddr object,
                 }
                 const u64 vt = memory.Read64(back);
                 if (vt >= main_region_begin && vt < module_end) {
-                    owner = fmt::format("class main+{:X} field +{:#x}", vt - main_region_begin,
+                    owner = std::format("class main+{:X} field +{:#x}", vt - main_region_begin,
                                         holder - back);
                     break;
                 }
@@ -834,7 +835,7 @@ void ModRuntime::MotionScanImpl() {
         if (dev.motion_score[i] <= 0) {
             break;
         }
-        report += fmt::format(" {:012X}:{:+d}/{}turns@{:g}", dev.motion_at[i], dev.motion_score[i],
+        report += std::format(" {:012X}:{:+d}/{}turns@{:g}", dev.motion_at[i], dev.motion_score[i],
                               dev.motion_turns[i], dev.motion_last[i]);
     }
     LOG_INFO(Core, "DSMod motion: best agreement with the stick:{}",
@@ -868,9 +869,9 @@ void ModRuntime::MotionScanImpl() {
             vec_best = addr;
         }
         const auto nz = top_at.find(addr + 8);
-        vecs += fmt::format(
+        vecs += std::format(
             " {:012X}=({:g},{:g}{})", addr, dev.motion_last[idx], dev.motion_last[ny->second],
-            nz == top_at.end() ? std::string{} : fmt::format(",{:g}", dev.motion_last[nz->second]));
+            nz == top_at.end() ? std::string{} : std::format(",{:g}", dev.motion_last[nz->second]));
         if (++shown >= 10) {
             break;
         }
@@ -894,8 +895,8 @@ void ModRuntime::MotionScanImpl() {
             const u32 raw = memory.Read32(at_addr);
             f32 v{};
             std::memcpy(&v, &raw, sizeof(v));
-            around += std::isfinite(v) ? fmt::format(" {:+#x}:{:g}", off, v)
-                                       : fmt::format(" {:+#x}:?", off);
+            around += std::isfinite(v) ? std::format(" {:+#x}:{:g}", off, v)
+                                       : std::format(" {:+#x}:?", off);
         }
         LOG_INFO(Core, "DSMod motion: winner {:016X} score {}, around:{}", best,
                  dev.motion_score[order[0]], around);
@@ -915,8 +916,8 @@ void ModRuntime::MotionScanImpl() {
             }
             const u64 word = memory.Read64(at_addr);
             wide += (word >= main_region_begin && word < module_end)
-                        ? fmt::format(" {:+#x}:main+{:X}", off, word - main_region_begin)
-                        : fmt::format(" {:+#x}:{:016X}", off, word);
+                        ? std::format(" {:+#x}:main+{:X}", off, word - main_region_begin)
+                        : std::format(" {:+#x}:{:016X}", off, word);
         }
         LOG_INFO(Core, "DSMod motion: wide{}", wide);
         TraceChainTo(best);
@@ -975,8 +976,8 @@ void ModRuntime::ArrayDumpImpl() {
                 const u32 raw = memory.Read32(slot);
                 f32 value{};
                 std::memcpy(&value, &raw, sizeof(value));
-                values += std::isfinite(value) ? fmt::format(" [{}]{:g}", i, value)
-                                               : fmt::format(" [{}]?", i);
+                values += std::isfinite(value) ? std::format(" [{}]{:g}", i, value)
+                                               : std::format(" [{}]?", i);
             }
             LOG_INFO(Core, "DSMod array: {:016X} x{}:{}", start, length, values);
             // What surrounds the run matters as much as the run. Missile capacity is not one of
@@ -996,9 +997,9 @@ void ModRuntime::ArrayDumpImpl() {
                         std::memcpy(&value, &raw, sizeof(value));
                         if (std::isfinite(value) && value != 0.0f && std::fabs(value) >= 0.01f &&
                             std::fabs(value) < 1.0e7f) {
-                            around += fmt::format(" {:+#x}:{:g}", off, value);
+                            around += std::format(" {:+#x}:{:g}", off, value);
                         } else if (raw != 0 && raw < 0x10000) {
-                            around += fmt::format(" {:+#x}:i{}", off, raw);
+                            around += std::format(" {:+#x}:i{}", off, raw);
                         }
                     }
                     if (!around.empty()) {
@@ -1077,13 +1078,13 @@ void ModRuntime::ClassDumpImpl() {
                 std::memcpy(&as_float, &raw, sizeof(as_float));
                 const bool floatish = std::isfinite(as_float) && as_float != 0.0f &&
                                       std::fabs(as_float) >= 0.01f && std::fabs(as_float) < 1.0e7f;
-                body += floatish ? fmt::format(" +{:x}:{:08X}/{:g}", off, raw, as_float)
-                                 : fmt::format(" +{:x}:{:08X}", off, raw);
+                body += floatish ? std::format(" +{:x}:{:08X}/{:g}", off, raw, as_float)
+                                 : std::format(" +{:x}:{:08X}", off, raw);
             }
             std::string quads;
             for (s32 off = 0; off <= 0x38; off += 8) {
                 if (AddressIsSane(object + off, 8)) {
-                    quads += fmt::format(" +{:x}:{:016X}", off, memory.Read64(object + off));
+                    quads += std::format(" +{:x}:{:016X}", off, memory.Read64(object + off));
                 }
             }
             ++total;
@@ -1263,7 +1264,7 @@ void ModRuntime::RangeWatchImpl() {
         if (range_ceiling > 0.0f && dev.range_max[i] != range_ceiling) {
             continue;
         }
-        report += fmt::format(" {:012X}:{:g}->{:g}({} steps)", dev.range_at[i], dev.range_max[i], current,
+        report += std::format(" {:012X}:{:g}->{:g}({} steps)", dev.range_at[i], dev.range_max[i], current,
                               std::popcount(dev.range_seen[i]));
         ++shown;
     }
@@ -1301,7 +1302,7 @@ void ModRuntime::RangeWatchImpl() {
                 for (s64 off = base; off < base + 0x20; off += 8) {
                     const VAddr at_addr = dev.range_at[i] + static_cast<VAddr>(off);
                     if (AddressIsSane(at_addr, 8)) {
-                        row += fmt::format(" {:+#x}:{:016X}", off, memory.Read64(at_addr));
+                        row += std::format(" {:+#x}:{:016X}", off, memory.Read64(at_addr));
                     }
                 }
                 LOG_INFO(Core, "DSMod range:  around{}", row);
@@ -1374,8 +1375,8 @@ void ModRuntime::FieldProbeImpl() {
                 f32 as_float{};
                 std::memcpy(&as_float, &raw, sizeof(as_float));
                 around += std::isfinite(as_float) && as_float != 0.0f
-                              ? fmt::format(" {:+d}:{:g}", off, as_float)
-                              : fmt::format(" {:+d}:{}", off, static_cast<s32>(raw));
+                              ? std::format(" {:+d}:{:g}", off, as_float)
+                              : std::format(" {:+d}:{}", off, static_cast<s32>(raw));
             }
             LOG_INFO(Core, "DSMod field: object {:016X} held at {:016X}, value at {:016X} --{}",
                      word, page + at, found->second, around);
@@ -1452,9 +1453,9 @@ void ModRuntime::HeapFindImpl() {
                                           std::fabs(as_float) < 1.0e7f;
                     if (floatish) {
                         around +=
-                            fmt::format(" {:+d}:{}/{:g}", off, static_cast<s32>(raw), as_float);
+                            std::format(" {:+d}:{}/{:g}", off, static_cast<s32>(raw), as_float);
                     } else {
-                        around += fmt::format(" {:+d}:{}", off, static_cast<s32>(raw));
+                        around += std::format(" {:+d}:{}", off, static_cast<s32>(raw));
                     }
                 }
                 LOG_INFO(Core, "DSMod heapfind: pattern {} at {:016X} --{}", w, page + at, around);
@@ -1592,7 +1593,7 @@ void ModRuntime::DiffScanImpl() {
     if (dev.diff_candidates.size() <= 40) {
         std::string report;
         for (size_t i = 0; i < dev.diff_candidates.size(); ++i) {
-            report += fmt::format(" {:012X}={}", dev.diff_candidates[i], dev.diff_last[i]);
+            report += std::format(" {:012X}={}", dev.diff_candidates[i], dev.diff_last[i]);
         }
         LOG_INFO(Core, "DSMod diff: survivors:{}", report);
     }
@@ -1891,7 +1892,7 @@ void ModRuntime::NarrowByAgreementImpl() {
     for (size_t i = 0; i < dev.find_candidates.size() && i < 24; ++i) {
         s32 value{};
         std::memcpy(&value, dev.find_host[i], sizeof(value));
-        report += fmt::format(" {:012X}={}", dev.find_candidates[i], value);
+        report += std::format(" {:012X}={}", dev.find_candidates[i], value);
     }
     LOG_INFO(Core, "DSMod find: {} candidate(s) after {} transition(s):{}", dev.find_candidates.size(),
              dev.find_transitions, report);
@@ -1994,9 +1995,9 @@ void ModRuntime::DescribeStringUsesImpl([[maybe_unused]] const std::string& text
             }
             const u64 value = memory.Read64(at + off);
             const bool in_module = value >= main_region_begin && value < module_end;
-            around += fmt::format(" [{:+d}]={}", off,
-                                  in_module ? fmt::format("main+{:X}", value - main_region_begin)
-                                            : fmt::format("{:X}", value));
+            around += std::format(" [{:+d}]={}", off,
+                                  in_module ? std::format("main+{:X}", value - main_region_begin)
+                                            : std::format("{:X}", value));
         }
         LOG_INFO(Core, "DSMod uses: descriptor at main+{:X}:{}", at - main_region_begin, around);
         ++shown;
