@@ -91,7 +91,6 @@ duo-only	A	-	181	0	src/core/mods/mod_input_swipe.h
 duo-only	A	-	1840	0	src/core/mods/mod_map.cpp
 duo-only	A	-	184	0	src/core/mods/mod_font_pages.cpp
 duo-only	A	-	184	0	src/tests/core/mods/quarter_turn_markers.cpp
-duo-only	A	-	185	0	src/video_core/dsmod/texture_readback.h
 duo-only	A	-	190	0	src/android/app/src/main/java/org/yuzu/yuzu_emu/duo/SaveZipImport.kt
 duo-only	A	-	190	0	src/android/app/src/main/java/org/yuzu/yuzu_emu/utils/SecondScreenPerGame.kt
 duo-only	A	-	19	0	src/android/app/src/main/java/org/yuzu/yuzu_emu/model/DualScreenModRelease.kt
@@ -106,11 +105,11 @@ duo-only	A	-	200	0	src/android/app/src/main/java/org/yuzu/yuzu_emu/duo/DuoUpdate
 duo-only	A	-	200	0	src/core/mods/mod_nx_assets.h
 duo-only	A	-	20	0	src/android/app/src/main/java/org/yuzu/yuzu_emu/utils/ContainerNameRules.kt
 duo-only	A	-	201	0	src/tests/core/mods/runtime13.cpp
-duo-only	A	-	202	0	src/core/mods/mod_texture_readback.cpp
 duo-only	A	-	205	0	dist/frontends/cocoonfe/NintendoSwitch.json
 duo-only	A	-	2051	0	src/core/mods/mod_input.cpp
 duo-only	A	-	208	0	src/android/app/src/main/java/org/yuzu/yuzu_emu/duo/CompanionToggleGesture.kt
 duo-only	A	-	209	0	src/tests/core/mods/map_pan_zoom_host_value.cpp
+duo-only	A	-	210	0	src/core/mods/mod_texture_readback.cpp
 duo-only	A	-	210	0	src/core/mods/mod_types.h
 duo-only	A	-	211	0	src/android/app/src/test/java/org/yuzu/yuzu_emu/duo/SaveZipImportTest.kt
 duo-only	A	-	212	0	src/tests/core/mods/scroll_2d.cpp
@@ -129,6 +128,7 @@ duo-only	A	-	227	0	src/android/app/src/test/java/org/yuzu/yuzu_emu/utils/Emulato
 duo-only	A	-	228	0	src/android/app/src/test/java/org/yuzu/yuzu_emu/utils/DualScreenModRepositoryTest.kt
 duo-only	A	-	2301	0	src/core/mods/mod_ui_map_widget.cpp
 duo-only	A	-	233	0	src/tests/core/mods/runtime16_input.cpp
+duo-only	A	-	234	0	src/video_core/dsmod/texture_readback.h
 duo-only	A	-	237	0	src/core/mods/mod_types_points.h
 duo-only	A	-	238	0	src/core/mods/mod_settings.cpp
 duo-only	A	-	239	0	src/core/mods/dsmod_module_abi.h
@@ -148,7 +148,6 @@ duo-only	A	-	259	0	src/core/mods/mod_ui_scroll.cpp
 duo-only	A	-	26	0	.patch/unordered-dense/0001-avoid-memset-when-clearing-an-empty-table.patch
 duo-only	A	-	263	0	src/android/app/src/main/java/org/yuzu/yuzu_emu/utils/EmulatorImportConfig.kt
 duo-only	A	-	264	0	CHANGELOG.md
-duo-only	A	-	268	0	src/video_core/renderer_vulkan/vk_dsmod_texture_readback.cpp
 duo-only	A	-	27	0	src/core/mods/mod_bfres.h
 duo-only	A	-	2726	0	src/core/mods/mod_nx_runtime.cpp
 duo-only	A	-	2726	0	src/core/mods/mod_redraw.cpp
@@ -158,6 +157,7 @@ duo-only	A	-	28	0	src/core/mods/mod_process_guard.h
 duo-only	A	-	284	0	src/android/app/src/main/java/org/yuzu/yuzu_emu/utils/EmulatorDataImporter.kt
 duo-only	A	-	29	0	src/core/mods/engine_formats.h
 duo-only	A	-	291	0	src/android/app/src/main/java/org/yuzu/yuzu_emu/activities/AuxCompanionActivity.kt
+duo-only	A	-	297	0	src/video_core/renderer_vulkan/vk_dsmod_texture_readback.cpp
 duo-only	A	-	299	0	src/core/mods/engine_il2cpp.cpp
 duo-only	A	-	30	0	src/android/app/src/main/assets/duo/companion_catalog.json
 duo-only	A	-	3011	0	src/core/mods/mod_manifest.cpp
@@ -182,7 +182,6 @@ duo-only	A	-	38	0	src/android/app/src/main/res/layout/dialog_companion_app_picke
 duo-only	A	-	38	0	src/android/app/src/main/res/layout/list_item_companion_app.xml
 duo-only	A	-	385	0	src/tests/core/mods/ui_render.cpp
 duo-only	A	-	393	0	dist/frontends/es-de/es_systems.xml
-duo-only	A	-	393	0	src/core/mods/dsmod_module_extensions.h
 duo-only	A	-	397	0	src/android/app/src/main/java/org/yuzu/yuzu_emu/duo/DualScreenEmulationController.kt
 duo-only	A	-	40	0	src/core/mods/mod_types_nav.h
 duo-only	A	-	4	0	src/android/app/src/main/res/color/dual_screen_filter_background.xml
@@ -190,6 +189,7 @@ duo-only	A	-	4	0	src/android/app/src/main/res/color/dual_screen_filter_tint.xml
 duo-only	A	-	4	0	src/android/app/src/main/res/drawable/dual_screen_badge_background_available.xml
 duo-only	A	-	4	0	src/android/app/src/main/res/drawable/dual_screen_badge_background_current.xml
 duo-only	A	-	4	0	src/android/app/src/main/res/drawable/dual_screen_badge_background.xml
+duo-only	A	-	411	0	src/core/mods/dsmod_module_extensions.h
 duo-only	A	-	42	0	docs/dual-screen-input.txt
 duo-only	A	-	42	0	src/core/mods/mod_input_drag.h
 duo-only	A	-	42	0	src/core/mods/mod_user_source.h
@@ -218,7 +218,6 @@ duo-only	A	-	524	0	src/tests/core/mods/runtime16_image.cpp
 duo-only	A	-	53	0	src/android/app/src/main/java/org/yuzu/yuzu_emu/duo/GameIconCache.kt
 duo-only	A	-	54	0	src/android/app/src/main/java/org/yuzu/yuzu_emu/utils/ExternalContentBootRules.kt
 duo-only	A	-	54	0	src/android/app/src/test/java/org/yuzu/yuzu_emu/utils/ContainerNameRulesTest.kt
-duo-only	A	-	547	0	src/tests/core/mods/runtime24_texture_readback.cpp
 duo-only	A	-	56	0	tools/duo/duo-touched-ledger.sh
 duo-only	A	-	57	0	src/core/mods/mod_package_io.h
 duo-only	A	-	57	0	src/core/mods/mod_yaz0.h
@@ -245,6 +244,7 @@ duo-only	A	-	67	0	src/yuzu_cmd/dsmod_harness.h
 duo-only	A	-	68	0	tools/duo/README.md
 duo-only	A	-	683	0	src/tests/core/mods/runtime17_text.cpp
 duo-only	A	-	69	0	src/tests/core/mods/map_overview.cpp
+duo-only	A	-	700	0	src/tests/core/mods/runtime24_texture_readback.cpp
 duo-only	A	-	71	0	src/core/mods/mod_persist.h
 duo-only	A	-	713	0	src/core/mods/mod_ui_image.cpp
 duo-only	A	-	73	0	src/android/app/src/test/java/org/yuzu/yuzu_emu/duo/SecondScreenBrightnessTest.kt
@@ -370,6 +370,7 @@ upstream-hook	M	9	31	1	src/common/fs/fs.cpp
 upstream-hook	M	9	39	25	src/common/fs/fs_android.cpp
 upstream-hook	M	9	44	35	src/yuzu_cmd/emu_window/emu_window_sdl3_vk.cpp
 upstream-hook	M	8	114	2	src/core/loader/deconstructed_rom_directory.cpp
+upstream-hook	M	8	48	3	src/video_core/texture_cache/texture_cache.h
 upstream-hook	M	7	101	0	src/common/fiber.cpp
 upstream-hook	M	7	14	7	src/android/app/src/main/java/org/yuzu/yuzu_emu/views/CarouselRecyclerView.kt
 upstream-hook	M	7	171	1	src/core/loader/nso.cpp
@@ -390,7 +391,6 @@ upstream-hook	M	5	33	2	src/core/hle/service/set/system_settings_server.cpp
 upstream-hook	M	5	37	5	src/core/arm/nce/arm_nce.cpp
 upstream-hook	M	5	5	4	src/android/app/src/main/res/layout-w600dp/page_setup.xml
 upstream-hook	M	4	13	11	src/video_core/renderer_vulkan/vk_pipeline_cache.cpp
-upstream-hook	M	4	16	3	src/video_core/texture_cache/texture_cache.h
 upstream-hook	M	4	18	11	src/video_core/renderer_vulkan/vk_texture_cache.cpp
 upstream-hook	M	4	19	0	src/video_core/gpu.h
 upstream-hook	M	4	194	0	src/shader_recompiler/frontend/maxwell/translate_program.cpp
@@ -410,8 +410,8 @@ upstream-hook	M	3	22	1	src/android/app/src/main/res/layout-land/fragment_games.x
 upstream-hook	M	3	26	1	src/core/loader/nso.h
 upstream-hook	M	3	27	0	cpmfile.json
 upstream-hook	M	3	28	0	src/core/file_sys/vfs/vfs_real.cpp
-upstream-hook	M	3	29	0	src/video_core/renderer_vulkan/vk_rasterizer.h
 upstream-hook	M	3	29	2	src/common/android/id_cache.cpp
+upstream-hook	M	3	30	0	src/video_core/renderer_vulkan/vk_rasterizer.h
 upstream-hook	M	3	5	2	src/android/app/src/main/java/org/yuzu/yuzu_emu/utils/GameIconUtils.kt
 upstream-hook	M	3	6	0	src/android/app/src/main/java/org/yuzu/yuzu_emu/fragments/AddonsFragment.kt
 upstream-hook	M	3	6	1	src/android/app/src/main/java/org/yuzu/yuzu_emu/overlay/InputOverlay.kt
@@ -433,6 +433,7 @@ upstream-hook	M	2	16	4	src/android/app/src/main/jni/emu_window/emu_window.cpp
 upstream-hook	M	2	2	0	src/android/app/src/main/java/org/yuzu/yuzu_emu/features/settings/ui/SettingsSubscreenActivity.kt
 upstream-hook	M	2	2	0	src/android/app/src/main/java/org/yuzu/yuzu_emu/fragments/InstallableFragment.kt
 upstream-hook	M	2	2	0	src/core/hle/service/services.cpp
+upstream-hook	M	2	24	0	src/video_core/texture_cache/texture_cache_base.h
 upstream-hook	M	2	3	0	src/android/app/src/main/java/org/yuzu/yuzu_emu/features/settings/ui/SettingsFragmentPresenter.kt
 upstream-hook	M	2	3	1	src/android/app/src/main/jni/emu_window/emu_window.h
 upstream-hook	M	2	32	9	src/common/fs/file.cpp
@@ -443,6 +444,7 @@ upstream-hook	M	2	4	1	src/android/app/src/main/java/org/yuzu/yuzu_emu/features/s
 upstream-hook	M	2	43	0	src/android/app/src/main/AndroidManifest.xml
 upstream-hook	M	2	4	3	src/core/hle/service/nvnflinger/surface_flinger.cpp
 upstream-hook	M	2	5	0	src/core/hle/kernel/code_set.h
+upstream-hook	M	2	5	0	src/video_core/texture_cache/image_base.h
 upstream-hook	M	2	6	0	src/core/arm/dynarmic/arm_dynarmic_32.h
 upstream-hook	M	2	6	0	src/video_core/memory_manager.cpp
 upstream-hook	M	2	6	0	src/video_core/vulkan_common/vulkan_device.h
@@ -479,7 +481,6 @@ upstream-hook	M	1	1	1	src/core/hle/service/vi/container.cpp
 upstream-hook	M	1	13	0	src/android/app/src/main/jni/android_settings.h
 upstream-hook	M	1	17	1	src/core/file_sys/fsmitm_romfsbuild.cpp
 upstream-hook	M	1	18	2	src/yuzu_cmd/emu_window/emu_window_sdl3.cpp
-upstream-hook	M	1	20	0	src/video_core/texture_cache/texture_cache_base.h
 upstream-hook	M	1	2	0	src/core/CMakeLists.txt
 upstream-hook	M	1	2	0	src/tests/CMakeLists.txt
 upstream-hook	M	1	2	0	src/video_core/CMakeLists.txt
