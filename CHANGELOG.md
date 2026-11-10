@@ -8,7 +8,7 @@
 
 **Updated**
 
-- Based on the latest Eden nightly ([v1794178977.ae60f8e7f8](https://git.eden-emu.dev/eden-ci/nightly/releases/tag/v1794178977.ae60f8e7f8), 2026-11-08), with upstream's newest emulation fixes and improvements: NCE keeps pending GPU writes when it handles a memory fault and treats register 31 as the zero register in its interpreter, dynarmic fixes for A32 and x64, and the Disco Elysium shader fix. All companions keep working.
+- Based on Eden nightly ([v1794272405.6a767ac43a](https://git.eden-emu.dev/eden-ci/nightly/releases/tag/v1794272405.6a767ac43a), 2026-11-10), with upstream's newest emulation fixes and improvements: NCE keeps pending GPU writes when it handles a memory fault and treats register 31 as the zero register in its interpreter, dynarmic fixes for A32 and x64, the Disco Elysium shader fix, and Vulkan depth-clamp and asynchronous-shader fixes (broken skyboxes, and fog or effects that stayed missing after a shader was built in the background). Each game's Vulkan pipeline cache is rebuilt once on its first launch. All companions keep working.
 
 ## 1.3.5
 
