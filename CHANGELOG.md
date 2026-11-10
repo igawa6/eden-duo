@@ -4,11 +4,11 @@
 
 **New**
 
-- Companions can show what a game draws only on the GPU, such as a map's fog of war: dual-screen runtime 24 lets a companion that asks for it read back one of the game's own textures (read-only, small, at most twice a second, without making the game wait for the copy). Map companions can also use such a picture to reveal or hide parts of the map. Needs the Vulkan renderer; companions that do not use it are unchanged.
+- Companions can show what a game draws only on the GPU, such as a map's fog of war: dual-screen runtime 24 lets a companion that asks for it read back one of the game's own textures (read-only, small, at most twice a second, without making the game wait for the copy). A companion can also ask for a texture by what kind of picture it is (drawn by the game, sRGB or plain colour, redrawn over several frames), so it finds the right one when a game has several that look alike. Map companions can use such a picture to reveal or hide parts of the map. Needs the Vulkan renderer; companions that do not use it are unchanged.
 
 **Updated**
 
-- Based on Eden nightly ([v1794272405.6a767ac43a](https://git.eden-emu.dev/eden-ci/nightly/releases/tag/v1794272405.6a767ac43a), 2026-11-10), with upstream's newest emulation fixes and improvements: NCE keeps pending GPU writes when it handles a memory fault and treats register 31 as the zero register in its interpreter, dynarmic fixes for A32 and x64, the Disco Elysium shader fix, and Vulkan depth-clamp and asynchronous-shader fixes (broken skyboxes, and fog or effects that stayed missing after a shader was built in the background). Each game's Vulkan pipeline cache is rebuilt once on its first launch. All companions keep working.
+- Based on Eden nightly ([v1794272405.6a767ac43a](https://git.eden-emu.dev/eden-ci/nightly/releases/tag/v1794272405.6a767ac43a), 2026-11-10), with upstream's emulation fixes and improvements since 1.3.5: NCE keeps pending GPU writes when it handles a memory fault and treats register 31 as the zero register in its interpreter, dynarmic fixes for A32 and x64, the Disco Elysium shader fix, and Vulkan depth-clamp and asynchronous-shader fixes (broken skyboxes, and fog or effects that stayed missing after a shader was built in the background). Each game's Vulkan pipeline cache is rebuilt once on its first launch. All companions keep working.
 
 ## 1.3.5
 
