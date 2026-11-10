@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 // SPDX-FileCopyrightText: Copyright 2023 yuzu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
@@ -106,7 +109,9 @@ bool Exists(const std::string& filepath) {
 }
 
 std::string GetParentDirectory(const std::string& filepath) {
-    if (!s_get_parent_directory) return {};
+    if (s_get_parent_directory == nullptr) {
+        return "";
+    }
     auto env = Common::Android::GetEnvForThread();
     const auto path = Common::Android::ToJString(env, filepath);
     const auto value = static_cast<jstring>(env->CallStaticObjectMethod(native_library, s_get_parent_directory, path));
@@ -118,7 +123,9 @@ std::string GetParentDirectory(const std::string& filepath) {
 }
 
 std::string GetFilename(const std::string& filepath) {
-    if (!s_get_filename) return {};
+    if (s_get_filename == nullptr) {
+        return "";
+    }
     auto env = Common::Android::GetEnvForThread();
     const auto path = Common::Android::ToJString(env, filepath);
     const auto value = static_cast<jstring>(env->CallStaticObjectMethod(native_library, s_get_filename, path));

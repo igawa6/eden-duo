@@ -90,6 +90,11 @@ target_sources(core PRIVATE
 # .upstream/DIVERGENCES.md; the package is added in externals/CMakeLists.txt).
 target_link_libraries(core PUBLIC unordered_dense::unordered_dense)
 
+# Manifests, load plans, the persist store and the external-content index are parsed with
+# nlohmann JSON. Upstream dropped it for jacinth (#4412); Duo keeps it (DIVERGENCES #31, added
+# in externals/CMakeLists.txt). PUBLIC because the DSMod tests include it directly.
+target_link_libraries(core PUBLIC nlohmann_json::nlohmann_json)
+
 # dsm:u is written against both upstream service handler-table forms. Eden #4480 replaced the
 # constructor-time RegisterHandlers table with a per-service FindRequest override built by
 # CreateStaticMap; select the form the service.h in this tree provides, and re-run the configure
