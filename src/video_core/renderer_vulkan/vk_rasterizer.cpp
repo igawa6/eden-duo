@@ -997,6 +997,7 @@ void RasterizerVulkan::FlushCommands() {
 
 void RasterizerVulkan::TickFrame() {
     draw_counter = 0;
+    DSModCompleteTextureReadbacks(); // Eden Duo (vk_dsmod_texture_readback.cpp)
     guest_descriptor_queue.TickFrame();
     compute_pass_descriptor_queue.TickFrame();
     descriptor_buffer_ring.TickFrame();

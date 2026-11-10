@@ -2,6 +2,10 @@
 
 ## 1.3.5.1
 
+**New**
+
+- Companions can show what a game draws only on the GPU, such as a map's fog of war: dual-screen runtime 24 lets a companion that asks for it read back one of the game's own textures (read-only, small, at most twice a second, without making the game wait for the copy). Map companions can also use such a picture to reveal or hide parts of the map. Needs the Vulkan renderer; companions that do not use it are unchanged.
+
 **Updated**
 
 - Based on the latest Eden nightly ([v1794178977.ae60f8e7f8](https://git.eden-emu.dev/eden-ci/nightly/releases/tag/v1794178977.ae60f8e7f8), 2026-11-08), with upstream's newest emulation fixes and improvements: NCE keeps pending GPU writes when it handles a memory fault and treats register 31 as the zero register in its interpreter, dynarmic fixes for A32 and x64, and the Disco Elysium shader fix. All companions keep working.

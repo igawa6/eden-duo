@@ -172,6 +172,15 @@ public:
         return slot_images[id];
     }
 
+    /// Eden Duo (runtime 24): visit every live image as (id, image), to find the one a module
+    /// texture readback names. Call with `mutex` held.
+    template <typename Func>
+    void DSModForEachImage(Func&& func) {
+        for (auto [id, image] : slot_images) {
+            func(id, *image);
+        }
+    }
+
     /// Get the imageview from the graphics descriptor table in the specified index
     [[nodiscard]] ImageView& GetImageView(u32 index) noexcept;
 

@@ -257,6 +257,12 @@ struct MapWidgetExtras {
         std::string src;      ///< a fixed image key
         std::string src_bind; ///< a text point naming the image key (wins when non-empty)
         std::string src_detail_bind;    ///< optional higher-detail image for the same world box
+        /// Runtime 24: a text point naming an image whose alpha, stretched (bilinear) over the
+        /// overlay's box, multiplies the overlay's alpha -- a dynamic mask such as a fog of war a
+        /// module reads back off the GPU. While the named mask is still loading the overlay is
+        /// not drawn; an empty / missing point draws it unmasked. Unturned views only (a turned
+        /// view, view_rotate_bind, skips a masked overlay).
+        std::string mask_bind;
         float detail_threshold{210.0f}; ///< projected edge length above which detail is requested
         float x0{}, y0{}, x1{}, y1{};
         PointGate show;

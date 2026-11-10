@@ -503,6 +503,7 @@ u64 ModRuntime::WidgetDependencyHash(const Widget& w, const StateSnapshot& s,
         for (const auto& ov : w.map_extras->overlays) {
             add(ov.src_bind);
             add(ov.src_detail_bind);
+            add(ov.mask_bind); // runtime 24
             add(ov.show.point);
         }
     }

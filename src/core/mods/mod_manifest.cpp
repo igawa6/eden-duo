@@ -1051,6 +1051,7 @@ std::shared_ptr<const MapWidgetExtras> ParseMapWidgetExtras(const nlohmann::json
             ov.src = o.value("src", std::string{});
             ov.src_bind = o.value("src_bind", std::string{});
             ov.src_detail_bind = o.value("src_detail_bind", std::string{});
+            ov.mask_bind = o.value("mask_bind", std::string{}); // runtime 24
             ov.detail_threshold = std::max(1.0f, JsonFloat(o, "detail_threshold", 210.0f));
             ov.x0 = JsonFloat(o, "x0", 0.0f);
             ov.y0 = JsonFloat(o, "y0", 0.0f);

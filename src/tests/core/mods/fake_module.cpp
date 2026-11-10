@@ -56,7 +56,23 @@ const EdenDsmodModuleDataExtensions kData{
     .abi_hash = EDEN_DSMOD_DATA_EXT_HASH,
     .load_data = LoadData,
 };
+void ConfigureTexture(void*, const EdenDsmodHostTextureApi*) {}
+
+const EdenDsmodModuleTextureExtensions kTexture{
+    .version = EDEN_DSMOD_TEXTURE_EXT_VERSION,
+    .struct_size = sizeof(EdenDsmodModuleTextureExtensions),
+    .abi_hash = EDEN_DSMOD_TEXTURE_EXT_HASH,
+    .configure = ConfigureTexture,
+};
 } // namespace
+
+// Runtime 24's optional texture readback extension.
+extern "C" const EdenDsmodModuleTextureExtensions* eden_dsmod_get_texture_extensions(
+    uint32_t version, uint64_t hash) {
+    return version == EDEN_DSMOD_TEXTURE_EXT_VERSION && hash == EDEN_DSMOD_TEXTURE_EXT_HASH
+               ? &kTexture
+               : nullptr;
+}
 
 // Runtime 12's optional data extension (the loader negotiates it like font/save/write).
 extern "C" const EdenDsmodModuleDataExtensions* eden_dsmod_get_data_extensions(uint32_t version,

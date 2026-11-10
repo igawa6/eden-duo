@@ -74,6 +74,8 @@ enum {
     // real firmware font is returned: without one (no firmware, keys too old) the read is empty,
     // never Eden's synthesized substitute (mod_sysfont_source.h).
     EDEN_DSMOD_CAP_SOURCE_SYSFONT = UINT64_C(1) << 12,
+    // (1 << 13) is EDEN_DSMOD_CAP_TEXTURE_READBACK (runtime 24, host capability only),
+    // dsmod_module_extensions.h.
 };
 
 enum {

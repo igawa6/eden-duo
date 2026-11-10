@@ -308,6 +308,20 @@ std::unique_ptr<GameModule> GameModule::Load(FileSys::VirtualDir assets, u64 tit
                 loaded->library, "eden_dsmod_get_data_extensions", EDEN_DSMOD_DATA_EXT_VERSION,
                 EDEN_DSMOD_DATA_EXT_HASH, &EdenDsmodModuleDataExtensions::load_data, false,
                 "incompatible dual-screen data extensions");
+        // Runtime 24: only a module that reads guest GPU textures back exports this; the host
+        // offers it only when the manifest declares it too (ModRuntime decides at configure).
+        loaded->texture_extensions =
+            NegotiateExtension<EdenDsmodModuleTextureExtensions, EdenDsmodGetTextureExtensionsFn>(
+                loaded->library, "eden_dsmod_get_texture_extensions",
+                EDEN_DSMOD_TEXTURE_EXT_VERSION, EDEN_DSMOD_TEXTURE_EXT_HASH,
+                &EdenDsmodModuleTextureExtensions::configure, false,
+                "incompatible dual-screen texture extensions");
+        if (const auto declared = module.find("texture_readback"); declared != module.end()) {
+            if (!declared->is_boolean()) {
+                throw std::runtime_error("module texture_readback must be true or false");
+            }
+            loaded->texture_readback_declared = declared->get<bool>();
+        }
         LOG_INFO(Core, "DSMod module: loaded {} for title {} build {} ({})",
                  api->name ? api->name : "unnamed", title, build, platform);
         return loaded;

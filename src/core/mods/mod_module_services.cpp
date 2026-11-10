@@ -303,6 +303,59 @@ void ModRuntime::InitializeModuleWriteExtensions() {
     game_module->WriteExtensions()->configure(game_module_instance, &module_write_api);
 }
 
+void ModRuntime::InitializeModuleTextureExtensions() {
+    texture_readback.reset();
+    module_texture_api = {};
+    if (!game_module || !game_module->TextureExtensions()) {
+        return;
+    }
+    // Opt-in twice: the module exports the extension and the package declares it.
+    if (!game_module->TextureReadbackDeclared()) {
+        LOG_WARNING(Core, "DSMod: the module offers texture readback but the manifest does not "
+                          "declare \"module\": {{\"texture_readback\": true}}; not configured");
+        return;
+    }
+    if ((module_host.capabilities & EDEN_DSMOD_CAP_TEXTURE_READBACK) == 0) {
+        LOG_INFO(Core, "DSMod: texture readback unavailable here (needs Vulkan and asynchronous "
+                       "GPU emulation); the module keeps its fallback");
+        return;
+    }
+    texture_readback =
+        std::make_unique<TextureReadbackBroker>(MakeGpuTextureReadbackBackend(system.GPU()));
+    module_texture_api.version = EDEN_DSMOD_TEXTURE_EXT_VERSION;
+    module_texture_api.struct_size = sizeof(module_texture_api);
+    module_texture_api.abi_hash = EDEN_DSMOD_TEXTURE_EXT_HASH;
+    module_texture_api.userdata = this;
+    module_texture_api.request = [](void* p, const EdenDsmodTextureRequest* request,
+                                    s32* status) -> u64 {
+        auto& rt = *static_cast<ModRuntime*>(p);
+        if (!rt.texture_readback) {
+            if (status) {
+                *status = EDEN_DSMOD_TEXTURE_UNSUPPORTED;
+            }
+            return 0;
+        }
+        return rt.texture_readback->Request(request, status, std::chrono::steady_clock::now());
+    };
+    module_texture_api.poll = [](void* p, u64 ticket, void* output, size_t output_size,
+                                 EdenDsmodTextureInfo* info) -> s32 {
+        auto& rt = *static_cast<ModRuntime*>(p);
+        if (!rt.texture_readback) {
+            return EDEN_DSMOD_TEXTURE_UNKNOWN_TICKET;
+        }
+        return rt.texture_readback->Poll(ticket, output, output_size, info,
+                                         std::chrono::steady_clock::now());
+    };
+    module_texture_api.cancel = [](void* p, u64 ticket) {
+        auto& rt = *static_cast<ModRuntime*>(p);
+        if (rt.texture_readback) {
+            rt.texture_readback->Cancel(ticket);
+        }
+    };
+    game_module->TextureExtensions()->configure(game_module_instance, &module_texture_api);
+    LOG_INFO(Core, "DSMod: texture readback offered to the module (runtime 24)");
+}
+
 ModuleActionOutcome ModRuntime::RunModuleAction(const std::string& name, s64 argument) {
     if (!IsOwnerContext()) {
         return ModuleActionOutcome::Declined;

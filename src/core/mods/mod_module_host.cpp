@@ -166,6 +166,9 @@ void ModRuntime::ShutdownGameModule() {
         std::scoped_lock lock{module_save_mutex};
         module_save_dir = nullptr;
     }
+    // Runtime 24: open readbacks are dropped; a copy still in the renderer finds no broker.
+    texture_readback.reset();
+    module_texture_api = {};
     // Any synchronous module image call (Nx worker composite layer) finishes before the instance
     // goes.
     std::scoped_lock loader_lock{module_loader_mutex};
@@ -196,6 +199,9 @@ void ModRuntime::InitializeGameModule() {
                                EDEN_DSMOD_CAP_EXTENSIONS | EDEN_DSMOD_CAP_TICK_WHEN_HIDDEN |
                                EDEN_DSMOD_CAP_NO_TICK_WHEN_HIDDEN |
                                EDEN_DSMOD_CAP_FONT_EPOCH; // runtime 18
+    if (system.GPU().DSModTextureReadbackAvailable()) {
+        module_host.capabilities |= EDEN_DSMOD_CAP_TEXTURE_READBACK; // runtime 24
+    }
     module_host.userdata = this;
     module_host.title_id = manifest.title_id;
     module_host.main_base = main_region_begin;
@@ -495,6 +501,7 @@ void ModRuntime::InitializeGameModule() {
             InitializeModuleExtensions();
             InitializeModuleSaveExtensions();
             InitializeModuleWriteExtensions();
+            InitializeModuleTextureExtensions();
             StartModuleAssetWorker();
             StartModuleAreas();
         }

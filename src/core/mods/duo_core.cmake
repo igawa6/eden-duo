@@ -52,6 +52,8 @@ target_sources(core PRIVATE
     mods/mod_msbt.h
     mods/mod_module_host.cpp
     mods/mod_module_services.cpp
+    mods/mod_texture_readback.cpp
+    mods/mod_texture_readback.h
     mods/mod_nx_assets.cpp
     mods/mod_nx_assets.h
     mods/mod_nx_runtime.cpp

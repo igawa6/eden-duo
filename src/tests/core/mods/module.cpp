@@ -165,6 +165,9 @@ TEST_CASE("DSMod native module loads and removes its staged copy", "[dsmod][modu
         REQUIRE_FALSE(loaded->DataExtensions()->load_data(nullptr, nullptr, "module:test:x", &got,
                                                           [](void*, const uint8_t*, size_t) {}));
     }
+    // Runtime 24: the texture extension is negotiated, but not declared by this manifest.
+    REQUIRE(loaded->TextureExtensions() != nullptr);
+    REQUIRE_FALSE(loaded->TextureReadbackDeclared());
     REQUIRE(std::distance(std::filesystem::directory_iterator(cache),
                           std::filesystem::directory_iterator{}) == 1);
     const auto directory = std::filesystem::directory_iterator(cache)->path();
@@ -176,6 +179,40 @@ TEST_CASE("DSMod native module loads and removes its staged copy", "[dsmod][modu
 
     loaded.reset();
     REQUIRE(std::filesystem::directory_iterator(cache) == std::filesystem::directory_iterator{});
+    Core::Mods::SetModuleCacheDirectory({});
+    std::error_code ignored;
+    std::filesystem::remove_all(cache, ignored);
+}
+
+TEST_CASE("DSMod module texture_readback declaration", "[dsmod][module][runtime24]") {
+    const auto module = ReadFile(DSMOD_TEST_MODULE_PATH);
+    const auto digest = Digest(module);
+    const auto with = [&](std::string_view value) {
+        auto module_json = GoodModuleJson(digest);
+        module_json.insert(module_json.size() - 1, std::string{R"(,"texture_readback":)"} +
+                                                       std::string{value});
+        return MakeAssets(Manifest(module_json), module);
+    };
+    const auto cache = TestCache();
+    Core::Mods::SetModuleCacheDirectory(cache);
+    {
+        std::string error;
+        const auto loaded = Core::Mods::GameModule::Load(with("true"), TitleId, BuildId, error);
+        REQUIRE(loaded);
+        REQUIRE(loaded->TextureExtensions() != nullptr);
+        REQUIRE(loaded->TextureReadbackDeclared());
+    }
+    {
+        std::string error;
+        const auto loaded = Core::Mods::GameModule::Load(with("false"), TitleId, BuildId, error);
+        REQUIRE(loaded);
+        REQUIRE_FALSE(loaded->TextureReadbackDeclared());
+    }
+    {
+        std::string error;
+        REQUIRE_FALSE(Core::Mods::GameModule::Load(with("\"yes\""), TitleId, BuildId, error));
+        REQUIRE(error.find("texture_readback") != std::string::npos);
+    }
     Core::Mods::SetModuleCacheDirectory({});
     std::error_code ignored;
     std::filesystem::remove_all(cache, ignored);

@@ -390,6 +390,9 @@ std::string R(const MapWidgetExtras::Overlay& o) {
     if (o.detail_threshold != 210.0f) {
         F(detail_threshold);
     }
+    if (!o.mask_bind.empty()) {
+        F(mask_bind); // runtime 24; omitted when unset so older goldens stay byte-identical
+    }
     F(src);
     F(src_bind);
     F(x0);
@@ -1258,7 +1261,7 @@ void CheckLayouts() {
         {"MapWidgetExtras", sizeof(MapWidgetExtras), 480},
         {"MapWidgetExtras::Group", sizeof(MapWidgetExtras::Group), 112},
         {"MapWidgetExtras::LabelStyle", sizeof(MapWidgetExtras::LabelStyle), 24},
-        {"MapWidgetExtras::Overlay", sizeof(MapWidgetExtras::Overlay), 168},
+        {"MapWidgetExtras::Overlay", sizeof(MapWidgetExtras::Overlay), 200},
         {"WidgetAnim", sizeof(WidgetAnim), 136},
         {"Action", sizeof(Action), 816},
         {"ActionValue", sizeof(ActionValue), 56},
@@ -1416,6 +1419,7 @@ TEST_CASE("DSMod map digest retains non-default heading tint and detail referenc
     MapWidgetExtras::Overlay overlay;
     overlay.src_detail_bind = "tile.detail";
     overlay.detail_threshold = 300.0f;
+    overlay.mask_bind = "fog.mask";
     extras.overlays.push_back(overlay);
     const auto text = R(extras);
     REQUIRE(text.find("player.heading") != std::string::npos);
@@ -1425,6 +1429,8 @@ TEST_CASE("DSMod map digest retains non-default heading tint and detail referenc
     REQUIRE(text.find("marker_tint=") != std::string::npos);
     REQUIRE(text.find("tile.detail") != std::string::npos);
     REQUIRE(text.find("detail_threshold=") != std::string::npos);
+    REQUIRE(text.find("fog.mask") != std::string::npos);
+    REQUIRE(R(MapWidgetExtras::Overlay{}).find("mask_bind") == std::string::npos);
 }
 
 TEST_CASE("DSMod map label overlap parser defaults and digest",

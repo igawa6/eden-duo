@@ -243,6 +243,10 @@ private:
     [[nodiscard]] bool visible(float px, float py) const;
     /// A picture into the canvas at (qx, qy, qw, qh), clipped to the widget, tinted (ARGB).
     void blit_clipped(const Image& img, float qx, float qy, float qw, float qh, u32 tint);
+    /// Runtime 24: blit_clipped with `mask`'s alpha (bilinear, stretched over the whole quad)
+    /// multiplying the picture's alpha, then `alpha` (0..255) on top.
+    void blit_masked(const Image& img, const Image& mask, float qx, float qy, float qw, float qh,
+                     u32 alpha);
     /// A solid rect into the canvas, clipped to the widget.
     void fill_clipped(float l, float t, float w, float h, u32 argb);
     bool group_visible(const std::string& group, float& alpha) const;
@@ -750,6 +754,65 @@ void GeometryMapDraw::blit_clipped(const Image& img, float qx, float qy, float q
                            std::max(1, static_cast<s32>(std::lround((v1 - v0) * fh))), tint);
 }
 
+void GeometryMapDraw::blit_masked(const Image& img, const Image& mask, float qx, float qy,
+                                  float qw, float qh, u32 alpha) {
+    if (!img.Valid() || !mask.Valid() || !(qw > 0.0f) || !(qh > 0.0f) || alpha == 0) {
+        return;
+    }
+    const auto clip = canvas.Clip();
+    const float l = std::max({qx, static_cast<float>(x), static_cast<float>(clip[0])});
+    const float t = std::max({qy, static_cast<float>(y), static_cast<float>(clip[1])});
+    const float r = std::min({qx + qw, static_cast<float>(x + rw),
+                              static_cast<float>(clip[0] + clip[2])});
+    const float b = std::min({qy + qh, static_cast<float>(y + rh),
+                              static_cast<float>(clip[1] + clip[3])});
+    const s32 dl = static_cast<s32>(std::lround(l)), dt = static_cast<s32>(std::lround(t));
+    const s32 dw = static_cast<s32>(std::lround(r)) - dl,
+              dh = static_cast<s32>(std::lround(b)) - dt;
+    if (r <= l || b <= t || dw <= 0 || dh <= 0) {
+        return;
+    }
+    // Composed at screen resolution for the visible part only: memory stays bounded by the
+    // widget whatever the picture and mask sizes are.
+    Image out;
+    out.w = static_cast<u32>(dw);
+    out.h = static_cast<u32>(dh);
+    out.pixels.resize(size_t{out.w} * out.h);
+    const float mw = static_cast<float>(mask.w), mh = static_cast<float>(mask.h);
+    const s32 mx_max = static_cast<s32>(mask.w) - 1, my_max = static_cast<s32>(mask.h) - 1;
+    for (s32 j = 0; j < dh; ++j) {
+        const float v = (static_cast<float>(dt + j) + 0.5f - qy) / qh;
+        const u32 sy = std::min(img.h - 1, static_cast<u32>(std::max(0.0f, v * img.h)));
+        const float my = std::clamp(v * mh - 0.5f, 0.0f, static_cast<float>(my_max));
+        const s32 my0 = static_cast<s32>(my);
+        const s32 my1 = std::min(my0 + 1, my_max);
+        const float fy = my - static_cast<float>(my0);
+        const u32* const row = img.pixels.data() + size_t{sy} * img.w;
+        const u32* const m0 = mask.pixels.data() + size_t(my0) * mask.w;
+        const u32* const m1 = mask.pixels.data() + size_t(my1) * mask.w;
+        u32* const dst = out.pixels.data() + size_t(j) * out.w;
+        for (s32 i = 0; i < dw; ++i) {
+            const float u = (static_cast<float>(dl + i) + 0.5f - qx) / qw;
+            const u32 sx = std::min(img.w - 1, static_cast<u32>(std::max(0.0f, u * img.w)));
+            const float mx = std::clamp(u * mw - 0.5f, 0.0f, static_cast<float>(mx_max));
+            const s32 mx0 = static_cast<s32>(mx);
+            const s32 mx1 = std::min(mx0 + 1, mx_max);
+            const float fx = mx - static_cast<float>(mx0);
+            const float top = static_cast<float>(m0[mx0] >> 24) * (1.0f - fx) +
+                              static_cast<float>(m0[mx1] >> 24) * fx;
+            const float bottom = static_cast<float>(m1[mx0] >> 24) * (1.0f - fx) +
+                                 static_cast<float>(m1[mx1] >> 24) * fx;
+            const float m = top + (bottom - top) * fy; // 0..255
+            const u32 p = row[sx];
+            const u32 a = static_cast<u32>(
+                std::lround(static_cast<float>(p >> 24) * m * static_cast<float>(alpha) /
+                            (255.0f * 255.0f)));
+            dst[i] = (std::min<u32>(a, 255) << 24) | (p & 0x00FFFFFFu);
+        }
+    }
+    canvas.DrawImageRegion(dl, dt, dw, dh, out, 0, 0, dw, dh, 0xFFFFFFFFu);
+}
+
 void GeometryMapDraw::fill_clipped(float l, float t, float w, float h, u32 argb) {
     const s32 x0 = std::max(x, static_cast<s32>(std::lround(l)));
     const s32 y0 = std::max(y, static_cast<s32>(std::lround(t)));
@@ -833,6 +896,19 @@ void GeometryMapDraw::DrawOverlays() {
             continue;
         }
         const u32 a = static_cast<u32>(std::lround(ov.opacity * 255.0f));
+        // Runtime 24: a bound alpha mask. A named mask that is not loaded yet draws nothing (the
+        // overlay is never shown unmasked by accident); an empty point means no mask.
+        if (!ov.mask_bind.empty()) {
+            const auto m = snapshot.texts.find(ov.mask_bind);
+            if (m != snapshot.texts.end() && !m->second.empty()) {
+                const auto mask = images(m->second);
+                add_content(mask.get());
+                if (turn == 0.0f && mask != nullptr && mask->Valid()) {
+                    blit_masked(*pic, *mask, l, t, r - l, b - t, a);
+                }
+                continue;
+            }
+        }
         if (turn != 0.0f) {
             blit_turned(*pic, l, t, r - l, b - t, 0, 0, static_cast<s32>(pic->w),
                         static_cast<s32>(pic->h), (a << 24) | 0x00FFFFFFu);

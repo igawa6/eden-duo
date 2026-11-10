@@ -18,6 +18,7 @@ struct EdenDsmodFontExtensions;
 struct EdenDsmodModuleSaveExtensions;
 struct EdenDsmodModuleWriteExtensions;
 struct EdenDsmodModuleDataExtensions;
+struct EdenDsmodModuleTextureExtensions;
 
 namespace Core::Mods {
 
@@ -76,6 +77,15 @@ public:
     const EdenDsmodModuleDataExtensions* DataExtensions() const {
         return data_extensions;
     }
+    // Runtime 24: absent (nullptr) for a module that reads no GPU textures. Offered to the
+    // module only when its package's manifest also declares "module": {"texture_readback": true}
+    // (TextureReadbackDeclared).
+    const EdenDsmodModuleTextureExtensions* TextureExtensions() const {
+        return texture_extensions;
+    }
+    bool TextureReadbackDeclared() const {
+        return texture_readback_declared;
+    }
     GameModule(const GameModule&) = delete;
     GameModule& operator=(const GameModule&) = delete;
 
@@ -88,6 +98,8 @@ private:
     const EdenDsmodModuleSaveExtensions* save_extensions{};
     const EdenDsmodModuleWriteExtensions* write_extensions{};
     const EdenDsmodModuleDataExtensions* data_extensions{};
+    const EdenDsmodModuleTextureExtensions* texture_extensions{};
+    bool texture_readback_declared{};
     std::filesystem::path staging_directory;
 };
 

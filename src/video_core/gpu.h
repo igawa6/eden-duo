@@ -6,6 +6,7 @@
 
 #pragma once
 
+#include <functional>
 #include <memory>
 
 #include "common/bit_field.h"
@@ -24,6 +25,11 @@ namespace VideoCore {
 class RendererBase;
 class ShaderNotify;
 } // namespace VideoCore
+
+namespace VideoCore::DSMod {
+struct ReadbackRequest;
+struct ReadbackResult;
+} // namespace VideoCore::DSMod
 
 namespace Tegra {
 class DmaPusher;
@@ -201,6 +207,15 @@ public:
     /// Returns a reference to the underlying renderer.
     /// DSMod second-screen routing state shared by the renderer, dsm:u and the frontend
     [[nodiscard]] VideoCore::DSMod::AuxRouting& DSModAux();
+
+    /// Eden Duo (runtime 24): whether module texture readbacks can run (asynchronous GPU and a
+    /// renderer that supports them), and queueing one on the GPU thread without waiting. False:
+    /// not queued, `callback` is never called.
+    [[nodiscard]] bool DSModTextureReadbackAvailable() const;
+    /// (gpu.h cannot include video_core/dsmod/texture_readback.h: surface.h includes gpu.h.)
+    bool DSModRequestTextureReadback(
+        const VideoCore::DSMod::ReadbackRequest& request,
+        std::function<void(VideoCore::DSMod::ReadbackResult&&)> callback);
 
     [[nodiscard]] VideoCore::RendererBase& Renderer();
 

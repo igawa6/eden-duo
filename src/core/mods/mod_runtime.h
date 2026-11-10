@@ -70,6 +70,7 @@
 #include "core/mods/mod_nav.h"
 #include "core/mods/mod_persist.h"
 #include "core/mods/mod_sources.h"
+#include "core/mods/mod_texture_readback.h"
 #include "core/mods/mod_types.h"
 #include "core/mods/mod_ui.h"
 #include "video_core/dsmod/aux_routing.h"
@@ -196,7 +197,13 @@ namespace Core::Mods {
 ///   23     "sysfont:" asset source: the console's shared system fonts (pl:u) as TrueType bytes,
 ///          real firmware only, empty otherwise (EDEN_DSMOD_CAP_SOURCE_SYSFONT,
 ///          mod_sysfont_source.h). Older runtimes read 0 for the unknown prefix.
-inline constexpr u32 DualScreenRuntimeVersion = 23;
+///   24     Guest texture readback: the opt-in module extension 6 (eden_dsmod_get_texture_
+///          extensions + manifest "module": {"texture_readback": true}) gives an asynchronous,
+///          bounded, read-only CPU copy of one guest GPU texture (R8 / RGBA8, by GPU address or by
+///          size + format; EDEN_DSMOD_CAP_TEXTURE_READBACK, mod_texture_readback.h). Map overlays
+///          take "mask_bind" (a text point naming an image whose alpha cuts the overlay). Older
+///          runtimes never configure the extension and ignore the key.
+inline constexpr u32 DualScreenRuntimeVersion = 24;
 
 /// Regions a redraw-worker job painted into its canvas but did not publish because it went stale
 /// (runtime 13). Before runtime 13 a job already running when the next was dispatched finished
@@ -861,6 +868,10 @@ private:
     EdenDsmodHostExtensions module_extensions{};
     EdenDsmodHostSaveApi module_save_api{};
     EdenDsmodHostWriteApi module_write_api{};
+    /// Runtime 24: the module's texture readback (null unless offered, see
+    /// InitializeModuleTextureExtensions).
+    EdenDsmodHostTextureApi module_texture_api{};
+    std::unique_ptr<TextureReadbackBroker> texture_readback;
     std::mutex module_save_mutex;
     FileSys::VirtualDir module_save_dir; // lazily resolved, guarded by module_save_mutex
     std::jthread module_asset_worker;
@@ -935,6 +946,7 @@ private:
     void InitializeModuleExtensions();                                   // mod_module_services.cpp
     void InitializeModuleSaveExtensions();                               // mod_module_services.cpp
     void InitializeModuleWriteExtensions();                              // mod_module_services.cpp
+    void InitializeModuleTextureExtensions();                            // mod_module_services.cpp
     void StartModuleAssetWorker();                                       // mod_module_services.cpp
     void DrainModuleImages();                                            // mod_module_services.cpp
     void StartModuleAreas();                                             // mod_module_services.cpp

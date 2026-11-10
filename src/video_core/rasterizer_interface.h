@@ -14,6 +14,7 @@
 #include "common/polyfill_thread.h"
 #include "common/settings.h"
 #include "video_core/cache_types.h"
+#include "video_core/dsmod/texture_readback.h"
 #include "video_core/engines/fermi_2d.h"
 #include "video_core/gpu.h"
 #include "video_core/query_cache/types.h"
@@ -176,6 +177,19 @@ public:
 
     /// Returns true when the rasterizer has Draw Transform Feedback capabilities
     virtual bool HasDrawTransformFeedback() {
+        return false;
+    }
+
+    /// Eden Duo (runtime 24): whether DSModReadbackTexture can read guest textures back.
+    [[nodiscard]] virtual bool DSModSupportsTextureReadback() const {
+        return false;
+    }
+
+    /// Eden Duo: on the GPU thread, start a bounded CPU copy of one guest texture
+    /// (video_core/dsmod/texture_readback.h). True = taken: `callback` runs exactly once, now or
+    /// when the copy lands. False = this renderer cannot do it; `callback` is left untouched.
+    virtual bool DSModReadbackTexture(const DSMod::ReadbackRequest& request,
+                                      DSMod::ReadbackCallback& callback) {
         return false;
     }
 };

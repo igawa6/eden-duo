@@ -30,6 +30,7 @@
 #include "video_core/engines/kepler_memory.h"
 #include "video_core/engines/maxwell_3d.h"
 #include "video_core/engines/maxwell_dma.h"
+#include "video_core/dsmod/texture_readback.h"
 #include "video_core/gpu.h"
 #include "video_core/gpu_thread.h"
 #include "video_core/host1x/host1x.h"
@@ -295,6 +296,27 @@ struct GPU::Impl {
         WaitForSyncOperation(fence);
     }
 
+    bool DSModTextureReadbackAvailable() const {
+        return is_async && renderer && !shutting_down.load(std::memory_order_relaxed) &&
+               renderer->ReadRasterizer()->DSModSupportsTextureReadback();
+    }
+
+    bool DSModRequestTextureReadback(const VideoCore::DSMod::ReadbackRequest& request,
+                                     VideoCore::DSMod::ReadbackCallback&& callback) {
+        if (!DSModTextureReadbackAvailable()) {
+            return false;
+        }
+        (void)RequestSyncOperation([this, request, callback = std::move(callback)]() mutable {
+            if (!renderer->ReadRasterizer()->DSModReadbackTexture(request, callback)) {
+                VideoCore::DSMod::ReadbackResult result;
+                result.status = VideoCore::DSMod::ReadbackStatus::Unsupported;
+                callback(std::move(result));
+            }
+        });
+        gpu_thread.TickGPU(is_async);
+        return true;
+    }
+
     std::vector<u8> GetAppletCaptureBuffer() {
         std::vector<u8> out;
 
@@ -452,6 +474,16 @@ VideoCore::RendererBase& GPU::Renderer() {
 
 VideoCore::DSMod::AuxRouting& GPU::DSModAux() {
     return impl->dsmod_aux;
+}
+
+bool GPU::DSModTextureReadbackAvailable() const {
+    return impl->DSModTextureReadbackAvailable();
+}
+
+bool GPU::DSModRequestTextureReadback(
+    const VideoCore::DSMod::ReadbackRequest& request,
+    std::function<void(VideoCore::DSMod::ReadbackResult&&)> callback) {
+    return impl->DSModRequestTextureReadback(request, std::move(callback));
 }
 
 const VideoCore::RendererBase& GPU::Renderer() const {
