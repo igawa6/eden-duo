@@ -132,7 +132,8 @@ void UploadRegionsAsync(Scheduler& scheduler, MemoryAllocator& allocator, vk::Bu
             .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
             .pNext = nullptr,
             .srcAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_TRANSFER_READ_BIT |
-                             (preserve ? VK_ACCESS_TRANSFER_WRITE_BIT : VkAccessFlags{0}),
+                             (preserve ? static_cast<VkAccessFlags>(VK_ACCESS_TRANSFER_WRITE_BIT)
+                                       : VkAccessFlags{0}),
             .dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
             .oldLayout = preserve ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_UNDEFINED,
             .newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
