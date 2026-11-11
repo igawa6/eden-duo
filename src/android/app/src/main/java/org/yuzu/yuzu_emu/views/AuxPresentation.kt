@@ -9,6 +9,7 @@ import android.hardware.display.DisplayManager
 import android.os.Bundle
 import android.view.Display
 import android.view.WindowManager
+import org.yuzu.yuzu_emu.duo.SecondScreenDetection
 import org.yuzu.yuzu_emu.utils.Log
 
 /**

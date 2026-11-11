@@ -1,0 +1,231 @@
+// SPDX-FileCopyrightText: Copyright 2026 igawa6
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+package org.yuzu.yuzu_emu.duo
+
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+/**
+ * Device table (Stage 2 spec): phone 2400x1080 both orientations, Fold inner 2176x1812, Fold
+ * cover 904x2316, Thor top 1920x1080, tablet 2560x1600, split-screen half 1200x1080. Densities
+ * are chosen per device family, documented at each test, to make the numbers exactly
+ * hand-verifiable; they do not need to match one specific real unit's reported dpi.
+ *
+ * Finding worth flagging to the steward: a 16:9 game beside the project's 8:7 companion, side by
+ * side at full height, needs 3160 px of width (1920 + 1240) for every landscape window in this
+ * table except the tablet. On a phone (2400 px wide) or the Thor's own top screen (1920 px
+ * wide), shrinking both to fit collapses the companion straight through the 320 dp floor -- see
+ * [phoneLandscapeAspectLockedThenCollapses] and [thorTopAspectLockedThenCollapses]. Portrait
+ * stacking (full window width instead) does not hit this on the same phone -- see
+ * [phonePortraitStaysVisibleBothControllerStates].
+ */
+class DualScreenGeometryTest {
+    private val sideBySide = DualScreenUserLayout(DualScreenLayoutChoice.AUTOMATIC)
+    private val game169 = DualScreenAspect(16, 9)
+
+    @Test
+    fun aspectForRendererSettingMapsEveryKnownValueAndFallsBackForStretch() {
+        assertEquals(DualScreenAspect(16, 9), DualScreenGeometry.aspectForRendererSetting(0))
+        assertEquals(DualScreenAspect(4, 3), DualScreenGeometry.aspectForRendererSetting(1))
+        assertEquals(DualScreenAspect(21, 9), DualScreenGeometry.aspectForRendererSetting(2))
+        assertEquals(DualScreenAspect(16, 10), DualScreenGeometry.aspectForRendererSetting(3))
+        assertNull(DualScreenGeometry.aspectForRendererSetting(4)) // Stretch
+        assertNull(DualScreenGeometry.aspectForRendererSetting(99)) // unrecognised: as given
+    }
+
+    // ---- phone 2400x1080, landscape: side by side, aspect-locked, then collapses ----
+
+    @Test
+    fun phoneLandscapeAspectLockedThenCollapses() {
+        // density 420: a believable ~6.3" panel at 2400x1080 (matches named phones in this
+        // class, e.g. Pixel 7). Both panes are sized at their own locked aspect with no bars
+        // (1920+1240 game+companion naturally needs 3160 px at full 1080 px height; scaled down
+        // by 2400/3160 = 60/79 to fit), but the companion's own short edge then lands at
+        // round(1080*60/79) = 820 px = 820/2.625 = 312.4 dp, under the 320 dp floor, so the
+        // automatic result collapses to game-only (still reachable through the toggle).
+        val window = DualScreenWindow(widthPx = 2400, heightPx = 1080, densityDpi = 420)
+        val layout = DualScreenGeometry.compute(window, null, false, sideBySide, game169)
+        assertTrue(layout.companionRect.isEmpty)
+        assertEquals(DualScreenRect(0, 130, 2400, 820), layout.gameRect)
+        assertEquals(DualScreenRect.EMPTY, layout.controlsRect)
+    }
+
+    // ---- Thor top 1920x1080, landscape: same shape problem, worse (narrower window) ----
+
+    @Test
+    fun thorTopAspectLockedThenCollapses() {
+        // density 400 (approximation of the Thor's own ~6" 1920x1080 top panel). Scale =
+        // 1920/3160 = 48/79; companion short edge = round(1080*48/79) = 656 px = 656/2.5 =
+        // 262.4 dp -- also under the floor.
+        val window = DualScreenWindow(widthPx = 1920, heightPx = 1080, densityDpi = 400)
+        val layout = DualScreenGeometry.compute(window, null, false, sideBySide, game169)
+        assertTrue(layout.companionRect.isEmpty)
+        assertEquals(DualScreenRect(0, 212, 1920, 656), layout.gameRect)
+    }
+
+    // ---- split-screen half 1200x1080, landscape: narrower still ----
+
+    @Test
+    fun splitScreenHalfAspectLockedThenCollapses() {
+        val window = DualScreenWindow(widthPx = 1200, heightPx = 1080, densityDpi = 420)
+        val layout = DualScreenGeometry.compute(window, null, false, sideBySide, game169)
+        assertTrue(layout.companionRect.isEmpty)
+        assertEquals(DualScreenRect(0, 335, 1200, 410), layout.gameRect)
+    }
+
+    // ---- tablet 2560x1600, landscape: wide enough that both stay visible ----
+
+    @Test
+    fun tabletLandscapeBothPanesStayAspectLockedAndVisible() {
+        // density 320 (xhdpi): a believable 10-11" tablet. Scale = 2560/4681.48... = 216/395;
+        // companion ends up 1005x875 px = 437.5 dp short edge, comfortably above the floor.
+        val window = DualScreenWindow(widthPx = 2560, heightPx = 1600, densityDpi = 320)
+        val layout = DualScreenGeometry.compute(window, null, false, sideBySide, game169)
+        assertEquals(DualScreenRect(0, 362, 1555, 875), layout.gameRect)
+        assertEquals(DualScreenRect(1555, 362, 1005, 875), layout.companionRect)
+        assertEquals(DualScreenRect.EMPTY, layout.controlsRect)
+        // Both panes keep their own locked aspect exactly (no internal bars).
+        assertAspectLocked(layout.gameRect, game169)
+        assertAspectLocked(layout.companionRect, DualScreenAspect(1240, 1080))
+    }
+
+    // ---- phone 1080x2400, portrait: stacked, three bands, companion stays visible ----
+
+    @Test
+    fun phonePortraitStaysVisibleBothControllerStates() {
+        // Same phone as the landscape case above, rotated; same density. Full window *width*
+        // this time (1080 px) budgets each pane's height: game 1080*9/16 = 608 px, companion
+        // 1080*1080/1240 = 941 px (both comfortably fit the 2400 px height, no shrink needed) --
+        // companion short edge 941/2.625 = 358.5 dp, over the floor.
+        val window = DualScreenWindow(widthPx = 1080, heightPx = 2400, densityDpi = 420)
+        val stacked = DualScreenUserLayout(DualScreenLayoutChoice.AUTOMATIC)
+
+        val noController = DualScreenGeometry.compute(window, null, false, stacked, game169)
+        assertEquals(DualScreenRect(0, 0, 1080, 608), noController.gameRect)
+        assertEquals(DualScreenRect(0, 608, 1080, 941), noController.companionRect)
+        assertEquals(DualScreenRect(0, 1549, 1080, 851), noController.controlsRect)
+
+        // A controller removes the dedicated controls band but does not resize either pane --
+        // the leftover height below the companion is simply idle background instead.
+        val withController = DualScreenGeometry.compute(window, null, true, stacked, game169)
+        assertEquals(noController.gameRect, withController.gameRect)
+        assertEquals(noController.companionRect, withController.companionRect)
+        assertEquals(DualScreenRect.EMPTY, withController.controlsRect)
+    }
+
+    // ---- Fold cover 904x2316, portrait: collapses regardless of controller ----
+
+    @Test
+    fun foldCoverCollapsesRegardlessOfController() {
+        // density 420 (phone-family cover screen). game 904*9/16 = 509 px, companion
+        // 904*1080/1240 = 787 px -- short edge 787/2.625 = 299.8 dp, just under the floor,
+        // whether or not a controller is connected (pane sizing does not depend on it).
+        val window = DualScreenWindow(widthPx = 904, heightPx = 2316, densityDpi = 420)
+        val stacked = DualScreenUserLayout(DualScreenLayoutChoice.AUTOMATIC)
+
+        val noController = DualScreenGeometry.compute(window, null, false, stacked, game169)
+        assertTrue(noController.companionRect.isEmpty)
+        assertEquals(DualScreenRect(0, 0, 904, 1296), noController.gameRect)
+        assertEquals(DualScreenRect(0, 1296, 904, 1020), noController.controlsRect)
+
+        val withController = DualScreenGeometry.compute(window, null, true, stacked, game169)
+        assertTrue(withController.companionRect.isEmpty)
+        assertEquals(DualScreenRect(0, 0, 904, 1296), withController.gameRect)
+        assertEquals(DualScreenRect.EMPTY, withController.controlsRect)
+    }
+
+    // ---- Fold inner 2176x1812, book posture: split at the hinge, not aspect-locked ----
+
+    @Test
+    fun verticalHingeSplitsAtTheHingeIgnoringAspect() {
+        val window = DualScreenWindow(widthPx = 2176, heightPx = 1812, densityDpi = 420)
+        val hinge = DualScreenHinge(
+            isSeparating = true,
+            orientation = DualScreenHingeOrientation.VERTICAL,
+            boundsLeft = 1080,
+            boundsTop = 0,
+            boundsRight = 1096,
+            boundsBottom = 1812
+        )
+        val layout = DualScreenGeometry.compute(
+            window, hinge, controllerConnected = false,
+            userLayout = DualScreenUserLayout(DualScreenLayoutChoice.AUTOMATIC), gameAspect = game169
+        )
+        assertEquals(DualScreenRect(0, 0, 1080, 1812), layout.gameRect)
+        assertEquals(DualScreenRect(1096, 0, 1080, 1812), layout.companionRect)
+        assertEquals(DualScreenRect.EMPTY, layout.controlsRect)
+    }
+
+    // ---- tabletop (horizontal hinge): companion only with a controller ----
+
+    @Test
+    fun horizontalHingeGivesTheCompanionTheLowerHalfOnlyWithAController() {
+        val window = DualScreenWindow(widthPx = 2176, heightPx = 1812, densityDpi = 420)
+        val hinge = DualScreenHinge(
+            isSeparating = true,
+            orientation = DualScreenHingeOrientation.HORIZONTAL,
+            boundsLeft = 0,
+            boundsTop = 896,
+            boundsRight = 2176,
+            boundsBottom = 912
+        )
+        val userLayout = DualScreenUserLayout(DualScreenLayoutChoice.AUTOMATIC)
+
+        val withController =
+            DualScreenGeometry.compute(window, hinge, controllerConnected = true, userLayout, game169)
+        assertEquals(DualScreenRect(0, 0, 2176, 896), withController.gameRect)
+        assertEquals(DualScreenRect(0, 912, 2176, 900), withController.companionRect)
+        assertEquals(DualScreenRect.EMPTY, withController.controlsRect)
+
+        // No controller: today's existing split -- game above the hinge, controls below; the
+        // companion is not carved out (still reachable through the toggle).
+        val noController =
+            DualScreenGeometry.compute(window, hinge, controllerConnected = false, userLayout, game169)
+        assertEquals(DualScreenRect(0, 0, 2176, 896), noController.gameRect)
+        assertTrue(noController.companionRect.isEmpty)
+        assertEquals(DualScreenRect(0, 912, 2176, 900), noController.controlsRect)
+    }
+
+    // ---- an explicit (non-Automatic) layout budgets the split axis and Fits within it ----
+
+    @Test
+    fun explicitSideBySideBudgetsByDividerAndFitsEachPaneWithinItsBudget() {
+        // Height 1080 exactly matches the companion canvas's own height, so a 1240-wide budget
+        // fits it with zero bars; width 2000, divider 38% -> game budget 760, companion budget
+        // 1240 (clean numbers by construction, to make the Fit math exactly verifiable).
+        val window = DualScreenWindow(widthPx = 2000, heightPx = 1080, densityDpi = 420)
+        val manual = DualScreenUserLayout(DualScreenLayoutChoice.SIDE_BY_SIDE, dividerPercent = 38)
+        // gameAspect is irrelevant here: Stretch (null) means the game pane is the budget as given.
+        val layout = DualScreenGeometry.compute(window, null, false, manual, gameAspect = null)
+        assertEquals(DualScreenRect(0, 0, 760, 1080), layout.gameRect)
+        assertEquals(DualScreenRect(760, 0, 1240, 1080), layout.companionRect)
+    }
+
+    @Test
+    fun explicitSideBySideLetterboxesTheCompanionWhenItsBudgetDoesNotMatchTheCanvasAspect() {
+        // Companion budget 1000 px wide x 1080 tall does not match 1240x1080 -- Fit centres a
+        // 871-tall companion inside it (1000*1080/1240 = 871.46, truncated as FitCompanion does).
+        val window = DualScreenWindow(widthPx = 1760, heightPx = 1080, densityDpi = 420)
+        val manual = DualScreenUserLayout(DualScreenLayoutChoice.SIDE_BY_SIDE, dividerPercent = 43)
+        val layout = DualScreenGeometry.compute(window, null, false, manual, gameAspect = null)
+        // gameBudgetW = round(1760*0.43) = 757; companion budget = 1760-757 = 1003 (not 1000 --
+        // kept the arithmetic exact rather than hand-picking a divider for a round number).
+        assertEquals(DualScreenRect(0, 0, 757, 1080), layout.gameRect)
+        assertEquals(757, layout.companionRect.x)
+        assertTrue(layout.companionRect.h < 1080) // letterboxed: bars above/below within the budget
+    }
+
+    private fun assertAspectLocked(rect: DualScreenRect, aspect: DualScreenAspect) {
+        // Integer rounding on both sides can disagree by a touch; allow it loosely rather than
+        // asserting exact cross-multiplication equality.
+        val actual = rect.w.toDouble() / rect.h
+        val expected = aspect.w.toDouble() / aspect.h
+        assertTrue(
+            "rect $rect is not locked to aspect $aspect (actual=$actual expected=$expected)",
+            kotlin.math.abs(actual - expected) < 0.01
+        )
+    }
+}
