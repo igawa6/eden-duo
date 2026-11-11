@@ -17,6 +17,7 @@ target_sources(tests PRIVATE
     core/mods/profile_reload.cpp
     core/mods/map_room_category.cpp
     core/mods/image_fallback.cpp
+    core/mods/mod_launch_gate.cpp
     core/mods/mod_load_plan.cpp
     core/mods/pan_bounds.cpp
     core/mods/quarter_turn_markers.cpp
