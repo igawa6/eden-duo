@@ -57,6 +57,7 @@
 #include "core/loader/loader.h"
 #include "core/memory.h"
 #include "core/memory/cheat_engine.h"
+#include "core/mods/mod_launch_gate.h"
 #include "core/mods/mod_runtime.h"
 #include "common/atomic_ops.h"
 #include "core/perf_stats.h"
@@ -383,7 +384,11 @@ struct System::Impl {
         // Initialize cheat engine
         // DSMod: discover now -- at loader time the application process (and thus the title id)
         // is not registered yet.
-        if (pending_mod_base != 0) {
+        // Dual screen mode Off for this launch: skip companion runtime discovery/initialisation
+        // entirely (read once here; mid-game toggles only take effect on the next launch).
+        // pending_mod_base is left set and is overwritten by ResetPendingDualScreenMod() at the
+        // start of the next Load(), same as any other failed-to-consume launch.
+        if (pending_mod_base != 0 && !Mods::CompanionsDisabledForLaunch()) {
             const u64 mod_title_id = pending_mod_title_id != 0 ? pending_mod_title_id
                                                               : system.GetApplicationProcessProgramID();
             auto manifest = Mods::ModRuntime::Discover(system, mod_title_id,
