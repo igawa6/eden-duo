@@ -293,6 +293,44 @@ inline s32 PanelToCanvas(u32 v, u32 origin, u32 extent, u32 canvas) {
     return static_cast<s32>(static_cast<u64>(v - origin) * canvas / std::max(1u, extent));
 }
 
+// ---------------- Stage 1: Simulated (single-surface) dual screen ----------------
+// The companion is drawn as a second rectangle of the main window's own presented frame instead
+// of a real second swapchain (Physical mode, SetAuxWindow). Both rects are stored as fractions of
+// the window (0..1), so a resize needs no republish; FracToPixelRect converts them at the
+// window's current pixel size. Physical and inline are mutually exclusive: an attached aux window
+// always wins (see DSModAuxPresenter::Route), so this struct only ever describes what the window
+// would show *if* no real aux window is attached.
+
+/// A rectangle as a 0..1 fraction of its container, each axis independent of the others.
+struct FracRect {
+    float x{0.0f};
+    float y{0.0f};
+    float w{1.0f};
+    float h{1.0f};
+};
+
+/// `frac` converted to `window_w` x `window_h` pixels, clamped so it never spills past the
+/// window (a bad fraction shrinks instead of going out of bounds). Pure, so the rect math is
+/// unit-testable without a live renderer (tests/video_core/aux_routing.cpp).
+inline CompanionRect FracToPixelRect(u32 window_w, u32 window_h, FracRect frac) {
+    const auto clamp01 = [](float v) { return std::isfinite(v) ? std::clamp(v, 0.0f, 1.0f) : 0.0f; };
+    const float fx = clamp01(frac.x);
+    const float fy = clamp01(frac.y);
+    const float fw = clamp01(frac.w);
+    const float fh = clamp01(frac.h);
+    const u32 x = static_cast<u32>(std::lround(fx * window_w));
+    const u32 y = static_cast<u32>(std::lround(fy * window_h));
+    const u32 w = std::min(window_w - x, static_cast<u32>(std::lround(fw * window_w)));
+    const u32 h = std::min(window_h - y, static_cast<u32>(std::lround(fh * window_h)));
+    return CompanionRect{x, y, w, h, x == 0 && y == 0 && w == window_w && h == window_h};
+}
+
+/// The game and companion rects a window of `window_w` x `window_h` resolves to, at this instant.
+struct InlineRects {
+    CompanionRect game{};
+    CompanionRect companion{};
+};
+
 /// Marks in `mask` (already Reset to w x h and Cleared) every tile where `a` and `b` (both w x h,
 /// tightly packed) differ. Reads both images once; a row equal as a whole costs one memcmp, and
 /// a tile already marked is not compared again.
@@ -431,6 +469,70 @@ public:
     std::atomic<float> mirror_y{0.0f};
     std::atomic<float> mirror_w{1.0f};
     std::atomic<float> mirror_h{1.0f};
+
+    // --- Stage 1: Simulated (single-surface) dual screen; see FracRect/FracToPixelRect above ---
+    // Set once by the frontend (desktop --aux-inline, Android's hidden inline-dual-screen switch)
+    // before/while the renderer runs; read every frame by DSModAuxPresenter::Route and
+    // RendererVulkan::Composite. `inline_enabled` is the user's wish; whether it actually applies
+    // this frame also depends on no real aux window being attached (decided by the presenter,
+    // which alone knows that).
+    std::atomic<bool> inline_enabled{false};
+    std::atomic<float> inline_game_x{0.0f}, inline_game_y{0.0f}, inline_game_w{1.0f},
+        inline_game_h{1.0f};
+    std::atomic<float> inline_companion_x{0.0f}, inline_companion_y{0.0f}, inline_companion_w{0.0f},
+        inline_companion_h{0.0f};
+
+    /// `game` and `companion` are fractions (0..1) of the main window each will occupy. Not
+    /// required to be disjoint or to cover the window -- that is the caller's layout policy, not
+    /// this storage's job. Order: write the rects first (relaxed), flip `inline_enabled` last
+    /// (release), so a reader that only checks `inline_enabled` first (acquire) never observes a
+    /// half-written rect pair; fine for a setting applied once per session, not every frame.
+    void SetInlineLayout(bool enabled, FracRect game, FracRect companion) {
+        inline_game_x.store(game.x, std::memory_order_relaxed);
+        inline_game_y.store(game.y, std::memory_order_relaxed);
+        inline_game_w.store(game.w, std::memory_order_relaxed);
+        inline_game_h.store(game.h, std::memory_order_relaxed);
+        inline_companion_x.store(companion.x, std::memory_order_relaxed);
+        inline_companion_y.store(companion.y, std::memory_order_relaxed);
+        inline_companion_w.store(companion.w, std::memory_order_relaxed);
+        inline_companion_h.store(companion.h, std::memory_order_relaxed);
+        inline_enabled.store(enabled, std::memory_order_release);
+    }
+
+    /// Convenience for a fixed "one side" split: the companion takes `companion_frac` of the
+    /// window on its right edge (landscape) or bottom edge (portrait); the game takes the rest.
+    /// Android's hidden inline-dual-screen switch uses this; the desktop --aux-inline flag takes
+    /// an explicit companion rect instead (SetInlineLayout directly).
+    void SetInlineLayoutSideSplit(bool enabled, bool landscape, float companion_frac = 0.4f) {
+        companion_frac = std::isfinite(companion_frac) ? std::clamp(companion_frac, 0.0f, 1.0f)
+                                                       : 0.4f;
+        const float game_frac = 1.0f - companion_frac;
+        if (landscape) {
+            SetInlineLayout(enabled, FracRect{0.0f, 0.0f, game_frac, 1.0f},
+                            FracRect{game_frac, 0.0f, companion_frac, 1.0f});
+        } else {
+            SetInlineLayout(enabled, FracRect{0.0f, 0.0f, 1.0f, game_frac},
+                            FracRect{0.0f, game_frac, 1.0f, companion_frac});
+        }
+    }
+
+    /// The game and companion rects at the window's current pixel size. Call only once
+    /// `inline_enabled` (loaded separately) is known true: this does not re-check it, so a caller
+    /// that wants the "is inline on" answer too should load `inline_enabled` itself first.
+    [[nodiscard]] InlineRects GetInlineRects(u32 window_w, u32 window_h) const {
+        return InlineRects{
+            FracToPixelRect(window_w, window_h,
+                            FracRect{inline_game_x.load(std::memory_order_relaxed),
+                                     inline_game_y.load(std::memory_order_relaxed),
+                                     inline_game_w.load(std::memory_order_relaxed),
+                                     inline_game_h.load(std::memory_order_relaxed)}),
+            FracToPixelRect(window_w, window_h,
+                            FracRect{inline_companion_x.load(std::memory_order_relaxed),
+                                     inline_companion_y.load(std::memory_order_relaxed),
+                                     inline_companion_w.load(std::memory_order_relaxed),
+                                     inline_companion_h.load(std::memory_order_relaxed)}),
+        };
+    }
 
     AuxDisplayInfo GetDisplayInfo() const {
         return AuxDisplayInfo{

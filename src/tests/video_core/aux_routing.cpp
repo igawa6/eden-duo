@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <catch2/catch_test_macros.hpp>
 #include "video_core/dsmod/aux_routing.h"
 
@@ -596,4 +597,68 @@ TEST_CASE("Companion touch rect: mirror pages map as Stretch; scripted touches f
     REQUIRE(aux.NormalisedToPanel(0.0f, 0.0f) == std::pair<u32, u32>{340, 0});
     REQUIRE(aux.NormalisedToPanel(0.5f, 0.5f) == std::pair<u32, u32>{960, 540});
     REQUIRE(aux.NormalisedToPanel(1.0f, 1.0f) == std::pair<u32, u32>{1580, 1080});
+}
+
+// ---------------------------------------------------------------------------------------------
+// Stage 1: Simulated (single-surface) dual screen -- inline game/companion rect math.
+TEST_CASE("Inline FracToPixelRect converts and clamps a fractional rect", "[dsmod]") {
+    using VideoCore::DSMod::FracRect;
+    using VideoCore::DSMod::FracToPixelRect;
+    // Exact split: left 60%, right 40% of a 1000x500 window.
+    const auto left = FracToPixelRect(1000, 500, FracRect{0.0f, 0.0f, 0.6f, 1.0f});
+    REQUIRE((left.x == 0 && left.y == 0 && left.w == 600 && left.h == 500));
+    REQUIRE_FALSE(left.full);
+    const auto right = FracToPixelRect(1000, 500, FracRect{0.6f, 0.0f, 0.4f, 1.0f});
+    REQUIRE((right.x == 600 && right.y == 0 && right.w == 400 && right.h == 500));
+    // The whole window is reported `full`.
+    const auto whole = FracToPixelRect(1000, 500, FracRect{0.0f, 0.0f, 1.0f, 1.0f});
+    REQUIRE(whole.full);
+    REQUIRE((whole.x == 0 && whole.y == 0 && whole.w == 1000 && whole.h == 500));
+    // Out-of-range fractions clamp instead of spilling past the window.
+    const auto past_edge = FracToPixelRect(1000, 500, FracRect{0.9f, 0.0f, 0.5f, 1.0f});
+    REQUIRE((past_edge.x == 900 && past_edge.w == 100));
+    const auto negative = FracToPixelRect(1000, 500, FracRect{-1.0f, -1.0f, 2.0f, 2.0f});
+    REQUIRE((negative.x == 0 && negative.y == 0 && negative.w == 1000 && negative.h == 500));
+    const auto nan_in = FracToPixelRect(1000, 500, FracRect{std::nanf(""), 0.0f, 0.5f, 1.0f});
+    REQUIRE(nan_in.x == 0);
+}
+
+TEST_CASE("Inline layout: landscape side split puts the companion on the right",
+          "[dsmod]") {
+    VideoCore::DSMod::AuxRouting aux;
+    aux.SetInlineLayoutSideSplit(true, /*landscape=*/true, 0.4f);
+    const auto rects = aux.GetInlineRects(1000, 500);
+    REQUIRE((rects.game.x == 0 && rects.game.y == 0 && rects.game.w == 600 && rects.game.h == 500));
+    REQUIRE((rects.companion.x == 600 && rects.companion.y == 0 && rects.companion.w == 400 &&
+             rects.companion.h == 500));
+    // The two rects are disjoint and together cover the window exactly.
+    REQUIRE(rects.game.x + rects.game.w == rects.companion.x);
+    REQUIRE(rects.game.w + rects.companion.w == 1000);
+}
+
+TEST_CASE("Inline layout: portrait side split puts the companion below", "[dsmod]") {
+    VideoCore::DSMod::AuxRouting aux;
+    aux.SetInlineLayoutSideSplit(true, /*landscape=*/false, 0.4f);
+    const auto rects = aux.GetInlineRects(500, 1000);
+    REQUIRE((rects.game.x == 0 && rects.game.y == 0 && rects.game.w == 500 && rects.game.h == 600));
+    REQUIRE((rects.companion.x == 0 && rects.companion.y == 600 && rects.companion.w == 500 &&
+             rects.companion.h == 400));
+}
+
+TEST_CASE("Inline layout: desktop --aux-inline rect round-trips through SetInlineLayout",
+          "[dsmod]") {
+    using VideoCore::DSMod::FracRect;
+    VideoCore::DSMod::AuxRouting aux;
+    REQUIRE_FALSE(aux.inline_enabled.load());
+    // A companion rect in the top-right quarter: the desktop CLI's general case, not a full-edge
+    // split.
+    aux.SetInlineLayout(true, FracRect{0.0f, 0.0f, 0.75f, 1.0f},
+                        FracRect{0.75f, 0.0f, 0.25f, 0.5f});
+    REQUIRE(aux.inline_enabled.load());
+    const auto rects = aux.GetInlineRects(1240, 1080);
+    REQUIRE((rects.game.x == 0 && rects.game.y == 0 && rects.game.w == 930));
+    REQUIRE((rects.companion.x == 930 && rects.companion.y == 0 && rects.companion.w == 310 &&
+             rects.companion.h == 540));
+    aux.SetInlineLayout(false, FracRect{}, FracRect{});
+    REQUIRE_FALSE(aux.inline_enabled.load());
 }
