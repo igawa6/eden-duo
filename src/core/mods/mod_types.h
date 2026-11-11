@@ -44,6 +44,13 @@
 
 namespace Core::Mods {
 
+/// Runtime 25 "canvas_alt.when": when the alternate canvas is eligible (SelectCanvasAspect,
+/// mod_redraw.cpp). Portrait: the pane is taller than wide. Narrow: the pane's aspect is already
+/// narrower than the DEFAULT canvas's own -- a superset of Portrait that also catches a
+/// moderately narrow but still landscape pane (a Simulated side-by-side companion column that
+/// stays wider than tall).
+enum class CanvasAltWhen : u8 { Portrait, Narrow };
+
 struct Manifest {
     u32 format{1};
     u64 title_id{};
@@ -61,6 +68,16 @@ struct Manifest {
     u32 poll_hz{60};
     u32 canvas_w{0}; ///< 0 = use the aux panel size
     u32 canvas_h{0};
+    /// Runtime 25 "canvas_alt": an optional second canvas size the runtime switches to when it
+    /// fits the pane better than `canvas_w`/`canvas_h` (SelectCanvasAspect + ModRuntime::
+    /// SelectCanvas, mod_redraw.cpp). 0/0 (the default) = no alternate declared: canvas
+    /// selection is exactly as before (Fit letterbox only), byte-identical.
+    u32 canvas_alt_w{0};
+    u32 canvas_alt_h{0};
+    CanvasAltWhen canvas_alt_when{CanvasAltWhen::Portrait};
+    [[nodiscard]] bool HasCanvasAlt() const {
+        return canvas_alt_w != 0 && canvas_alt_h != 0;
+    }
     u32 background{0xFF0E151E};
     std::vector<Page> pages;
     std::vector<EnforceRule> enforce;
@@ -153,8 +170,8 @@ struct Manifest {
     /// Runtime 16/17: the manifest or its data file names a "@clock." / "@game." key (or has a
     /// derived "countdown"): only then are those keys published each tick (ClockPublisher).
     bool uses_clock_keys{false};
-    /// Runtime 21: the manifest or its data file names a "@device." / "@perf." key: only then are
-    /// those keys published each tick (HostValues, mod_host_values.h).
+    /// Runtime 21 / 25: the manifest or its data file names a "@device." / "@perf." / "@screen."
+    /// key: only then are those keys published each tick (HostValues, mod_host_values.h).
     bool uses_host_keys{false};
     /// "module_tick_hidden": tick the native module while the second screen is hidden (true) or
     /// not (false). Unset: the module's own flag decides, else whether it has actions.

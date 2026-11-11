@@ -696,6 +696,65 @@ std::array<s32, 4> ModRuntime::RepeatElementsRect(const StateSnapshot& s, u32 cw
                                   : std::array<s32, 4>{};
 }
 
+// Runtime 25 canvas_alt: which canvas fits a pane, and the debounced, state-preserving switch
+// between the manifest's default and its optional alternate. Pure aspect math (SelectCanvasAspect)
+// mirrors FitCompanion's own frame-vs-canvas comparison (video_core/dsmod/aux_routing.h); the
+// debounce and the widget rect/rect_alt swap live on ModRuntime, called from PublishUi just below
+// where target_w/target_h were computed directly before runtime 25.
+
+CanvasChoice SelectCanvasAspect(u32 panel_w, u32 panel_h, u32 canvas_w, u32 canvas_h, u32 alt_w,
+                                u32 alt_h, CanvasAltWhen when) noexcept {
+    const u32 default_w = canvas_w != 0 ? canvas_w : panel_w;
+    const u32 default_h = canvas_h != 0 ? canvas_h : panel_h;
+    if (alt_w == 0 || alt_h == 0 || panel_w == 0 || panel_h == 0) {
+        return {default_w, default_h, false};
+    }
+    const bool eligible =
+        when == CanvasAltWhen::Portrait
+            ? panel_h > panel_w
+            // Pane aspect (h/w) wider-than-tall comparison, cross-multiplied like FitCompanion's
+            // frame_cross/canvas_cross: true when the pane is narrower (relatively taller) than
+            // the default canvas's own shape.
+            : static_cast<u64>(panel_h) * default_w > static_cast<u64>(panel_w) * default_h;
+    return eligible ? CanvasChoice{alt_w, alt_h, true} : CanvasChoice{default_w, default_h, false};
+}
+
+CanvasChoice ModRuntime::SelectCanvas(u32 panel_w, u32 panel_h) {
+    if (!manifest.HasCanvasAlt()) {
+        // No canvas_alt declared: always the default canvas, byte-identical to runtime <= 24.
+        return {manifest.canvas_w != 0 ? manifest.canvas_w : panel_w,
+                manifest.canvas_h != 0 ? manifest.canvas_h : panel_h, false};
+    }
+    const CanvasChoice raw =
+        SelectCanvasAspect(panel_w, panel_h, manifest.canvas_w, manifest.canvas_h,
+                           manifest.canvas_alt_w, manifest.canvas_alt_h, manifest.canvas_alt_when);
+    const auto now = std::chrono::steady_clock::now();
+    if (raw.alt != canvas_alt_pending) {
+        canvas_alt_pending = raw.alt;
+        canvas_alt_pending_since = now;
+    }
+    if (canvas_alt_pending != canvas_alt_active &&
+        now - canvas_alt_pending_since >= CanvasAltDebounce) {
+        canvas_alt_active = canvas_alt_pending;
+        ApplyCanvasVariant(canvas_alt_active);
+    }
+    return canvas_alt_active
+               ? CanvasChoice{manifest.canvas_alt_w, manifest.canvas_alt_h, true}
+               : CanvasChoice{manifest.canvas_w != 0 ? manifest.canvas_w : panel_w,
+                              manifest.canvas_h != 0 ? manifest.canvas_h : panel_h, false};
+}
+
+void ModRuntime::ApplyCanvasVariant(bool alt) {
+    for (Page& page : manifest.pages) {
+        for (Widget& widget : page.widgets) {
+            if (widget.rect_alt) {
+                std::swap(widget.rect, *widget.rect_alt);
+            }
+        }
+    }
+    LOG_INFO(Core, "DSMod: canvas_alt {}", alt ? "on" : "off");
+}
+
 void ModRuntime::PublishUi(const StateSnapshot& snapshot) {
     PumpNxAssets(snapshot); // land decoded game art, drive composites (never blocks)
     if (font_pages != nullptr && font_pages->TakeLanded()) {
@@ -775,8 +834,13 @@ void ModRuntime::PublishUi(const StateSnapshot& snapshot) {
     }
     const u32 panel_w = aux.width.load();
     const u32 panel_h = aux.height.load();
-    const u32 target_w = manifest.canvas_w != 0 ? manifest.canvas_w : panel_w;
-    const u32 target_h = manifest.canvas_h != 0 ? manifest.canvas_h : panel_h;
+    // Runtime 25 canvas_alt: debounced choice between the manifest's canvas and its optional
+    // alternate; also swaps rect/rect_alt on every page's widgets on a committed switch
+    // (ApplyCanvasVariant), so nothing past this point needs to know about it. A manifest
+    // without canvas_alt gets exactly the old ternary back (SelectCanvas's early-out).
+    const CanvasChoice canvas_choice = SelectCanvas(panel_w, panel_h);
+    const u32 target_w = canvas_choice.w;
+    const u32 target_h = canvas_choice.h;
     if (target_w == 0 || target_h == 0 || manifest.pages.empty()) {
         return;
     }

@@ -1460,6 +1460,23 @@ void ParseManifestJson(const nlohmann::json& json, Manifest& manifest) {
     manifest.poll_hz = json.value("poll_hz", 60u);
     manifest.canvas_w = json.value("canvas_w", 0u);
     manifest.canvas_h = json.value("canvas_h", 0u);
+    // "canvas_alt" (runtime 25): {"w", "h", "when": "portrait" (default) | "narrow"}. Malformed,
+    // not an object, or zero w/h is ignored (logged), leaving canvas selection exactly as before.
+    if (json.contains("canvas_alt")) {
+        const auto& ca = json.at("canvas_alt");
+        const u32 alt_w = ca.is_object() ? ca.value("w", 0u) : 0u;
+        const u32 alt_h = ca.is_object() ? ca.value("h", 0u) : 0u;
+        if (ca.is_object() && alt_w != 0 && alt_h != 0) {
+            manifest.canvas_alt_w = alt_w;
+            manifest.canvas_alt_h = alt_h;
+            manifest.canvas_alt_when = ca.value("when", std::string{"portrait"}) == "narrow"
+                                           ? CanvasAltWhen::Narrow
+                                           : CanvasAltWhen::Portrait;
+        } else {
+            LOG_WARNING(Core,
+                        "DSMod: canvas_alt needs an object with non-zero 'w' and 'h'; ignored");
+        }
+    }
     manifest.debug_page = Common::DSMod::DevToolsEnabled && json.value("debug_page", false);
     manifest.font_metrics_src = json.value("font", std::string{});
     manifest.font_atlas_src = json.value("font_atlas", std::string{});
@@ -1667,6 +1684,16 @@ void ParseManifestJson(const nlohmann::json& json, Manifest& manifest) {
                         for (size_t i = 0; i < 4; ++i) {
                             widget.rect[i] = ParseCoordinate(w.at("rect")[i]);
                         }
+                    }
+                    // "rect_alt" (runtime 25): this widget's rect while canvas_alt is the active
+                    // canvas (ModRuntime::ApplyCanvasVariant). Absent = keeps `rect` on both.
+                    if (w.contains("rect_alt") && w.at("rect_alt").is_array() &&
+                        w.at("rect_alt").size() == 4) {
+                        std::array<s32, 4> alt{};
+                        for (size_t i = 0; i < 4; ++i) {
+                            alt[i] = ParseCoordinate(w.at("rect_alt")[i]);
+                        }
+                        widget.rect_alt = alt;
                     }
                     widget.text = StringOr(w, "text");
                     widget.bind = w.value("bind", std::string{});
@@ -2877,6 +2904,11 @@ void ModRuntime::ReloadManifest() {
     }
     {
         manifest = std::move(replacement);
+        // Runtime 25: the freshly parsed widgets are the authored default, not whatever the old
+        // manifest's canvas_alt last swapped them to -- forget the old debounce state so
+        // SelectCanvas re-derives and re-applies it from scratch (mod_redraw.cpp).
+        canvas_alt_active = false;
+        canvas_alt_pending = false;
         derived_order_list = nullptr;
         shared_page.reset();
         if (!mj->contains("nav")) {

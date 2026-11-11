@@ -203,7 +203,20 @@ namespace Core::Mods {
 ///          size + format; EDEN_DSMOD_CAP_TEXTURE_READBACK, mod_texture_readback.h). Map overlays
 ///          take "mask_bind" (a text point naming an image whose alpha cuts the overlay). Older
 ///          runtimes never configure the extension and ignore the key.
-inline constexpr u32 DualScreenRuntimeVersion = 24;
+///   25     Pane geometry host values: "@screen.pane_w" / "pane_h" (panel px) / "orientation"
+///          ("landscape" / "portrait") / "mode" ("physical" / "simulated"), through the same
+///          runtime-21 pattern (mod_host_values.h: IsHostValueKey, uses_host_keys /
+///          JsonReferencesHostKeys, get_i64 / get_text for a native module whether or not the
+///          manifest names them); ABI 1 stays. Optional alternate canvas: manifest "canvas_alt":
+///          {"w","h","when": "portrait" | "narrow"}, the runtime switching to whichever canvas'
+///          aspect fits the pane better (SelectCanvasAspect), debounced ~150 ms so a resize
+///          burst switches once; a widget's "rect_alt" is its rect on that canvas
+///          (ApplyCanvasVariant swaps rect <-> rect_alt on a committed switch; module state and
+///          the current page are untouched). A package without "canvas_alt" is unaffected (Fit
+///          letterbox only, as before). Virtual button tokens "L3" / "R3" (aliases "StickL" /
+///          "StickR") reach VirtualButton::StickL / StickR (ParseButton); older runtimes do not
+///          recognise them.
+inline constexpr u32 DualScreenRuntimeVersion = 25;
 
 /// Regions a redraw-worker job painted into its canvas but did not publish because it went stale
 /// (runtime 13). Before runtime 13 a job already running when the next was dispatched finished
@@ -245,6 +258,27 @@ struct UnpublishedRegions {
 /// published for an older runtime never gains the chord or the pad suppression.
 [[nodiscard]] bool NavDefaultOn(const nlohmann::json* manifest,
                                 const nlohmann::json* package) noexcept;
+
+/// Runtime 25: the canvas size SelectCanvasAspect (and ModRuntime::SelectCanvas) resolved to --
+/// {w, h} and whether that is the manifest's optional `canvas_alt` rather than its default.
+struct CanvasChoice {
+    u32 w{0};
+    u32 h{0};
+    bool alt{false};
+};
+
+/// Runtime 25 "canvas_alt": which canvas -- the manifest's default (`canvas_w`/`canvas_h`, 0 =
+/// `panel_w`/`panel_h` itself) or its optional `canvas_alt` -- fits a `panel_w` x `panel_h` pane
+/// better. Pure: no debounce (ModRuntime::SelectCanvas adds that over a live pane,
+/// mod_redraw.cpp). `alt_w`/`alt_h` 0 = no canvas_alt declared: always the default, byte-
+/// identical to a runtime <= 24 package. "Portrait" picks the alternate only in a taller-than-
+/// wide pane; "Narrow" picks it whenever the pane's aspect is already narrower than the
+/// DEFAULT canvas's own -- a superset of Portrait that also catches a moderately narrow but
+/// still landscape pane (a Simulated side-by-side companion column,
+/// administration/simulated-dual-screen-20261111/RESEARCH.md S4.5 C2).
+[[nodiscard]] CanvasChoice SelectCanvasAspect(u32 panel_w, u32 panel_h, u32 canvas_w, u32 canvas_h,
+                                              u32 alt_w, u32 alt_h,
+                                              CanvasAltWhen when) noexcept;
 
 /// Nintendo asset references and composite images (mod_nx_runtime.cpp): caches, the decode
 /// worker and its queues. Kept out of this header; always allocated with the runtime.
@@ -1431,6 +1465,26 @@ private:
     /// constructor (PerfStats totals, read lazily: PerfStats exists only once the game runs).
     HostValues host_values;
     bool host_values_wanted{false};
+    /// Runtime 25 canvas_alt: the debounced choice between the manifest's canvas and its
+    /// optional alternate (SelectCanvasAspect above, mod_redraw.cpp). `canvas_alt_active` is
+    /// what the last commit chose; `canvas_alt_pending` / `_since` track a raw per-tick read
+    /// that has not held steady for CanvasAltDebounce yet, so an in-flight host resize (the
+    /// Android layout's own ~150 ms debounce, RESEARCH.md R3) switches the canvas at most once
+    /// rather than once per tick. Reset on every (re)load (ReloadManifest, mod_manifest.cpp): a
+    /// freshly parsed manifest's widgets are the authored default, not whatever the old one
+    /// last swapped to.
+    bool canvas_alt_active{false};
+    bool canvas_alt_pending{false};
+    std::chrono::steady_clock::time_point canvas_alt_pending_since{};
+    static constexpr std::chrono::milliseconds CanvasAltDebounce{150};
+    /// This tick's canvas: the manifest's default, or canvas_alt once the debounced choice has
+    /// committed to it. Commits are applied immediately (ApplyCanvasVariant), so by the time
+    /// this returns, every page's widgets already match the returned choice.
+    CanvasChoice SelectCanvas(u32 panel_w, u32 panel_h); // mod_redraw.cpp
+    /// Swaps every page widget's `rect` with its `rect_alt` (self-inverse: called once per
+    /// committed edge, in either direction). Module state, current_page and everything else
+    /// about the package are untouched -- only widget geometry moves.
+    void ApplyCanvasVariant(bool alt); // mod_redraw.cpp
     void UpdateHeldButtons();                      // mod_actions.cpp
     void PublishUi(const StateSnapshot& snapshot); // mod_redraw.cpp
     /// GPU-composite publish: hand the renderer a quad display list plus up to three source
