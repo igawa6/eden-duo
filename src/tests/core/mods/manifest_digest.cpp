@@ -606,6 +606,7 @@ std::string R(const Widget& o) {
     F(fill_image);
     F(chart);
     if (o.pan_bounds) { F(pan_bounds); }
+    if (o.rect_alt) { F(rect_alt); }
     DUMP_END;
 }
 std::string R(const ScrollRegion& o) {
@@ -1112,6 +1113,9 @@ std::string DumpManifest(const Manifest& o) {
         F(poll_hz);
         F(canvas_w);
         F(canvas_h);
+        F(canvas_alt_w);
+        F(canvas_alt_h);
+        F(canvas_alt_when);
         C(background);
         F(enforce_gate);
         F(enforce_gate_max);
