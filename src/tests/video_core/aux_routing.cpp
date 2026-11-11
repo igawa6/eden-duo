@@ -599,32 +599,28 @@ TEST_CASE("Companion touch rect: mirror pages map as Stretch; scripted touches f
     REQUIRE(aux.NormalisedToPanel(1.0f, 1.0f) == std::pair<u32, u32>{1580, 1080});
 }
 
-// Eden Duo Stage 2: Simulated's own "Companion scaling" is independent of Physical's Companion
+// Eden Duo Stage 2 (owner decision): Simulated is always Fit, never Physical's own Companion
 // Ratio (steward-reported bug: the Thor ships companion_ratio=Stretch, harmless on its own
-// 1240x1080 panel, wrong for a narrower inline pane). Reset the shared statics afterwards --
+// 1240x1080 panel, wrong for a narrower inline pane). Reset the shared static afterwards --
 // Catch2 test cases in this binary do not get a fresh process.
 TEST_CASE("Inline Fit is used for the companion pane even when the Physical ratio is Stretch",
           "[dsmod]") {
     using VideoCore::DSMod::CompanionRatio;
     using VideoCore::DSMod::CompanionTouchRect;
     using VideoCore::DSMod::SecondScreenOptions;
-    struct RestoreRatios {
-        ~RestoreRatios() {
+    struct RestoreRatio {
+        ~RestoreRatio() {
             SecondScreenOptions::companion_ratio.store(static_cast<u32>(CompanionRatio::Fit));
-            SecondScreenOptions::inline_companion_ratio.store(
-                static_cast<u32>(CompanionRatio::Fit));
         }
     } restore;
     SecondScreenOptions::companion_ratio.store(static_cast<u32>(CompanionRatio::Stretch));
-    SecondScreenOptions::inline_companion_ratio.store(static_cast<u32>(CompanionRatio::Fit));
     REQUIRE(SecondScreenOptions::Ratio() == CompanionRatio::Stretch);
-    REQUIRE(SecondScreenOptions::InlineRatio() == CompanionRatio::Fit);
 
     // Physical (is_inline=false) follows the Stretch setting: the whole panel.
     const auto physical = CompanionTouchRect(768, 1080, 1240, 1080, /*mirror=*/false,
                                              /*is_inline=*/false);
     REQUIRE(physical.full);
-    // Simulated (is_inline=true) ignores it and keeps Fit: letterboxed inside the narrow pane.
+    // Simulated (is_inline=true) ignores it and is always Fit: letterboxed inside the narrow pane.
     const auto inline_rect = CompanionTouchRect(768, 1080, 1240, 1080, /*mirror=*/false,
                                                 /*is_inline=*/true);
     REQUIRE(!inline_rect.full);

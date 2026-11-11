@@ -767,9 +767,11 @@ bool DSModAuxPresenter::RenderInlineModUi(const VideoCore::DSMod::CompanionRect&
     }
     // Eden Duo: Fit keeps the canvas shape inside the pane (bars in the page background), same
     // math as the physical blit's own Fit, just against the pane instead of the aux window.
-    // Stage 2: Simulated's own scaling (InlineRatio), not Physical's -- see SecondScreenOptions.
-    const auto fit = VideoCore::DSMod::FitCompanion(
-        pane.w, pane.h, aux_ui_w, aux_ui_h, VideoCore::DSMod::SecondScreenOptions::InlineRatio());
+    // Stage 2 (owner decision): Simulated is always Fit, never Physical's own Companion Ratio --
+    // DualScreenGeometry already sizes the pane to the canvas's own aspect, so this is a safety
+    // net (a manually-dragged divider) rather than the normal case.
+    const auto fit = VideoCore::DSMod::FitCompanion(pane.w, pane.h, aux_ui_w, aux_ui_h,
+                                                    VideoCore::DSMod::CompanionRatio::Fit);
     inline_companion.view = *aux_ui_view;
     inline_companion.extent = VkExtent2D{aux_ui_w, aux_ui_h};
     inline_companion.version = aux_ui_serial;
@@ -1292,9 +1294,10 @@ bool DSModAuxPresenter::RenderInlineModUiGpu(const VideoCore::DSMod::CompanionRe
         aux_c_dirty = false;
     }
     // Eden Duo: Fit keeps the composited canvas' shape inside the pane (bars in its background);
-    // a full rect is the plain whole-pane draw. Stage 2: Simulated's own scaling (InlineRatio).
-    const auto fit = VideoCore::DSMod::FitCompanion(
-        pane.w, pane.h, aux_c_cw, aux_c_ch, VideoCore::DSMod::SecondScreenOptions::InlineRatio());
+    // a full rect is the plain whole-pane draw. Stage 2 (owner decision): always Fit, see
+    // RenderInlineModUi's own note above.
+    const auto fit = VideoCore::DSMod::FitCompanion(pane.w, pane.h, aux_c_cw, aux_c_ch,
+                                                    VideoCore::DSMod::CompanionRatio::Fit);
     inline_companion.view = *aux_inline_view;
     inline_companion.extent = VkExtent2D{aux_c_cw, aux_c_ch};
     inline_companion.version = aux_c_comp_serial;

@@ -223,12 +223,6 @@ enum class NoCompanion : u32 {
 struct SecondScreenOptions {
     static inline std::atomic<u32> companion_ratio{static_cast<u32>(CompanionRatio::Fit)};
     static inline std::atomic<u32> no_companion{static_cast<u32>(NoCompanion::Icon)};
-    // Eden Duo Stage 2: Simulated (inline) has its own scaling, independent of Physical's
-    // companion_ratio above. A device whose real second panel matches the companion canvas's
-    // shape (the AYN Thor ships Stretch, harmless on its 1240x1080 bottom screen) would otherwise
-    // stretch the companion inside whatever pane shape Simulated happens to compute -- wrong
-    // whenever the pane is not that exact shape, i.e. almost always. Defaults to Fit.
-    static inline std::atomic<u32> inline_companion_ratio{static_cast<u32>(CompanionRatio::Fit)};
 
     static CompanionRatio Ratio() {
         return companion_ratio.load(std::memory_order_relaxed) ==
@@ -236,14 +230,16 @@ struct SecondScreenOptions {
                    ? CompanionRatio::Stretch
                    : CompanionRatio::Fit;
     }
-    static CompanionRatio InlineRatio() {
-        return inline_companion_ratio.load(std::memory_order_relaxed) ==
-                       static_cast<u32>(CompanionRatio::Stretch)
-                   ? CompanionRatio::Stretch
-                   : CompanionRatio::Fit;
+    // Eden Duo Stage 2 (owner decision, revised from an earlier draft of this stage that gave
+    // Simulated its own Fit/Stretch setting): Simulated is always Fit, unconditionally -- never
+    // user-settable, never reading companion_ratio. The layout engine (DualScreenGeometry) sizes
+    // the companion pane to the canvas's own aspect in the first place, so Fit draws it with no
+    // bars in normal use; this is just the safety net for a pane a manual divider shaped
+    // differently. [is_inline] (the panel currently up is Simulated, not Physical) is kept as
+    // CompanionTouchRect's own parameter -- see ActiveRatio.
+    static CompanionRatio ActiveRatio(bool is_inline) {
+        return is_inline ? CompanionRatio::Fit : Ratio();
     }
-    /// The ratio that governs the panel Simulated/Physical actually has up right now.
-    static CompanionRatio ActiveRatio(bool is_inline) { return is_inline ? InlineRatio() : Ratio(); }
     static NoCompanion WithoutCompanion() {
         const u32 v = no_companion.load(std::memory_order_relaxed);
         return v <= static_cast<u32>(NoCompanion::Off) ? static_cast<NoCompanion>(v)
@@ -295,9 +291,9 @@ inline CompanionRect FitCompanion(u32 fw, u32 fh, u32 cw, u32 ch, CompanionRatio
 }
 
 /// The rect a companion's touches map through. A mirror page (the game's own pixels) is always
-/// drawn over the whole panel, whatever Companion Ratio says. [is_inline] picks Simulated's own
-/// scaling (SecondScreenOptions::InlineRatio) instead of Physical's (Ratio) -- the touch rect
-/// must agree with whichever one the draw path used for the panel currently up.
+/// drawn over the whole panel, whatever Companion Ratio says. [is_inline] forces Fit (Simulated
+/// is always Fit) instead of Physical's own Companion Ratio -- the touch rect must agree with
+/// whichever one the draw path used for the panel currently up.
 inline CompanionRect CompanionTouchRect(u32 fw, u32 fh, u32 cw, u32 ch, bool mirror,
                                         bool is_inline = false) {
     return FitCompanion(fw, fh, cw, ch,

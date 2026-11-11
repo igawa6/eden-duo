@@ -270,9 +270,6 @@ void ApplySecondScreenOptions() {
     // per-game config was applied before boot.
     Options::companion_ratio.store(
         static_cast<u32>(std::max(0, AndroidSettings::values.companion_ratio.GetValue())));
-    // Eden Duo Stage 2: Simulated's own "Companion scaling", independent of the above.
-    Options::inline_companion_ratio.store(static_cast<u32>(
-        std::max(0, AndroidSettings::values.companion_scaling_inline.GetValue())));
     const s32 no_companion_override = g_no_companion_override.load();
     const s32 no_companion = no_companion_override >= 0
                                  ? no_companion_override
