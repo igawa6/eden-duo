@@ -10,6 +10,7 @@ import android.util.Rational
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import androidx.activity.OnBackPressedCallback
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.fragment.app.Fragment
@@ -62,9 +63,14 @@ class DualScreenFragmentHost(
     // Eden Duo 1.4.0: the freeform layout editor (LAYOUT-EDITOR-SPEC.md). Both non-null exactly
     // while editing; orientationLockedForEditor mirrors EmulationFragment's own
     // startConfiguringControls/stopConfiguringControls pattern for the controls editor.
+    // layoutEditorBackCallback: Back while editing must act as Cancel (steward review,
+    // beta.4) -- registered only while editing and removed the moment it ends either way, so
+    // it never outlives the session or shadows the drawer-toggle callback EmulationFragment
+    // itself already registers once at setup.
     private var layoutEditorView: DualScreenLayoutEditorView? = null
     private var layoutEditorToolbar: View? = null
     private var orientationLockedForEditor = false
+    private var layoutEditorBackCallback: OnBackPressedCallback? = null
 
     /** Routes touches inside the companion pane to NativeInput instead of the emulated input. */
     val companionPaneTouch = CompanionPaneTouch { currentLayout?.companionRect }
@@ -280,6 +286,18 @@ class DualScreenFragmentHost(
         layoutEditorView = editorView
         layoutEditorToolbar = toolbar
         binding()?.inGameMenu?.menu?.findItem(R.id.menu_edit_dual_screen_layout)?.isVisible = false
+        // Steward review (beta.4): back must act as Cancel, never fall through to the drawer
+        // toggle or exit the game -- the same OnBackPressedCallback shape
+        // EmulationFragment.setupOverlayGamelessEditMode already uses for its own edit mode.
+        // Kept in a field (not fire-and-forget like that one call site) so stopEditingLayout can
+        // remove() it itself when Cancel/Done/Done close the editor instead of back, rather than
+        // leaving an enabled callback sitting on the dispatcher after editing ends;
+        // viewLifecycleOwner also tears it down automatically if the view is destroyed first.
+        val backCallback = object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() = stopEditingLayout(save = false)
+        }
+        layoutEditorBackCallback = backCallback
+        fragment.activity?.onBackPressedDispatcher?.addCallback(fragment.viewLifecycleOwner, backCallback)
     }
 
     private fun wireToolbar(
@@ -310,12 +328,17 @@ class DualScreenFragmentHost(
      * layout and sets Layout = Custom, mirroring how Eden's own per-game settings decide global
      * vs. per-title (LAYOUT-EDITOR-SPEC.md item 3): per-title exactly when this game session has
      * a per-game config loaded ([NativeConfig.isPerGameConfigLoaded]), global otherwise -- the
-     * same condition the app's own per-game settings save path already uses. Cancel (false)
-     * discards the in-progress edit; the live native layout was never touched either way.
+     * same condition the app's own per-game settings save path already uses. Cancel (false) --
+     * including via the back button/gesture, which [startEditingLayout]'s own callback routes
+     * here too (steward review, beta.4: back must act as Cancel, never leave the editor
+     * half-open or exit the game) -- discards the in-progress edit; the live native layout was
+     * never touched either way, so "discard" is simply "do nothing further", not a restore.
      */
     private fun stopEditingLayout(save: Boolean) {
         val editorView = layoutEditorView ?: return
         val b = binding()
+        layoutEditorBackCallback?.remove()
+        layoutEditorBackCallback = null
         if (save) {
             val context = fragment.context
             val perGame = NativeConfig.isPerGameConfigLoaded()
