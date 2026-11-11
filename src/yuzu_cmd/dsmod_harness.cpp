@@ -11,6 +11,7 @@
 #include <atomic>
 #include <cctype>
 #include <chrono>
+#include <cmath>
 #include <csignal>
 #include <cstdlib>
 #include <filesystem>
@@ -1096,6 +1097,24 @@ void OnGameLoaded(Session& session, Core::System& system) {
 }
 
 void Iterate(Core::System& system, InputCommon::InputSubsystem& input_subsystem) {
+    // Eden Duo Stage 1 measurement (harness-only; never read outside this function):
+    // EDEN_DSMOD_INLINE_SWEEP=1 moves the inline companion/game split continuously, to check
+    // that a rect change costs nothing more than the ordinary per-frame draw (no swapchain
+    // recreation, no WaitIdle, flat frame time) -- see releases/1.4.0/evidence/stage1-perf.md.
+    static const bool inline_sweep = std::getenv("EDEN_DSMOD_INLINE_SWEEP") != nullptr;
+    if (inline_sweep) {
+        static const auto sweep_start = std::chrono::steady_clock::now();
+        const double t =
+            std::chrono::duration<double>(std::chrono::steady_clock::now() - sweep_start).count();
+        // Companion share breathes between 30% and 50% of the window width, right-aligned
+        // (~2s/cycle); the game is always its complement on the left.
+        const float companion_w =
+            0.3f + 0.1f * (1.0f + std::sin(static_cast<float>(t) * 3.14159f));
+        const float game_w = 1.0f - companion_w;
+        system.GPU().DSModAux().SetInlineLayout(
+            true, VideoCore::DSMod::FracRect{0.0f, 0.0f, game_w, 1.0f},
+            VideoCore::DSMod::FracRect{game_w, 0.0f, companion_w, 1.0f});
+    }
     // A periodic speed line, so "it feels laggy" can be checked against a number.
     static auto next_perf = std::chrono::steady_clock::now() + std::chrono::seconds(5);
     if (const auto now = std::chrono::steady_clock::now(); now >= next_perf) {
