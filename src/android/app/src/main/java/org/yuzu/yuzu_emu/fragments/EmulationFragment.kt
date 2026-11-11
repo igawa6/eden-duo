@@ -1609,11 +1609,22 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
     }
 
     /**
-     * Eden Duo Stage 2 item 8: Mode just crossed to or from Off, which only applies at the next
-     * launch. "Exit now" reuses the existing menu_exit path verbatim (see its handler above) --
-     * it does not attempt to relaunch the game itself, since this app has no existing "restart"
-     * action to build on and a mis-timed one risks a worse outcome than leaving the user to
-     * relaunch from the game list. Not verified on a device this session.
+     * Eden Duo Stage 2 item 8 / Stage 4 item 5: Mode just crossed to or from Off, which only
+     * applies at the next launch. "Exit to game list" reuses the existing menu_exit path
+     * verbatim (see its handler above) rather than attempting to relaunch the game itself.
+     *
+     * Stage 4 looked for a safe same-game relaunch (the ROM-swap stop+relaunch path
+     * EmulationActivity already uses when a different game's launch intent arrives while one is
+     * running -- dynamic shortcuts, "open with") and found one is technically reachable
+     * (EmulationActivityArgs(args.game, args.custom).toBundle() plus EXTRA_SELECTED_GAME so
+     * EmulationActivity.isSwapIntent recognises it, fed to a new EmulationActivity method that
+     * calls the existing private handleSwapIntent). It was not wired up: that path is only ever
+     * exercised today for a *different* game, not this exact combination, and none of it can be
+     * verified without a device this session -- a mistake here would misfire at the single most
+     * disruptive moment (Mode changing to/from Off mid-game). Exiting to the list is one extra
+     * tap but cannot misfire, which is why the button is honestly labelled instead. See
+     * STAGE4-IMPLEMENTATION.md for the full note if a future stage has device access to verify a
+     * real relaunch.
      */
     private fun showDualScreenModeRestartPrompt() {
         if (!isAdded || _binding == null) return

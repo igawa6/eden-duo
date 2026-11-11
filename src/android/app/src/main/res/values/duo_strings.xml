@@ -16,8 +16,9 @@
     <string name="dual_screen_mode_off">Off</string>
     <string name="dual_screen_mode_no_second_screen">No second screen detected.</string>
     <string name="dual_screen_mode_restart_title">Mode changed</string>
-    <string name="dual_screen_mode_restart_message">Turning the companion on or off for this game applies the next time it starts. Exit now and start it again, or keep playing and it applies next time.</string>
-    <string name="dual_screen_mode_restart_exit">Exit now</string>
+    <!-- Eden Duo Stage 4 item 5: no safe same-game relaunch exists yet (see STAGE4-IMPLEMENTATION.md); this button only returns to the game list, so neither it nor this message promises a restart. -->
+    <string name="dual_screen_mode_restart_message">Turning the companion on or off for this game applies the next time it starts. Exit to the game list now, or keep playing and it applies next time.</string>
+    <string name="dual_screen_mode_restart_exit">Exit to game list</string>
     <string name="dual_screen_mode_restart_later">Keep playing</string>
     <!-- Eden Duo Stage 2: first-run notice -->
     <string name="dual_screen_first_run_title">Second screen companion</string>
