@@ -18,6 +18,7 @@
 #include "core/file_sys/vfs/vfs.h"
 #include "core/hle/service/filesystem/filesystem.h"
 #include "core/memory.h"
+#include "core/mods/mod_launch_gate.h"
 #include "core/mods/mod_package_io.h"
 #include "core/mods/mod_runtime.h"
 
@@ -357,6 +358,11 @@ struct SelectedLoadPlanPackage {
 // no package, it needs a newer runtime or it deliberately has no load_plan. JSON type errors
 // propagate to the caller.
 std::optional<SelectedLoadPlanPackage> SelectLoadPlanPackage(System& system, u64 title_id) {
+    // Dual screen mode Off for this launch (SetCompanionsDisabledForLaunch, read once at boot):
+    // no companion package is selected, so no guest load plan reaches the game either.
+    if (CompanionsDisabledForLaunch()) {
+        return std::nullopt;
+    }
     auto root = system.GetFileSystemController().GetModificationLoadRoot(title_id);
     if (!root) {
         return std::nullopt;
