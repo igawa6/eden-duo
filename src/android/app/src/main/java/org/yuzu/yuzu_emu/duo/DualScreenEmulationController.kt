@@ -21,6 +21,39 @@ import org.yuzu.yuzu_emu.utils.SecondScreenPerGame
 import org.yuzu.yuzu_emu.views.AuxPresentation
 
 /**
+ * Eden Duo Stage 2/4: the fragment-side reactions [DualScreenEmulationController] needs but cannot
+ * perform itself -- the native Simulated layout push, the restart/first-run/eject/simulated-stays
+ * dialogs, and companion-pane touch ownership. [DualScreenFragmentHost] is EmulationFragment's
+ * implementation, passed in as a single object instead of one lambda per reaction.
+ */
+interface DualScreenFragmentHooks {
+    /** Recomputes and pushes the Simulated layout (EmulationFragment owns the window/fold/controller state this needs). */
+    fun pushLayout() {}
+
+    /** Mode just changed across Off in the in-game settings, which only takes effect at the next launch. */
+    fun onModeChangedAcrossOff() {}
+
+    /** A companion just appeared in Simulated mode for the first time ever (see [DualScreenFirstRunNotice]). */
+    fun onFirstSimulatedCompanion() {}
+
+    /** True while [pointerId] already belongs to the Simulated companion pane (RESEARCH.md I2). */
+    fun companionPaneOwns(pointerId: Int): Boolean = false
+
+    /** The display hosting the companion or the game was just removed (RESEARCH.md §0 decision 3). */
+    fun onDisplayEjected(kind: DisplayHotplugRules.RemovedDisplayKind) {}
+
+    /** The "Wait for reconnect" eject choice just resolved on its own. */
+    fun onEjectReconnected() {}
+
+    /** A display appeared mid-game while Mode stayed Simulated by the user's own explicit choice. */
+    fun onSimulatedStaysHint() {}
+
+    companion object {
+        val NONE: DualScreenFragmentHooks = object : DualScreenFragmentHooks {}
+    }
+}
+
+/**
  * Eden Duo: the second screen of the emulation screen -- the DSMod Presentation on a second panel
  * (AYN Thor bottom panel, AYANEO Pocket DS, ...), AuxCompanionActivity when the game itself is on
  * a secondary display, and the "No Companion" setting (Icon, Black, Off, App).
@@ -40,46 +73,12 @@ class DualScreenEmulationController(
     private val secondScreenTitle: () -> String?,
     private val emulationStarted: () -> Boolean,
     /**
-     * Recomputes and pushes the Simulated layout now (EmulationFragment owns the window size,
-     * fold and controller state this needs). Called after a companion toggle while Simulated is
-     * active; a no-op the caller can safely give when Simulated support is not wired up.
+     * The fragment-side reactions this controller cannot perform itself -- the Simulated layout
+     * push, the restart/first-run/eject/simulated-stays dialogs and companion-pane touch
+     * ownership. [DualScreenFragmentHost] is EmulationFragment's implementation; the default is a
+     * no-op for callers that have not wired Simulated support up.
      */
-    private val pushDualScreenLayout: () -> Unit = {},
-    /**
-     * Mode just changed in the in-game settings to or from Off, which only takes effect at the
-     * next launch (the launch gate is read once, before the game loads) -- EmulationFragment
-     * should offer to restart. Simulated <-> Physical, which both apply live, never call this.
-     */
-    private val onModeChangedAcrossOff: () -> Unit = {},
-    /**
-     * A companion just appeared in Simulated mode for the first time ever (see
-     * [DualScreenFirstRunNotice]) -- EmulationFragment should show the one-time notice.
-     */
-    private val onFirstSimulatedCompanion: () -> Unit = {},
-    /**
-     * Eden Duo Stage 4 (RESEARCH.md I2): true while [pointerId] already belongs to the Simulated
-     * companion pane (EmulationFragment's own `CompanionPaneTouch.isOwned`) -- fed to [gameTouch]
-     * so its gesture recognizer never counts a pointer the companion pane already claimed.
-     */
-    private val companionPaneOwns: (Int) -> Boolean = { false },
-    /**
-     * Eden Duo Stage 4 (RESEARCH.md §0 decision 3): the display hosting the companion or the
-     * game was just removed -- EmulationFragment should pause emulation and show the
-     * "Second screen disconnected" three-choice dialog.
-     */
-    private val onDisplayEjected: (DisplayHotplugRules.RemovedDisplayKind) -> Unit = {},
-    /**
-     * Eden Duo Stage 4: the "Wait for reconnect" eject choice just resolved on its own (a
-     * display came back and Physical is showing again) -- EmulationFragment should resume
-     * emulation if it paused for the eject.
-     */
-    private val onEjectReconnected: () -> Unit = {},
-    /**
-     * Eden Duo Stage 4 (RESEARCH.md E4 / §0 item 2): a display appeared mid-game while the user
-     * had explicitly chosen Simulated, so Mode stays put -- EmulationFragment should show the
-     * one-time hint pointing at Dual screen settings.
-     */
-    private val onSimulatedStaysHint: () -> Unit = {}
+    private val hooks: DualScreenFragmentHooks = DualScreenFragmentHooks.NONE
 ) {
     private companion object {
         const val AUX_RETRY_DELAY_MS = 300L
@@ -115,10 +114,10 @@ class DualScreenEmulationController(
     private var sessionModeOverride: DualScreenMode? = null
     // Eden Duo Stage 4: true while the eject dialog's "Wait for reconnect" choice is in effect --
     // showAuxPresentation's next success (any display reconnecting, not just the one lost)
-    // resumes emulation via onEjectReconnected and clears this.
+    // resumes emulation via DualScreenFragmentHooks.onEjectReconnected and clears this.
     private var awaitingReconnectAfterEject = false
     // Eden Duo Stage 4: true while an eject dialog is up (or should be) for this session --
-    // guards onDisplayRemoved against firing onDisplayEjected twice for the same disconnect.
+    // guards onDisplayRemoved against firing hooks.onDisplayEjected twice for the same disconnect.
     private var ejectPending = false
     // Eden Duo Stage 4: the game Activity's own display id while Swap Screens has it on a
     // secondary one, refreshed opportunistically in showAuxPresentation (null on the default
@@ -163,7 +162,7 @@ class DualScreenEmulationController(
             if (ejects && !ejectPending) {
                 Log.info("[EmulationFragment] DSMod: pausing and asking ($kind, display $displayId)")
                 ejectPending = true
-                onDisplayEjected(kind)
+                hooks.onDisplayEjected(kind)
                 return
             }
             if (kind == DisplayHotplugRules.RemovedDisplayKind.COMPANION) {
@@ -222,7 +221,7 @@ class DualScreenEmulationController(
      */
     fun onGameResolved() {
         NativeLibrary.setCompanionsDisabledForLaunch(resolvedMode() == DualScreenMode.OFF)
-        pushDualScreenLayout()
+        hooks.pushLayout()
         val decidedBefore = auxOffChecked
         val hidesNow = isAuxOff()
         val closesForNoCompanion = AuxWindowRules.closesWindowOnResolve(decidedBefore, hidesNow)
@@ -287,7 +286,7 @@ class DualScreenEmulationController(
         val context = fragment.context ?: return
         if (!DualScreenFirstRunNotice.shouldShow(context)) return
         DualScreenFirstRunNotice.markShown(context)
-        onFirstSimulatedCompanion()
+        hooks.onFirstSimulatedCompanion()
     }
 
     /** A multi-program title switched program. */
@@ -310,7 +309,7 @@ class DualScreenEmulationController(
         }
         applyInlineDualScreen()
         showAuxPresentation()
-        pushDualScreenLayout()
+        hooks.pushLayout()
     }
 
     /**
@@ -340,15 +339,16 @@ class DualScreenEmulationController(
         reapplyNoCompanion()
         reapplyMode()
         // Settings closed: Mode, Layout, divider position or the aspect ratio may have changed.
-        pushDualScreenLayout()
+        hooks.pushLayout()
     }
 
     /**
      * Mode may have changed in the in-game settings: decided again without a restart, same shape
      * as [reapplyNoCompanion]. Simulated <-> Physical switch live here (both reuse the aux path
      * -- Physical's own Presentation/AuxCompanionActivity, Simulated the inline push
-     * [pushDualScreenLayout] does separately); a change to or from Off cannot (the launch gate is
-     * read once, before the game loads), so [onModeChangedAcrossOff] offers a restart instead.
+     * [DualScreenFragmentHooks.pushLayout] does separately); a change to or from Off cannot (the
+     * launch gate is read once, before the game loads), so [DualScreenFragmentHooks.onModeChangedAcrossOff]
+     * offers a restart instead.
      */
     private fun reapplyMode() {
         val before = modeApplied ?: return
@@ -364,7 +364,7 @@ class DualScreenEmulationController(
             AuxCompanionActivity.dismiss(fragment)
         }
         if (before == DualScreenMode.OFF || now == DualScreenMode.OFF) {
-            onModeChangedAcrossOff()
+            hooks.onModeChangedAcrossOff()
         }
     }
 
@@ -389,7 +389,7 @@ class DualScreenEmulationController(
         when (DisplayHotplugRules.onDisplayAdded(requested, before, hasSecondScreen)) {
             DisplayHotplugRules.DisplayAddedOutcome.SWITCH_TO_PHYSICAL -> {
                 reapplyMode()
-                pushDualScreenLayout()
+                hooks.pushLayout()
             }
 
             DisplayHotplugRules.DisplayAddedOutcome.SHOW_SIMULATED_HINT -> maybeShowSimulatedStaysHint()
@@ -401,7 +401,7 @@ class DualScreenEmulationController(
         val context = fragment.context ?: return
         if (!DualScreenSimulatedStaysHint.shouldShow(context)) return
         DualScreenSimulatedStaysHint.markShown(context)
-        onSimulatedStaysHint()
+        hooks.onSimulatedStaysHint()
     }
 
     /**
@@ -417,7 +417,7 @@ class DualScreenEmulationController(
         modeApplied = mode
         dismissAuxPresentation()
         AuxCompanionActivity.dismiss(fragment)
-        pushDualScreenLayout()
+        hooks.pushLayout()
     }
 
     /**
@@ -430,13 +430,13 @@ class DualScreenEmulationController(
         toggleState.forceHidden()
         dismissAuxPresentation()
         AuxCompanionActivity.dismiss(fragment)
-        pushDualScreenLayout()
+        hooks.pushLayout()
     }
 
     /**
      * Eden Duo Stage 4: "Wait for reconnect" -- stays paused; the next [showAuxPresentation] that
      * actually shows Physical again (any display, not necessarily the one lost) resumes it via
-     * [onEjectReconnected].
+     * [DualScreenFragmentHooks.onEjectReconnected].
      */
     fun ejectChoiceWaitForReconnect() {
         ejectPending = false
@@ -458,7 +458,7 @@ class DualScreenEmulationController(
     /** The game screen's touch filter for the companion toggle gesture (InputOverlay). */
     val gameTouch: CompanionToggle.GameTouch by lazy {
         val density = fragment.context?.resources?.displayMetrics?.density ?: 1f
-        CompanionToggle.GameTouch(density, companionPaneOwns) {
+        CompanionToggle.GameTouch(density, hooks::companionPaneOwns) {
             fragment.context?.let { CompanionToggle.toggle(it) }
         }
     }
@@ -469,7 +469,7 @@ class DualScreenEmulationController(
      * and never starts the No Companion app. Main thread.
      *
      * Eden Duo Stage 2: in Simulated this collapses or restores the inline pane (item 7) --
-     * [pushDualScreenLayout] does the actual recompute, reading [isCompanionHiddenByUser] to
+     * [DualScreenFragmentHooks.pushLayout] does the actual recompute, reading [isCompanionHiddenByUser] to
      * force the game full-window while hidden, exactly as if dual screen were off; "a second
      * screen" always exists for this purpose (the pane shares the game's own window), so unlike
      * Physical this never reports [CompanionToggleOutcome.NO_SECOND_SCREEN].
@@ -479,7 +479,7 @@ class DualScreenEmulationController(
             val outcome = toggleState.toggle(nowMs, windowState(), hasSecondScreen = true)
             Log.info("[EmulationFragment] DSMod: companion toggle (Simulated): $outcome")
             if (outcome == CompanionToggleOutcome.HIDDEN || outcome == CompanionToggleOutcome.SHOWN) {
-                pushDualScreenLayout()
+                hooks.pushLayout()
             }
             return outcome
         }
@@ -656,7 +656,7 @@ class DualScreenEmulationController(
         // again -- not on every display event, which may not be the one that was lost.
         if (awaitingReconnectAfterEject) {
             awaitingReconnectAfterEject = false
-            onEjectReconnected()
+            hooks.onEjectReconnected()
         }
         // Presentation cancels itself when its display goes away; drop it and look again.
         presentation.setOnDismissListener {

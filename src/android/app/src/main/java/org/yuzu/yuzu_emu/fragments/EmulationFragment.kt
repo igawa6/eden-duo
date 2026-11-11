@@ -69,10 +69,6 @@ import org.yuzu.yuzu_emu.HomeNavigationDirections
 import org.yuzu.yuzu_emu.NativeLibrary
 import org.yuzu.yuzu_emu.R
 import org.yuzu.yuzu_emu.activities.EmulationActivity
-// Eden Duo Stage 2: DualScreenGeometry's extension function needs an explicit import to be
-// called in receiver syntax; everything else in org.yuzu.yuzu_emu.duo stays fully qualified
-// inline below, matching this file's existing style for that package.
-import org.yuzu.yuzu_emu.duo.toFrac
 import org.yuzu.yuzu_emu.databinding.DialogOverlayAdjustBinding
 import org.yuzu.yuzu_emu.databinding.FragmentEmulationBinding
 import org.yuzu.yuzu_emu.dialogs.QuickSettings
@@ -139,36 +135,31 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
     private var isInFoldableLayout = false
     private var emulationStarted = false
 
-    // Eden Duo Stage 2: the last seen separating FoldingFeature (either orientation -- today's
-    // own foldable code above only ever reacted to a horizontal one), for DualScreenGeometry.
-    private var currentDualScreenHinge: org.yuzu.yuzu_emu.duo.DualScreenHinge? = null
-
-    // Eden Duo Stage 2: the last computed Simulated layout (null outside Simulated), for the
-    // companion-pane touch routing below.
-    private var currentDualScreenLayout: org.yuzu.yuzu_emu.duo.DualScreenLayout? = null
-
-    // Eden Duo Stage 2: routes touches inside the companion pane (above) to NativeInput's
-    // existing aux touch path instead of the emulated touchscreen/buttons; reads
-    // currentDualScreenLayout fresh on every touch, so it is correct for whichever pane shape
-    // was last pushed, with no separate invalidation needed.
-    private val companionPaneTouch = org.yuzu.yuzu_emu.duo.CompanionPaneTouch {
-        currentDualScreenLayout?.companionRect
-    }
+    // Eden Duo Stage 2/4: dual-screen geometry push, controls-band sizing, companion-pane touch
+    // and the restart/first-run/eject/simulated-stays dialogs (DualScreenFragmentHost); dualScreen
+    // (below) feeds its hooks back here directly instead of one lambda per reaction.
+    private val dualScreenHost: org.yuzu.yuzu_emu.duo.DualScreenFragmentHost = org.yuzu.yuzu_emu.duo.DualScreenFragmentHost(
+        this,
+        { _binding },
+        { dualScreen },
+        { hasPhysicalControllerConnected },
+        this::isInFoldableLayout,
+        { this::emulationState.isInitialized && emulationState.isRunning },
+        ::pauseEmulationAndCaptureFrame,
+        ::resumeEmulationFromUi,
+        ::clearPausedFrame,
+        { emulationState.stop() },
+        { emulationViewModel.setIsEmulationStopping(true) }
+    )
 
     // Eden Duo: second screen and No Companion (DualScreenEmulationController).
-    private val dualScreen = org.yuzu.yuzu_emu.duo.DualScreenEmulationController(
+    private val dualScreen: org.yuzu.yuzu_emu.duo.DualScreenEmulationController = org.yuzu.yuzu_emu.duo.DualScreenEmulationController(
         this,
         { emulationActivity },
         { game?.programId },
         { game?.programId?.takeIf { !(game == args.game && !args.custom) } },
         { emulationViewModel.emulationStarted.value },
-        { updateDualScreenLayout() },
-        { showDualScreenModeRestartPrompt() },
-        { showDualScreenFirstRunNotice() },
-        { companionPaneTouch.isOwned(it) },
-        { kind -> showDualScreenEjectDialog(kind) },
-        { resumeAfterDisplayEjectIfWePaused() },
-        { showDualScreenSimulatedStaysHint() }
+        dualScreenHost
     )
 
     private lateinit var gpuModel: String
@@ -192,11 +183,6 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
     private var wasInputOverlayAutoHidden = false
     private var overlayTouchActive = false
     private var pausedFrameBitmap: Bitmap? = null
-
-    // Eden Duo Stage 4: true while emulation is paused for the eject dialog -- distinguishes
-    // "we paused it, resume once the user chooses" from the user having already paused manually
-    // before the eject happened (which an eject choice must never silently undo).
-    private var pausedForDisplayEject = false
 
     var shouldUseCustom = false
     private var isQuickSettingsMenuOpen = false
@@ -1616,104 +1602,6 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
         }
     }
 
-    /**
-     * Eden Duo Stage 2 item 8 / Stage 4 item 5: Mode just crossed to or from Off, which only
-     * applies at the next launch. "Exit to game list" reuses the existing menu_exit path
-     * verbatim (see its handler above) rather than attempting to relaunch the game itself.
-     *
-     * Stage 4 looked for a safe same-game relaunch (the ROM-swap stop+relaunch path
-     * EmulationActivity already uses when a different game's launch intent arrives while one is
-     * running -- dynamic shortcuts, "open with") and found one is technically reachable
-     * (EmulationActivityArgs(args.game, args.custom).toBundle() plus EXTRA_SELECTED_GAME so
-     * EmulationActivity.isSwapIntent recognises it, fed to a new EmulationActivity method that
-     * calls the existing private handleSwapIntent). It was not wired up: that path is only ever
-     * exercised today for a *different* game, not this exact combination, and none of it can be
-     * verified without a device this session -- a mistake here would misfire at the single most
-     * disruptive moment (Mode changing to/from Off mid-game). Exiting to the list is one extra
-     * tap but cannot misfire, which is why the button is honestly labelled instead. See
-     * STAGE4-IMPLEMENTATION.md for the full note if a future stage has device access to verify a
-     * real relaunch.
-     */
-    private fun showDualScreenModeRestartPrompt() {
-        if (!isAdded || _binding == null) return
-        MaterialAlertDialogBuilder(requireContext())
-            .setTitle(R.string.dual_screen_mode_restart_title)
-            .setMessage(R.string.dual_screen_mode_restart_message)
-            .setPositiveButton(R.string.dual_screen_mode_restart_exit) { _, _ ->
-                val b = _binding ?: return@setPositiveButton
-                clearPausedFrame()
-                emulationState.stop()
-                NativeConfig.reloadGlobalConfig()
-                emulationViewModel.setIsEmulationStopping(true)
-                b.drawerLayout.close()
-            }
-            .setNegativeButton(R.string.dual_screen_mode_restart_later, null)
-            .show()
-    }
-
-    /** Eden Duo Stage 2 item 9: the one-time notice the first time a companion appears in Simulated. */
-    private fun showDualScreenFirstRunNotice() {
-        if (!isAdded) return
-        MaterialAlertDialogBuilder(requireContext())
-            .setTitle(R.string.dual_screen_first_run_title)
-            .setMessage(R.string.dual_screen_first_run_message)
-            .setPositiveButton(android.R.string.ok, null)
-            .show()
-    }
-
-    /**
-     * Eden Duo Stage 4 item 1 (RESEARCH.md §0 decision 3): the display hosting the companion or
-     * the game was just removed. Pauses emulation (unless the user had already paused it
-     * themselves -- [pausedForDisplayEject] remembers which) and shows the three-choice dialog,
-     * non-cancelable so it can never be dismissed without a choice ("Never auto-resume without a
-     * choice"). [kind] only decides the log line here; all three choices behave the same
-     * regardless of whether the companion's own display or the game's (Swap Screens) was lost.
-     */
-    private fun showDualScreenEjectDialog(kind: org.yuzu.yuzu_emu.duo.DisplayHotplugRules.RemovedDisplayKind) {
-        if (!isAdded || _binding == null) return
-        Log.info("[EmulationFragment] DSMod: eject dialog for $kind")
-        pausedForDisplayEject = this::emulationState.isInitialized && emulationState.isRunning
-        if (pausedForDisplayEject) {
-            pauseEmulationAndCaptureFrame()
-        }
-        MaterialAlertDialogBuilder(requireContext())
-            .setTitle(R.string.dual_screen_eject_title)
-            .setMessage(R.string.dual_screen_eject_message)
-            .setCancelable(false)
-            .setPositiveButton(R.string.dual_screen_eject_continue_simulated) { _, _ ->
-                dualScreen.ejectChoiceContinueSimulated()
-                resumeAfterDisplayEjectIfWePaused()
-            }
-            .setNegativeButton(R.string.dual_screen_eject_continue_game_only) { _, _ ->
-                dualScreen.ejectChoiceContinueGameOnly()
-                resumeAfterDisplayEjectIfWePaused()
-            }
-            .setNeutralButton(R.string.dual_screen_eject_wait_reconnect) { _, _ ->
-                // Stays paused: dualScreen resumes it via resumeAfterDisplayEjectIfWePaused once
-                // Physical actually shows again (DualScreenEmulationController.onEjectReconnected).
-                dualScreen.ejectChoiceWaitForReconnect()
-            }
-            .show()
-    }
-
-    /** Resumes emulation only if [showDualScreenEjectDialog] was the one that paused it. */
-    private fun resumeAfterDisplayEjectIfWePaused() {
-        if (!pausedForDisplayEject) return
-        pausedForDisplayEject = false
-        if (!isAdded || _binding == null) return
-        resumeEmulationFromUi()
-    }
-
-    /** Eden Duo Stage 4 item 2: a display appeared while Mode stayed Simulated (the user's own explicit choice). */
-    private fun showDualScreenSimulatedStaysHint() {
-        if (!isAdded) return
-        MaterialAlertDialogBuilder(requireContext())
-            .setTitle(R.string.dual_screen_simulated_stays_hint_title)
-            .setMessage(R.string.dual_screen_simulated_stays_hint_message)
-            .setPositiveButton(android.R.string.ok, null)
-            .show()
-    }
-
     private fun showAmiiboDialog(@StringRes messageRes: Int) {
         if (!isAdded) {
             return
@@ -1782,9 +1670,7 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
         handler.removeCallbacksAndMessages(null)
         clearPausedFrame()
         _binding?.surfaceInputOverlay?.touchEventListener = null
-        _binding?.surfaceInputOverlay?.companionPaneTouch = null // Eden Duo Stage 2
-        companionPaneTouch.clear()
-        currentDualScreenLayout = null
+        dualScreenHost.onDestroyView() // Eden Duo Stage 2
         _binding = null
         isAmiiboPickerOpen = false
     }
@@ -1827,7 +1713,7 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
         addQuickSettings()
         dualScreen.onResume()
         b.surfaceInputOverlay.touchscreenFilter = dualScreen.gameTouch::filter // Eden Duo
-        b.surfaceInputOverlay.companionPaneTouch = companionPaneTouch // Eden Duo Stage 2
+        dualScreenHost.onResume() // Eden Duo Stage 2
     }
 
     // Eden Duo: the in-game menu's companion toggle names what it will do.
@@ -2158,24 +2044,12 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
 
     private fun updateScreenLayout() {
         val b = _binding ?: return
-        // Eden Duo Stage 1 (Simulated/inline dual screen): the native renderer does its own
-        // game/companion split and fits the game inside its own rect (RendererVulkan::Composite),
-        // so the SurfaceView itself must fill the whole window first -- a Top/Bottom vertical
-        // alignment with a fixed aspect ratio would otherwise shrink the surface (and the Vulkan
-        // swapchain behind it) to that shape before the native split ever sees it, breaking the
-        // layout. Force the "fill the window" case (Center, no aspect constraint) while the
-        // hidden switch is on; the chosen Vertical Alignment/Aspect Ratio settings still apply
-        // normally once it is off.
-        val context = context
-        val inlineActive = context != null && org.yuzu.yuzu_emu.duo.InlineDualScreen.isEnabled(context)
-        val verticalAlignment = if (inlineActive) {
-            EmulationVerticalAlignment.Center
-        } else {
+        // Eden Duo Stage 1: while inline (Simulated) dual screen is on, dualScreenHost forces the
+        // "fill the window" case instead (see DualScreenFragmentHost.verticalAlignmentOverride).
+        val verticalAlignment = dualScreenHost.verticalAlignmentOverride(
             EmulationVerticalAlignment.from(IntSetting.VERTICAL_ALIGNMENT.getInt())
-        }
-        val aspectRatio = if (inlineActive) {
-            null
-        } else {
+        )
+        val aspectRatio = dualScreenHost.aspectRatioOverride(
             when (IntSetting.RENDERER_ASPECT_RATIO.getInt()) {
                 0 -> Rational(16, 9)
                 1 -> Rational(4, 3)
@@ -2183,7 +2057,7 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
                 3 -> Rational(16, 10)
                 else -> null // Best fit
             }
-        }
+        )
         when (verticalAlignment) {
             EmulationVerticalAlignment.Top -> {
                 b.surfaceEmulation.setAspectRatio(aspectRatio)
@@ -2219,103 +2093,7 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
         }
         emulationActivity?.buildPictureInPictureParams()
         updateOrientation()
-        updateDualScreenLayout()
-    }
-
-    /**
-     * Eden Duo Stage 2: recomputes DualScreenGeometry's layout from the current window size,
-     * [currentDualScreenHinge] and controller connection, and pushes the game/companion rects to
-     * the native renderer; disables the inline path instead when Simulated is not active or the
-     * companion is hidden by the user (CompanionToggle), in which case the game gets the full
-     * window exactly as if dual screen were off. Called on rotation/resize/fold change (via
-     * [updateScreenLayout], [updateFoldableLayout] and [surfaceChanged]) and when settings that
-     * affect it may have changed (DualScreenEmulationController.onResume/onStart, the companion
-     * toggle). [org.yuzu.yuzu_emu.duo.DualScreenEmulationController.isSimulatedActive] already
-     * accounts for the Stage 1 hidden developer switch winning over this entirely (it is applied
-     * natively; this call is harmless either way).
-     */
-    private fun updateDualScreenLayout() {
-        val b = _binding ?: return
-        if (!dualScreen.isSimulatedActive()) {
-            currentDualScreenLayout = null
-            NativeLibrary.setDualScreenInlineLayout(false, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f)
-            applyControlsBand(org.yuzu.yuzu_emu.duo.DualScreenRect.EMPTY)
-            return
-        }
-        val windowW = b.surfaceEmulation.width
-        val windowH = b.surfaceEmulation.height
-        if (windowW <= 0 || windowH <= 0) {
-            return // Not measured yet; the next trigger (surfaceChanged, a later layout pass) retries.
-        }
-        // Eden Duo Stage 4 item 3 (RESEARCH.md R5): PiP shows the game only -- the companion pane
-        // is hidden through this same full-window path, not paused, exactly like the user's own
-        // toggle. Physical is unaffected (it lives on its own display, untouched by PiP).
-        val pip = emulationActivity?.isInPictureInPictureMode == true
-        val layout = if (dualScreen.isCompanionHiddenByUser || pip) {
-            org.yuzu.yuzu_emu.duo.DualScreenLayout(
-                org.yuzu.yuzu_emu.duo.DualScreenRect(0, 0, windowW, windowH),
-                org.yuzu.yuzu_emu.duo.DualScreenRect.EMPTY,
-                org.yuzu.yuzu_emu.duo.DualScreenRect.EMPTY
-            )
-        } else {
-            val window = org.yuzu.yuzu_emu.duo.DualScreenWindow(
-                windowW, windowH, resources.displayMetrics.densityDpi
-            )
-            val userLayout = org.yuzu.yuzu_emu.duo.DualScreenUserLayout(
-                choice = org.yuzu.yuzu_emu.duo.DualScreenLayoutChoice.entries.getOrElse(
-                    IntSetting.COMPANION_LAYOUT.getInt()
-                ) { org.yuzu.yuzu_emu.duo.DualScreenLayoutChoice.AUTOMATIC },
-                dividerPercent = IntSetting.DIVIDER_POSITION.getInt()
-            )
-            val gameAspect = org.yuzu.yuzu_emu.duo.DualScreenGeometry.aspectForRendererSetting(
-                IntSetting.RENDERER_ASPECT_RATIO.getInt()
-            )
-            org.yuzu.yuzu_emu.duo.DualScreenGeometry.compute(
-                window, currentDualScreenHinge, hasPhysicalControllerConnected, userLayout, gameAspect
-            )
-        }
-        currentDualScreenLayout = layout
-        val gameFrac = layout.gameRect.toFrac(windowW, windowH)
-        val companionFrac = layout.companionRect.toFrac(windowW, windowH)
-        NativeLibrary.setDualScreenInlineLayout(
-            true,
-            gameFrac[0], gameFrac[1], gameFrac[2], gameFrac[3],
-            companionFrac[0], companionFrac[1], companionFrac[2], companionFrac[3]
-        )
-        applyControlsBand(layout.controlsRect)
-    }
-
-    /**
-     * Resizes [FragmentEmulationBinding.emulationContainer]/`inputContainer` to [controlsRect]
-     * (the no-controller Automatic stacked case's third band), or back to full-window when
-     * [controlsRect] is empty -- the same container-resize [updateFoldableLayout] already does
-     * for the existing horizontal-hinge split, which this defers to entirely whenever
-     * [currentDualScreenHinge] says a real fold is separating (both own the same two containers;
-     * only one of them is ever the active reason at a time, see the class doc above).
-     */
-    private fun applyControlsBand(controlsRect: org.yuzu.yuzu_emu.duo.DualScreenRect) {
-        if (currentDualScreenHinge?.isSeparating == true) return
-        val b = _binding ?: return
-        if (controlsRect.isEmpty) {
-            if (!isInFoldableLayout) return // nothing this function set up needs undoing
-            b.emulationContainer.layoutParams.height = ViewGroup.LayoutParams.MATCH_PARENT
-            b.inputContainer.layoutParams.height = ViewGroup.LayoutParams.MATCH_PARENT
-            isInFoldableLayout = false
-            b.surfaceInputOverlay.layout = if (
-                resources.configuration.orientation == Configuration.ORIENTATION_PORTRAIT
-            ) {
-                OverlayLayout.Portrait
-            } else {
-                OverlayLayout.Landscape
-            }
-        } else {
-            b.emulationContainer.layoutParams.height = controlsRect.y
-            b.inputContainer.layoutParams.height = controlsRect.h
-            isInFoldableLayout = true
-            b.surfaceInputOverlay.layout = OverlayLayout.Foldable
-        }
-        b.emulationContainer.requestLayout()
-        b.inputContainer.requestLayout()
+        dualScreenHost.updateLayout() // Eden Duo Stage 2
     }
 
     private fun updateFoldableLayout(
@@ -2353,23 +2131,7 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
         binding.inputContainer.requestLayout()
         binding.inGameMenu.requestLayout()
 
-        // Eden Duo Stage 2: DualScreenGeometry's own hinge split (book posture, a vertical
-        // separating hinge) -- today's code above only ever reacted to a horizontal one.
-        currentDualScreenHinge = feature?.takeIf { it.isSeparating }?.let {
-            org.yuzu.yuzu_emu.duo.DualScreenHinge(
-                isSeparating = true,
-                orientation = if (it.orientation == FoldingFeature.Orientation.HORIZONTAL) {
-                    org.yuzu.yuzu_emu.duo.DualScreenHingeOrientation.HORIZONTAL
-                } else {
-                    org.yuzu.yuzu_emu.duo.DualScreenHingeOrientation.VERTICAL
-                },
-                boundsLeft = it.bounds.left,
-                boundsTop = it.bounds.top,
-                boundsRight = it.bounds.right,
-                boundsBottom = it.bounds.bottom
-            )
-        }
-        updateDualScreenLayout()
+        dualScreenHost.onFoldingFeatureChanged(feature) // Eden Duo Stage 2
     }
 
     override fun surfaceCreated(holder: SurfaceHolder) {
@@ -2389,7 +2151,7 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
         updatePausedFrameVisibility()
         // Eden Duo Stage 2: the window's real pixel size is only reliably known once the surface
         // itself reports it -- updateScreenLayout can run earlier, before anything is measured.
-        updateDualScreenLayout()
+        dualScreenHost.updateLayout()
     }
 
     /**
