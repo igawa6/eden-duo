@@ -1,0 +1,3 @@
+path	max_added	reason
+src/android/app/src/main/java/org/yuzu/yuzu_emu/fragments/EmulationFragment.kt	260	Cumulative dual-screen hook across Stage 1-4 (geometry push, dialogs, lifecycle/config/surface call sites); see DualScreenFragmentHost for where the bulk of it lives instead.
+src/video_core/renderer_vulkan/renderer_vulkan.cpp	70	Composite() hooks: Route()'s extra arg, FitInlineGameLayout/IsInlineActive call sites, DrawToFrame's companion arg.

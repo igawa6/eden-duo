@@ -5,10 +5,21 @@
 # List every path where Eden Duo differs from the Eden upstream commit recorded in
 # .upstream/eden.json, split into Duo-only files and upstream-owned files that Duo edits.
 #
-#   duo-touched-ledger.sh                 print the TSV ledger for HEAD
-#   duo-touched-ledger.sh --check LEDGER  fail (exit 1) when HEAD edits an upstream-owned file
-#                                         that LEDGER does not list (new sync hotspot)
+#   duo-touched-ledger.sh                        print the TSV ledger for HEAD
+#   duo-touched-ledger.sh --check LEDGER         fail (exit 1) when HEAD edits an upstream-owned
+#                                                 file that LEDGER does not list (new sync hotspot)
+#   duo-touched-ledger.sh --hotspots [N]         print upstream-hook files as `added<TAB>deleted
+#                                                 <TAB>path`, sorted by added lines descending
+#                                                 (just the top N rows when N is given)
+#   duo-touched-ledger.sh --hotspots --max-added N [--allowlist FILE]
+#                                                 as above, and fail (exit 1) listing every
+#                                                 upstream-hook file whose added lines exceed N
+#                                                 -- or its own budget in FILE (default
+#                                                 .upstream/hook-budget.tsv, `path<TAB>max_added`,
+#                                                 skipped entirely when absent), for a file with a
+#                                                 recorded, justified exception
 #
+# A hand/CI check against sync risk, not a git hook -- nothing here is wired into hooks/.
 # Read-only: it runs git diff/show only and writes nothing to the repository.
 set -euo pipefail
 
@@ -49,6 +60,47 @@ if [[ ${1:-} == --check ]]; then
         exit 1
     fi
     echo "ok: no new upstream-owned files edited (base $base)"
+    exit 0
+fi
+
+if [[ ${1:-} == --hotspots ]]; then
+    shift
+    top= max_added= allowlist=.upstream/hook-budget.tsv
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            --max-added) max_added=${2:?usage: --max-added N}; shift 2 ;;
+            --allowlist) allowlist=${2:?usage: --allowlist FILE}; shift 2 ;;
+            ''|*[!0-9]*) echo "duo-touched-ledger.sh --hotspots: unrecognised argument: $1" >&2; exit 2 ;;
+            *) top=$1; shift ;;
+        esac
+    done
+
+    # upstream-hook files only, as `added<TAB>deleted<TAB>path`, sorted by added lines descending.
+    rows=$(ledger | awk -F'\t' '$1=="upstream-hook"{print $4"\t"$5"\t"$6}' | sort -t$'\t' -k1,1nr)
+    if [[ -n $top ]]; then
+        rows=$(echo "$rows" | head -n "$top")
+    fi
+    printf 'added\tdeleted\tpath\n%s\n' "$rows"
+
+    [[ -n $max_added ]] || exit 0
+    over=$(while IFS=$'\t' read -r add _ path; do
+        [[ -n $add ]] || continue
+        budget=$max_added
+        if [[ -f $allowlist ]]; then
+            file_budget=$(awk -F'\t' -v p="$path" '$1==p{print $2; exit}' "$allowlist")
+            if [[ -n $file_budget ]]; then
+                budget=$file_budget
+            fi
+        fi
+        if (( add > budget )); then
+            echo "$path adds $add lines (budget $budget)"
+        fi
+    done <<< "$rows")
+    if [[ -n $over ]]; then
+        echo "Over the added-line budget (add a .upstream/hook-budget.tsv line for a justified exception):" >&2
+        echo "$over" >&2
+        exit 1
+    fi
     exit 0
 fi
 

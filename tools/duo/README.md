@@ -32,6 +32,36 @@ entry to `.upstream/DIVERGENCES.md` when it is a deliberate divergence.
 
 The upstream commit must be present locally (`git fetch origin <sha>`).
 
+### `--hotspots`: how big is each hook, not just whether one is new
+
+`--check` only catches a *new* upstream-owned file being touched; it says nothing
+about an existing hook growing over time, which is exactly what makes a file
+risky at the next sync. `--hotspots` sizes every `upstream-hook` file instead:
+
+```sh
+tools/duo/duo-touched-ledger.sh --hotspots            # every upstream-hook file, added lines desc
+tools/duo/duo-touched-ledger.sh --hotspots 10         # just the top 10
+tools/duo/duo-touched-ledger.sh --hotspots --max-added 60
+```
+
+Plain `--hotspots [N]` only prints (`added<TAB>deleted<TAB>path`, sorted by added
+lines, limited to the top `N` rows when given) and always exits 0 -- a quick "what
+grew" check, by hand or before writing a hook. Adding `--max-added N` turns it into
+a gate: exit 1, with every offending file listed on stderr, when an upstream-hook
+file's added lines (vs the recorded upstream commit) exceed `N`.
+
+A file can out-grow a shared `N` for a reason already accepted -- a big hook that
+genuinely needs to stay big, not a new one to go fix. List it in
+`.upstream/hook-budget.tsv` (`path<TAB>max_added<TAB>reason`, tab-separated, one
+line per file) and that file's own `max_added` wins over `N` for it alone; `--check`
+is unaffected (it only ever cares whether a path is new, never its size).
+`--allowlist FILE` points at a different budget file (the default is
+`.upstream/hook-budget.tsv`, silently skipped when it does not exist).
+
+This is a hand/CI check, run deliberately with whatever `N` the caller picks for
+that run -- it is **not** wired into `hooks/pre-commit` or any other git hook, and
+should not be.
+
 ## `duo-upstream-sync.sh`
 
 ```sh
