@@ -344,7 +344,8 @@ bool DSModAuxPresenter::PrimaryPresentDisabled() {
 }
 
 std::span<const Tegra::FramebufferConfig> DSModAuxPresenter::Route(
-    std::span<const Tegra::FramebufferConfig> framebuffers) {
+    std::span<const Tegra::FramebufferConfig> framebuffers,
+    const Layout::FramebufferLayout& main_window_layout) {
     // Route the bound VI layer (or mirror everything) to the aux window.
     // Report the layers a game actually presents, once. Routing a layer to the second screen is
     // the only way to *move* part of a game's own output there rather than redraw it, and it is
@@ -364,6 +365,16 @@ std::span<const Tegra::FramebufferConfig> DSModAuxPresenter::Route(
     std::span<const Tegra::FramebufferConfig> primary = framebuffers;
     std::scoped_lock aux_lock{aux_mutex};
     SyncAuxWindow();
+
+    // Eden Duo Stage 1 (Simulated/inline dual screen): a real aux window always wins. Only when
+    // none is attached do we consider drawing the companion into the main window's own frame.
+    inline_game_rect.reset();
+    if (aux_window == nullptr && gpu.DSModAux().inline_enabled.load(std::memory_order_acquire)) {
+        inline_game_rect = RenderInline(main_window_layout);
+    } else {
+        inline_companion = CompanionQuad{};
+    }
+
     if (aux_window != nullptr && gpu.DSModAux().gpu_composite.load() &&
         gpu.DSModAux().HasComposite() && aux_window->IsShown()) {
         // GPU-composite mod path: draw map/icons/marker/HUD as quads over cached textures.
@@ -511,38 +522,39 @@ void DSModAuxPresenter::SyncAuxWindow() {
     }
 }
 
-bool DSModAuxPresenter::RenderAuxModUi() {
+// Shared by the physical (RenderAuxModUi) and Simulated/inline (RenderInlineModUi) paths: keeps
+// aux_ui_image/aux_ui_view holding the mod runtime's latest canvas, uploading only what changed.
+// Take a changed canvas straight into the staging buffer under the routing lock: one copy, no
+// per-publish allocation. Recreate on a size change only after its last upload and blit
+// have retired. Pixels are u32 0xAARRGGBB, whose little-endian bytes are [B,G,R,A]:
+// B8G8R8A8 (labelling it R8G8B8A8 swapped red and blue on the Adreno panel).
+//
+// `dirty` is AuxRouting's own accumulated
+// union since our last successful take (see WithUiPartial's doc comment) -- everything that
+// changed in `px` since `aux_ui_image` was last brought up to date, which may span more than
+// one core-side publish if this renderer polled less often than they landed. Two situations
+// still force a full upload rather than trusting it, mirroring AuxRouting's own
+// `identity_changed` fallback one layer up:
+//  - the image itself is being created or resized this call -- its prior contents (if any)
+//    are the wrong shape or don't exist, so a sub-rect patch would leave the rest undefined;
+//  - `dirty` is degenerate or already covers the whole canvas -- nothing to save by extracting
+//    a sub-rect, and an empty/malformed rect (should not happen, but is not trusted blindly)
+//    must not turn into "upload nothing".
+//
+// Tile diff (default): the routing buffer tracks which 64x64 tiles changed since our last take;
+// upload just those, straight from the routing buffer into staging (no scratch copy). The
+// bounding-box path below stays as the EDEN_DSMOD_UI_DIFF=0 fallback.
+//
+// Returns whether anything changed (recreated or uploaded) since the previous call.
+bool DSModAuxPresenter::UpdateAuxUiImage() {
     auto& aux = gpu.DSModAux();
-    const auto layout = aux_window->GetFramebufferLayout();
-    if (layout.width == 0 || layout.height == 0) {
-        return false;
-    }
-    // Take a changed canvas straight into the staging buffer under the routing lock: one copy, no
-    // per-publish allocation. Recreate on a size change only after its last upload and blit
-    // have retired. Pixels are u32 0xAARRGGBB, whose little-endian bytes are [B,G,R,A]:
-    // B8G8R8A8 (labelling it R8G8B8A8 swapped red and blue on the Adreno panel).
-    //
-    // `dirty` is AuxRouting's own accumulated
-    // union since our last successful take (see WithUiPartial's doc comment) -- everything that
-    // changed in `px` since `aux_ui_image` was last brought up to date, which may span more than
-    // one core-side publish if this renderer polled less often than they landed. Two situations
-    // still force a full upload rather than trusting it, mirroring AuxRouting's own
-    // `identity_changed` fallback one layer up:
-    //  - the image itself is being created or resized this call -- its prior contents (if any)
-    //    are the wrong shape or don't exist, so a sub-rect patch would leave the rest undefined;
-    //  - `dirty` is degenerate or already covers the whole canvas -- nothing to save by extracting
-    //    a sub-rect, and an empty/malformed rect (should not happen, but is not trusted blindly)
-    //    must not turn into "upload nothing".
-    //
-    // Tile diff (default): the routing buffer tracks which 64x64 tiles changed since our last take;
-    // upload just those, straight from the routing buffer into staging (no scratch copy). The
-    // bounding-box path below stays as the EDEN_DSMOD_UI_DIFF=0 fallback.
     const auto recreate_if_needed = [&](u32 tw, u32 th) {
         const bool recreated = !aux_ui_image || aux_ui_w != tw || aux_ui_h != th;
         if (recreated) {
             scheduler.Wait(std::max(aux_ui_upload_tick, aux_ui_blit_tick));
             aux_ui_image =
                 CreateWrappedImage(memory_allocator, VkExtent2D{tw, th}, VK_FORMAT_B8G8R8A8_UNORM);
+            aux_ui_view = CreateWrappedImageView(device, aux_ui_image, VK_FORMAT_B8G8R8A8_UNORM);
             aux_ui_w = tw;
             aux_ui_h = th;
         }
@@ -601,7 +613,7 @@ bool DSModAuxPresenter::RenderAuxModUi() {
                              VkOffset2D{x0, y0}, /*preserve=*/true);
         });
     if (!aux_ui_image || aux_ui_w == 0 || aux_ui_h == 0) {
-        return false;
+        return updated;
     }
     if (verify_uploads && updated &&
         verify_expect.size() == static_cast<size_t>(aux_ui_w) * aux_ui_h) {
@@ -627,6 +639,18 @@ bool DSModAuxPresenter::RenderAuxModUi() {
             LOG_INFO(Render_Vulkan, "DSMod aux verify: uploads={} mismatched={} max_bad_px={}",
                      verified, bad_frames, bad_px_max);
         }
+    }
+    return updated;
+}
+
+bool DSModAuxPresenter::RenderAuxModUi() {
+    const auto layout = aux_window->GetFramebufferLayout();
+    if (layout.width == 0 || layout.height == 0) {
+        return false;
+    }
+    const bool updated = UpdateAuxUiImage();
+    if (!aux_ui_image || aux_ui_w == 0 || aux_ui_h == 0) {
+        return false;
     }
     // Eden Duo: Fit keeps the canvas shape inside a panel of another shape (bars in the page
     // background); a full rect is the plain whole-frame blit.
@@ -657,7 +681,7 @@ bool DSModAuxPresenter::RenderAuxModUi() {
 
     const VkExtent2D dst_extent{frame->width, frame->height};
     scheduler.RequestOutsideRenderPassOperationContext();
-    const u32 bar = aux.ui_bg.load(std::memory_order_relaxed);
+    const u32 bar = gpu.DSModAux().ui_bg.load(std::memory_order_relaxed);
     const VkClearColorValue bar_color{.float32 = {static_cast<f32>((bar >> 16) & 0xFF) / 255.0f,
                                                   static_cast<f32>((bar >> 8) & 0xFF) / 255.0f,
                                                   static_cast<f32>(bar & 0xFF) / 255.0f, 1.0f}};
@@ -729,20 +753,84 @@ bool DSModAuxPresenter::RenderAuxModUi() {
     return true;
 }
 
-void DSModAuxPresenter::EnsureAuxCompositeResources() {
+// Eden Duo Stage 1 (Simulated/inline dual screen): the CPU-UI canvas path's analogue of
+// RenderAuxModUi above, minus the parts that need a real aux window -- no swapchain frame to
+// blit into or present; the final pass (WindowAdaptPass) samples aux_ui_image/aux_ui_view
+// directly instead. `pane` is the companion's area in main-window pixels (RenderInline already
+// checked it is non-empty).
+bool DSModAuxPresenter::RenderInlineModUi(const VideoCore::DSMod::CompanionRect& pane) {
+    UpdateAuxUiImage();
+    if (!aux_ui_image || aux_ui_w == 0 || aux_ui_h == 0) {
+        return false;
+    }
+    // Eden Duo: Fit keeps the canvas shape inside the pane (bars in the page background), same
+    // math as the physical blit's own Fit, just against the pane instead of the aux window.
+    const auto fit = VideoCore::DSMod::FitCompanion(pane.w, pane.h, aux_ui_w, aux_ui_h,
+                                                    VideoCore::DSMod::SecondScreenOptions::Ratio());
+    inline_companion.view = *aux_ui_view;
+    inline_companion.extent = VkExtent2D{aux_ui_w, aux_ui_h};
+    inline_companion.version = aux_ui_serial;
+    inline_companion.pane = VkRect2D{{static_cast<s32>(pane.x), static_cast<s32>(pane.y)},
+                                     {pane.w, pane.h}};
+    inline_companion.fit =
+        VkRect2D{{static_cast<s32>(pane.x + fit.x), static_cast<s32>(pane.y + fit.y)},
+                 {fit.w, fit.h}};
+    inline_companion.fit_is_pane = fit.full;
+    inline_companion.background = gpu.DSModAux().ui_bg.load(std::memory_order_relaxed);
+    return true;
+}
+
+// Eden Duo Stage 1: dispatch between the CPU-UI and GPU-composite inline paths (mirrors Route's
+// own physical-mode dispatch just above it), and the geometry/presence bookkeeping common to
+// both. Returns the game's rect (main-window pixels) when the companion pane has a non-empty
+// size -- the caller (RendererVulkan::Composite) then narrows the game's own layout to it --
+// else nullopt (leave the game using the whole window; nothing to show on the companion side).
+std::optional<VideoCore::DSMod::CompanionRect> DSModAuxPresenter::RenderInline(
+    const Layout::FramebufferLayout& main_window_layout) {
+    auto& aux = gpu.DSModAux();
+    const auto rects = aux.GetInlineRects(main_window_layout.width, main_window_layout.height);
+    if (rects.companion.w == 0 || rects.companion.h == 0) {
+        inline_companion = CompanionQuad{};
+        aux.present.store(false, std::memory_order_relaxed);
+        return std::nullopt;
+    }
+    // Stage 1 work item 1: while inline is active and the pane is non-empty, present/width/height
+    // read as they would with a real second screen (__aux_present, HUD-hide, runtime ticks).
+    aux.width.store(rects.companion.w, std::memory_order_relaxed);
+    aux.height.store(rects.companion.h, std::memory_order_relaxed);
+    aux.present.store(true, std::memory_order_relaxed);
+
+    const bool drew = (aux.gpu_composite.load(std::memory_order_relaxed) && aux.HasComposite())
+                          ? RenderInlineModUiGpu(rects.companion)
+                          : RenderInlineModUi(rects.companion);
+    if (!drew) {
+        // Nothing published yet: still report the pane (background-only, no quad) so the window
+        // shows the companion's colour instead of the game's own letterbox colour there.
+        inline_companion = CompanionQuad{};
+        inline_companion.pane = VkRect2D{{static_cast<s32>(rects.companion.x),
+                                          static_cast<s32>(rects.companion.y)},
+                                         {rects.companion.w, rects.companion.h}};
+        inline_companion.fit_is_pane = true;
+        inline_companion.background = aux.ui_bg.load(std::memory_order_relaxed);
+    }
+    return rects.game;
+}
+
+void DSModAuxPresenter::EnsureAuxCompositeResources(VkFormat color_format) {
     if (aux_c_init) {
-        if (!aux_c_render_pass) {
-            aux_c_render_pass = CreateWrappedRenderPass(device, aux_swapchain->GetImageViewFormat(),
+        if (!aux_c_render_pass || aux_c_format != color_format) {
+            aux_c_render_pass = CreateWrappedRenderPass(device, color_format,
                                                         VK_IMAGE_LAYOUT_UNDEFINED);
             aux_c_pipeline = CreateWrappedCoverageBlendingPipeline(
                 device, aux_c_render_pass, aux_c_pipe_layout, std::tie(aux_c_vert, aux_c_frag));
             aux_c_map_pipeline = CreateWrappedCoverageBlendingPipeline(
                 device, aux_c_render_pass, aux_c_map_pipe_layout,
                 std::tie(aux_c_vert, aux_c_map_frag));
+            aux_c_format = color_format;
         }
         return;
     }
-    const VkFormat fmt = aux_swapchain->GetImageViewFormat();
+    const VkFormat fmt = color_format;
     aux_c_set_layout =
         CreateWrappedDescriptorSetLayout(device, {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER});
     aux_c_map_set_layout =
@@ -791,10 +879,14 @@ void DSModAuxPresenter::EnsureAuxCompositeResources() {
     aux_c_map_pool = CreateWrappedDescriptorPool(device, 3, 1);
     const std::array<VkDescriptorSetLayout, 1> map_layouts{*aux_c_map_set_layout};
     aux_c_map_set = CreateWrappedDescriptorSets(aux_c_map_pool, map_layouts);
+    aux_c_format = fmt;
     aux_c_init = true;
 }
 
-bool DSModAuxPresenter::RenderAuxModUiGpu() {
+// Shared by RenderAuxModUiGpu (physical) and RenderInlineModUiGpu (Simulated/inline): takes the
+// latest quad list + textures from the routing buffer and uploads whatever changed. Returns false
+// when there is nothing to composite yet (no canvas size published).
+bool DSModAuxPresenter::UpdateAuxComposite() {
     using Quad = VideoCore::DSMod::AuxRouting::Quad;
     auto& aux = gpu.DSModAux();
     if (!aux.HasComposite()) {
@@ -814,11 +906,6 @@ bool DSModAuxPresenter::RenderAuxModUiGpu() {
     if (aux_c_cw == 0 || aux_c_ch == 0) {
         return false;
     }
-    const auto& layout = aux_window->GetFramebufferLayout();
-    if (layout.width == 0 || layout.height == 0) {
-        return false;
-    }
-    EnsureAuxCompositeResources();
 
     // Re-upload any changed source texture, async (persistent per-slot staging, no Finish),
     // copying straight out of the routing buffer. A slot whose size changed gets a new image and
@@ -924,36 +1011,23 @@ bool DSModAuxPresenter::RenderAuxModUiGpu() {
         device.GetLogical().UpdateDescriptorSets(writes, {});
         aux_c_map_desc_ready = true;
     }
-    // Eden Duo: Fit keeps the canvas shape (see RenderAuxModUi); the bars are the page
-    // background the full-frame clear below already lays down.
-    const auto fit = VideoCore::DSMod::FitCompanion(layout.width, layout.height, aux_c_cw, aux_c_ch,
-                                                    VideoCore::DSMod::SecondScreenOptions::Ratio());
-    // Hold the last present when nothing changed: the panel keeps showing it, so we neither
-    // re-record nor re-present (presenting every game frame halved fps). A panel resize or a
-    // reattach (DestroyAuxLocked clears aux_c_presented) re-presents the kept composite.
-    if (!aux_c_dirty && aux_c_presented && aux_c_last_w == layout.width &&
-        aux_c_last_h == layout.height && aux_c_last_full == fit.full) {
-        return true;
-    }
+    return true;
+}
 
-    Frame* frame = aux_present_manager->TryGetRenderFrame();
-    if (frame == nullptr) {
-        return false;
-    }
-    if (frame->width != layout.width || frame->height != layout.height || !frame->framebuffer) {
-        aux_present_manager->RecreateFrame(frame, layout.width, layout.height,
-                                           aux_swapchain->GetImageViewFormat(), *aux_c_render_pass,
-                                           /*storage=*/false);
-    }
-    const VkExtent2D render_area{frame->width, frame->height};
+// See the header doc comment. `fit`/`fit_full` are already resolved by the caller (against the
+// aux window's layout for the physical path, against the companion pane for inline).
+void DSModAuxPresenter::RecordCompositeDraws(VkFramebuffer dst_fb, VkImage dst_image,
+                                             VkExtent2D render_area,
+                                             VideoCore::DSMod::CompanionRect fit, bool fit_full) {
+    using Quad = VideoCore::DSMod::AuxRouting::Quad;
     const std::array<f32, 4> scale_offset{2.0f / static_cast<f32>(aux_c_cw),
                                           2.0f / static_cast<f32>(aux_c_ch), -1.0f, -1.0f};
     const f32 canvas_to_frame_x =
-        static_cast<f32>(fit.full ? render_area.width : fit.w) / aux_c_cw;
+        static_cast<f32>(fit_full ? render_area.width : fit.w) / aux_c_cw;
     const f32 canvas_to_frame_y =
-        static_cast<f32>(fit.full ? render_area.height : fit.h) / aux_c_ch;
-    const s32 frame_x0 = fit.full ? 0 : static_cast<s32>(fit.x);
-    const s32 frame_y0 = fit.full ? 0 : static_cast<s32>(fit.y);
+        static_cast<f32>(fit_full ? render_area.height : fit.h) / aux_c_ch;
+    const s32 frame_x0 = fit_full ? 0 : static_cast<s32>(fit.x);
+    const s32 frame_y0 = fit_full ? 0 : static_cast<s32>(fit.y);
     const f32 br = static_cast<f32>((aux_c_bg >> 16) & 0xFF) / 255.0f;
     const f32 bgg = static_cast<f32>((aux_c_bg >> 8) & 0xFF) / 255.0f;
     const f32 bb = static_cast<f32>(aux_c_bg & 0xFF) / 255.0f;
@@ -983,11 +1057,13 @@ bool DSModAuxPresenter::RenderAuxModUiGpu() {
         draws.push_back({q, q.map_fade ? aux_c_map_set[0] : aux_c_sets[q.slot], q.map_fade});
     }
     scheduler.RequestOutsideRenderPassOperationContext();
-    scheduler.Record([draws = std::move(draws), fb = *frame->framebuffer, rp = *aux_c_render_pass,
-                      pipe = *aux_c_pipeline, map_pipe = *aux_c_map_pipeline,
-                      pl = *aux_c_pipe_layout, map_pl = *aux_c_map_pipe_layout, render_area,
-                      scale_offset, canvas_to_frame_x, canvas_to_frame_y, frame_x0, frame_y0,
-                      fit, br, bgg, bb, ba](vk::CommandBuffer cmdbuf) {
+    scheduler.Record([draws = std::move(draws), fb = dst_fb, img = dst_image,
+                      rp = *aux_c_render_pass, pipe = *aux_c_pipeline,
+                      map_pipe = *aux_c_map_pipeline, pl = *aux_c_pipe_layout,
+                      map_pl = *aux_c_map_pipe_layout, render_area, scale_offset,
+                      canvas_to_frame_x, canvas_to_frame_y, frame_x0, frame_y0, fit_full, fit_x = fit.x,
+                      fit_y = fit.y, fit_w = fit.w, fit_h = fit.h,
+                      br, bgg, bb, ba](vk::CommandBuffer cmdbuf) {
         BeginRenderPass(cmdbuf, rp, fb, render_area);
         const VkClearAttachment clear_att{
             .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
@@ -1000,27 +1076,27 @@ bool DSModAuxPresenter::RenderAuxModUiGpu() {
             .layerCount = 1,
         };
         cmdbuf.ClearAttachments({clear_att}, {clear_rect});
-        if (!fit.full) {
+        if (!fit_full) {
             // Draw the canvas into the fitted rect only; the clear above made the bars.
             const VkViewport fit_viewport{
-                .x = static_cast<f32>(fit.x),
-                .y = static_cast<f32>(fit.y),
-                .width = static_cast<f32>(fit.w),
-                .height = static_cast<f32>(fit.h),
+                .x = static_cast<f32>(fit_x),
+                .y = static_cast<f32>(fit_y),
+                .width = static_cast<f32>(fit_w),
+                .height = static_cast<f32>(fit_h),
                 .minDepth = 0.0f,
                 .maxDepth = 1.0f,
             };
             const VkRect2D fit_scissor{
-                .offset = {static_cast<s32>(fit.x), static_cast<s32>(fit.y)},
-                .extent = {fit.w, fit.h},
+                .offset = {static_cast<s32>(fit_x), static_cast<s32>(fit_y)},
+                .extent = {fit_w, fit_h},
             };
             cmdbuf.SetViewport(0, fit_viewport);
             cmdbuf.SetScissor(0, fit_scissor);
         }
-        const s32 area_x1 = fit.full ? static_cast<s32>(render_area.width)
-                                     : static_cast<s32>(fit.x + fit.w);
-        const s32 area_y1 = fit.full ? static_cast<s32>(render_area.height)
-                                     : static_cast<s32>(fit.y + fit.h);
+        const s32 area_x1 = fit_full ? static_cast<s32>(render_area.width)
+                                     : static_cast<s32>(fit_x + fit_w);
+        const s32 area_y1 = fit_full ? static_cast<s32>(render_area.height)
+                                     : static_cast<s32>(fit_y + fit_h);
         for (const auto& d : draws) {
             const Quad& q = d.q;
             if (q.solid) {
@@ -1073,8 +1149,48 @@ bool DSModAuxPresenter::RenderAuxModUiGpu() {
             cmdbuf.Draw(4, 1, 0, 0);
         }
         cmdbuf.EndRenderPass();
+        // Eden Duo Stage 1: makes this write visible to a later shader read of the same image in
+        // the same frame (RenderInlineModUiGpu samples it right after, in WindowAdaptPass) --
+        // same convention FXAA/SMAA use for a same-frame write-then-sample. A no-op in spirit for
+        // the physical path (presentation has its own sync), harmless to include unconditionally.
+        TransitionImageLayout(cmdbuf, img, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL);
     });
     aux_c_draw_tick = scheduler.CurrentTick();
+}
+
+bool DSModAuxPresenter::RenderAuxModUiGpu() {
+    if (!UpdateAuxComposite()) {
+        return false;
+    }
+    const auto& layout = aux_window->GetFramebufferLayout();
+    if (layout.width == 0 || layout.height == 0) {
+        return false;
+    }
+    EnsureAuxCompositeResources(aux_swapchain->GetImageViewFormat());
+
+    // Eden Duo: Fit keeps the canvas shape (see RenderAuxModUi); the bars are the page
+    // background the full-frame clear below already lays down.
+    const auto fit = VideoCore::DSMod::FitCompanion(layout.width, layout.height, aux_c_cw, aux_c_ch,
+                                                    VideoCore::DSMod::SecondScreenOptions::Ratio());
+    // Hold the last present when nothing changed: the panel keeps showing it, so we neither
+    // re-record nor re-present (presenting every game frame halved fps). A panel resize or a
+    // reattach (DestroyAuxLocked clears aux_c_presented) re-presents the kept composite.
+    if (!aux_c_dirty && aux_c_presented && aux_c_last_w == layout.width &&
+        aux_c_last_h == layout.height && aux_c_last_full == fit.full) {
+        return true;
+    }
+
+    Frame* frame = aux_present_manager->TryGetRenderFrame();
+    if (frame == nullptr) {
+        return false;
+    }
+    if (frame->width != layout.width || frame->height != layout.height || !frame->framebuffer) {
+        aux_present_manager->RecreateFrame(frame, layout.width, layout.height,
+                                           aux_swapchain->GetImageViewFormat(), *aux_c_render_pass,
+                                           /*storage=*/false);
+    }
+    RecordCompositeDraws(*frame->framebuffer, *frame->image,
+                         VkExtent2D{frame->width, frame->height}, fit, fit.full);
     // Debug: pull the composited frame back and hand it to the screenshot path (screen2.png).
     // Costs a full GPU drain per present, so it is a developer switch, read once.
     static const bool readback = Common::DSMod::DevEnvironment("EDEN_DSMOD_GPU_READBACK") != nullptr;
@@ -1118,6 +1234,69 @@ bool DSModAuxPresenter::RenderAuxModUiGpu() {
             aux_c_upload_count[VideoCore::DSMod::AuxRouting::MapFadeSlot], aux_c_upload_count[1],
                   aux_c_upload_count[2]);
     }
+    return true;
+}
+
+// Eden Duo Stage 1: the offscreen image RenderInlineModUiGpu composites into, 1:1 at the canvas's
+// own size (letterboxing against the companion pane happens once more, in WindowAdaptPass).
+// aux_c_render_pass must already be built for this image's fixed format (EnsureAuxCompositeResources).
+void DSModAuxPresenter::EnsureInlineCompositeImage(u32 w, u32 h) {
+    if (aux_inline_image && aux_inline_w == w && aux_inline_h == h) {
+        return;
+    }
+    // The previous image may still be read by WindowAdaptPass's companion quad (last frame's
+    // sample); the draw that wrote it is the last thing that could still be reading it too.
+    scheduler.Wait(aux_c_draw_tick);
+    constexpr VkFormat fmt = VK_FORMAT_B8G8R8A8_UNORM;
+    aux_inline_image = CreateWrappedImage(memory_allocator, VkExtent2D{w, h}, fmt);
+    aux_inline_view = CreateWrappedImageView(device, aux_inline_image, fmt);
+    const VkImageView view = *aux_inline_view;
+    aux_inline_framebuffer = device.GetLogical().CreateFramebuffer(VkFramebufferCreateInfo{
+        .sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
+        .pNext = nullptr,
+        .flags = 0,
+        .renderPass = *aux_c_render_pass,
+        .attachmentCount = 1,
+        .pAttachments = &view,
+        .width = w,
+        .height = h,
+        .layers = 1,
+    });
+    aux_inline_w = w;
+    aux_inline_h = h;
+}
+
+// Eden Duo Stage 1: the GPU-composite path's analogue of RenderAuxModUiGpu above, minus the parts
+// that need a real aux window -- the quad list draws into aux_inline_image (1:1, no Fit) instead
+// of an aux swapchain frame; the final pass samples it directly. `pane` is the companion's area
+// in main-window pixels (RenderInline already checked it is non-empty).
+bool DSModAuxPresenter::RenderInlineModUiGpu(const VideoCore::DSMod::CompanionRect& pane) {
+    if (!UpdateAuxComposite()) {
+        return false;
+    }
+    EnsureAuxCompositeResources(VK_FORMAT_B8G8R8A8_UNORM);
+    EnsureInlineCompositeImage(aux_c_cw, aux_c_ch);
+    if (aux_c_dirty) {
+        RecordCompositeDraws(*aux_inline_framebuffer, *aux_inline_image,
+                             VkExtent2D{aux_c_cw, aux_c_ch},
+                             VideoCore::DSMod::CompanionRect{0, 0, aux_c_cw, aux_c_ch, true},
+                             /*fit_full=*/true);
+        aux_c_dirty = false;
+    }
+    // Eden Duo: Fit keeps the composited canvas' shape inside the pane (bars in its background);
+    // a full rect is the plain whole-pane draw.
+    const auto fit = VideoCore::DSMod::FitCompanion(pane.w, pane.h, aux_c_cw, aux_c_ch,
+                                                    VideoCore::DSMod::SecondScreenOptions::Ratio());
+    inline_companion.view = *aux_inline_view;
+    inline_companion.extent = VkExtent2D{aux_c_cw, aux_c_ch};
+    inline_companion.version = aux_c_comp_serial;
+    inline_companion.pane = VkRect2D{{static_cast<s32>(pane.x), static_cast<s32>(pane.y)},
+                                     {pane.w, pane.h}};
+    inline_companion.fit =
+        VkRect2D{{static_cast<s32>(pane.x + fit.x), static_cast<s32>(pane.y + fit.y)},
+                 {fit.w, fit.h}};
+    inline_companion.fit_is_pane = fit.full;
+    inline_companion.background = aux_c_bg;
     return true;
 }
 

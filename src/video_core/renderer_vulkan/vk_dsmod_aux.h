@@ -22,6 +22,7 @@
 #include "video_core/dsmod/aux_routing.h"
 #include "video_core/framebuffer_config.h"
 #include "video_core/host1x/gpu_device_memory_manager.h"
+#include "video_core/renderer_vulkan/present/window_adapt_pass.h" // Eden Duo Stage 1: CompanionQuad
 #include "video_core/renderer_vulkan/vk_blit_screen.h"
 #include "video_core/renderer_vulkan/vk_present_manager.h"
 #include "video_core/renderer_vulkan/vk_swapchain.h"
@@ -29,6 +30,10 @@
 
 namespace Core::Frontend {
 class EmuWindow;
+}
+
+namespace Layout {
+struct FramebufferLayout;
 }
 
 namespace Tegra {
@@ -58,15 +63,50 @@ public:
 
     /// Presents this frame's aux output (mod UI, GPU composite, bound layer or mirror) and returns
     /// the layers that stay on the primary screen. The returned span is valid until the next call.
+    /// `main_window_layout`: Eden Duo Stage 1 (Simulated/inline dual screen) -- the main window's
+    /// current size, needed to turn AuxRouting's inline fractions into pixels. Ignored while a
+    /// real aux window is attached (Physical always wins; see GetInlineCompanionQuad).
     std::span<const Tegra::FramebufferConfig> Route(
-        std::span<const Tegra::FramebufferConfig> framebuffers);
+        std::span<const Tegra::FramebufferConfig> framebuffers,
+        const Layout::FramebufferLayout& main_window_layout);
 
     /// EDEN_NO_PRESENT (headless verification): never hand a primary frame to the window.
     static bool PrimaryPresentDisabled();
 
+    /// Eden Duo Stage 1: this frame's companion quad for WindowAdaptPass to sample, filled by the
+    /// Route() call that just returned (nothing else touches it meanwhile: both run on the GPU
+    /// thread, sequentially, within RendererVulkan::Composite). Empty (`pane` zero-extent) when
+    /// inline is not in effect -- a real aux window attached, the switch off, or the pane fraction
+    /// resolving to nothing.
+    [[nodiscard]] const CompanionQuad& GetInlineCompanionQuad() const { return inline_companion; }
+
+    /// Eden Duo Stage 1: the game's rect in main-window pixels this frame, or nullopt when inline
+    /// is not in effect (the caller should then leave its own default layout alone).
+    [[nodiscard]] std::optional<VideoCore::DSMod::CompanionRect> GetInlineGameRect() const {
+        return inline_game_rect;
+    }
+
 private:
     void SyncAuxWindow();
     void RenderAuxWindow(std::span<const Tegra::FramebufferConfig> layers);
+    /// Shared by the physical (RenderAuxModUi) and Simulated/inline (RenderInlineModUi) paths:
+    /// keeps aux_ui_image/aux_ui_view holding the mod runtime's latest canvas, uploading only
+    /// what changed (or creating/resizing it on a shape change). Returns whether anything did.
+    bool UpdateAuxUiImage();
+    /// Eden Duo Stage 1: inline dispatch, called from Route() instead of the aux_window branch
+    /// below when inline is active and no real aux window is attached. Returns the game's rect
+    /// (main-window pixels) when the pane has a non-empty size, else nullopt.
+    std::optional<VideoCore::DSMod::CompanionRect> RenderInline(
+        const Layout::FramebufferLayout& main_window_layout);
+    /// Fills inline_companion from the mod runtime's CPU canvas (aux_ui_image/aux_ui_view),
+    /// Fit-ted inside `pane`. Returns false (and clears inline_companion) when there is no canvas
+    /// yet.
+    bool RenderInlineModUi(const VideoCore::DSMod::CompanionRect& pane);
+    /// Fills inline_companion from the GPU-composite quad list, rendered into an offscreen image
+    /// this presenter owns (aux_inline_image) instead of an aux swapchain frame. Returns false
+    /// (and clears inline_companion) when there is nothing to composite yet.
+    bool RenderInlineModUiGpu(const VideoCore::DSMod::CompanionRect& pane);
+    void EnsureInlineCompositeImage(u32 w, u32 h);
     /// Presents the mod runtime's UI image on the aux window. Returns false when there is none.
     bool RenderAuxModUi();
 
@@ -107,6 +147,7 @@ private:
     size_t aux_ui_staging_bytes{};
     u64 aux_ui_upload_tick{};
     u64 aux_ui_blit_tick{}; ///< last blit that read aux_ui_image; retire before replacing it
+    vk::ImageView aux_ui_view; ///< Eden Duo Stage 1: lets the inline quad sample aux_ui_image
     u32 aux_ui_w{};
     u32 aux_ui_h{};
     u64 aux_ui_serial{};
@@ -126,9 +167,26 @@ private:
     // pass. Textures re-upload async (persistent per-slot staging, no Finish) only when their
     // serial moves; the marker/map-pan is just new quad geometry per frame.
     static constexpr u32 NumAuxTex = VideoCore::DSMod::AuxRouting::NumAuxTex;
-    void EnsureAuxCompositeResources();
+    /// `color_format`: the render pass/pipelines are rebuilt for it when it differs from the one
+    /// they were last built with (physical mode passes the aux swapchain's format; Simulated/
+    /// inline mode, with no swapchain at all, passes a fixed one -- see RenderInlineModUiGpu).
+    /// Mutual exclusion between the two modes means this never thrashes in practice.
+    void EnsureAuxCompositeResources(VkFormat color_format);
     bool RenderAuxModUiGpu();
+    /// Shared by RenderAuxModUiGpu (physical) and RenderInlineModUiGpu (Simulated/inline): takes
+    /// the latest quad list + textures from the routing buffer and uploads whatever changed into
+    /// aux_c_img/aux_c_quads. Returns false when there is nothing to composite yet (no canvas
+    /// size published).
+    bool UpdateAuxComposite();
+    /// Records the quad list (aux_c_quads) into `dst_fb`'s render pass at `render_area`, Fit-ting
+    /// into `fit` (relative to {0,0}, i.e. already local to the destination image) when
+    /// `fit_full` is false. Shared by both GPU-composite call sites; ends with a barrier making
+    /// the write visible to a later shader read of `dst_image` in the same frame (matches the
+    /// FXAA/SMAA passes' own convention for a same-frame write-then-sample).
+    void RecordCompositeDraws(VkFramebuffer dst_fb, VkImage dst_image, VkExtent2D render_area,
+                              VideoCore::DSMod::CompanionRect fit, bool fit_full);
     bool aux_c_init{false};
+    VkFormat aux_c_format{}; ///< the format aux_c_render_pass/pipelines were last built for
     vk::DescriptorSetLayout aux_c_set_layout;
     vk::DescriptorSetLayout aux_c_map_set_layout;
     vk::PipelineLayout aux_c_pipe_layout;
@@ -171,6 +229,22 @@ private:
     vk::Buffer aux_c_readback_buf;
     u32 aux_c_readback_w{};
     u32 aux_c_readback_h{};
+
+    // ------------- Eden Duo Stage 1: Simulated (single-surface) dual screen -------------
+    // The offscreen image RenderInlineModUiGpu renders the composite into, 1:1 at the canvas's
+    // own size (no letterboxing here -- that happens once, in WindowAdaptPass, against the
+    // companion pane). Recreated on a canvas size change, like aux_c_img's slots.
+    vk::Image aux_inline_image;
+    vk::ImageView aux_inline_view;
+    vk::Framebuffer aux_inline_framebuffer;
+    u32 aux_inline_w{};
+    u32 aux_inline_h{};
+
+    /// This frame's companion quad (GetInlineCompanionQuad) and game rect (GetInlineGameRect),
+    /// written by RenderInline/RenderInlineModUi(Gpu) during Route(), read right after by
+    /// RendererVulkan::Composite on the same (GPU) thread.
+    CompanionQuad inline_companion;
+    std::optional<VideoCore::DSMod::CompanionRect> inline_game_rect;
 };
 
 } // namespace Vulkan

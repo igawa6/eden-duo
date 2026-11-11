@@ -223,7 +223,9 @@ void RendererVulkan::Composite(std::span<const Tegra::FramebufferConfig> framebu
     RenderAppletCaptureLayer(framebuffers);
 
     // DSMod: present the aux (second screen) output; `primary` stays on this window.
-    const auto primary = dsmod_aux->Route(framebuffers);
+    // Eden Duo Stage 1 (Simulated/inline dual screen): `main_window_layout` lets Route() turn
+    // AuxRouting's inline fractions into this frame's actual companion-pane pixels.
+    const auto primary = dsmod_aux->Route(framebuffers, render_window.GetFramebufferLayout());
 
     // Screenshots are serviced even when the window is hidden or occluded, so headless
     // verification runs can still capture the primary screen.
@@ -240,25 +242,44 @@ void RendererVulkan::Composite(std::span<const Tegra::FramebufferConfig> framebu
 
     Frame* frame = present_manager.GetRenderFrame();
 
+    // Eden Duo Stage 1: when inline is active this frame, the game draws into its own rect of
+    // the window (not the whole thing) and the companion quad samples the image dsmod_aux
+    // already produced for its rect -- see WindowAdaptPass::Draw. Both are the upstream default
+    // (the whole window; no companion quad) whenever inline is not in effect.
+    Layout::FramebufferLayout layout = render_window.GetFramebufferLayout();
+    const auto inline_game_rect = dsmod_aux->GetInlineGameRect();
+    if (inline_game_rect) {
+        layout.screen = Common::Rectangle<u32>{
+            inline_game_rect->x, inline_game_rect->y, inline_game_rect->x + inline_game_rect->w,
+            inline_game_rect->y + inline_game_rect->h};
+    }
+    const auto companion_quad = dsmod_aux->GetInlineCompanionQuad();
+
     scheduler.RequestOutsideRenderPassOperationContext();
-    blit_swapchain.DrawToFrame(device, rasterizer, frame, primary,
-                               render_window.GetFramebufferLayout(),
+    blit_swapchain.DrawToFrame(device, rasterizer, frame, primary, layout,
                                present_manager.SwapchainImageCount(),
-                               swapchain.GetImageViewFormat());
+                               swapchain.GetImageViewFormat(), &companion_quad);
 
 #ifdef HAS_LSFG
-    void(frame_gen.WantedGenerations(present_manager.MaxExtraFrames()));
+    // Eden Duo Stage 1: a generated frame is a motion-vector blend of two real frames' own
+    // pixels, including whatever WindowAdaptPass just drew into them -- a UI quad warped by
+    // game-motion interpolation would look wrong, and frame_gen has no notion of a second quad
+    // to redraw on its own output. Simplest safe choice for this prototype: skip generation
+    // while inline is active rather than teach it about one (see the Stage 1 report).
+    if (!inline_game_rect) {
+        void(frame_gen.WantedGenerations(present_manager.MaxExtraFrames()));
 
-    frame_gen.Process(device, frame, present_manager.SwapchainImageFormat(),
-                      GuestExtent(primary));
+        frame_gen.Process(device, frame, present_manager.SwapchainImageFormat(),
+                          GuestExtent(primary));
 
-    const size_t generated_frames = frame_gen.GeneratedFrameCount();
-    for (size_t generation = 0; generation < generated_frames; ++generation) {
-        Frame* generated = present_manager.GetRenderFrame();
-        blit_swapchain.PrepareFrame(device, generated, render_window.GetFramebufferLayout());
-        frame_gen.GenerateInto(device, generated, generation);
-        scheduler.Flush(*generated->render_ready);
-        present_manager.Present(generated);
+        const size_t generated_frames = frame_gen.GeneratedFrameCount();
+        for (size_t generation = 0; generation < generated_frames; ++generation) {
+            Frame* generated = present_manager.GetRenderFrame();
+            blit_swapchain.PrepareFrame(device, generated, render_window.GetFramebufferLayout());
+            frame_gen.GenerateInto(device, generated, generation);
+            scheduler.Flush(*generated->render_ready);
+            present_manager.Present(generated);
+        }
     }
 #endif
 
