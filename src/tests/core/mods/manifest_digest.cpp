@@ -1281,9 +1281,9 @@ void CheckLayouts() {
     };
     // clang-format off
     const Size sizes[] = {
-        {"Manifest", sizeof(Manifest), 2472},
+        {"Manifest", sizeof(Manifest), 2488}, // runtime 25: canvas_alt_w/_h/_when
         {"Page", sizeof(Page), 160},
-        {"Widget", sizeof(Widget), 2344},
+        {"Widget", sizeof(Widget), 2360}, // runtime 25: rect_alt
         {"ChartSpec", sizeof(ChartSpec), 64},
         {"ViewDefaultBinds", sizeof(ViewDefaultBinds), 128},
         {"ScrollRegion", sizeof(ScrollRegion), 368},
