@@ -45,6 +45,7 @@
 #include "core/hle/service/filesystem/filesystem.h"
 #include "core/launch_params.h"
 #include "core/loader/loader.h"
+#include "core/mods/mod_launch_gate.h"
 #include "core/perf_stats.h"
 #include "hid_core/frontend/emulated_controller.h"
 #include "hid_core/hid_core.h"
@@ -852,6 +853,7 @@ std::optional<SDL_AppResult> ParseCommandLine(Session& session, int argc, char**
         {"aux-window", no_argument, 0, 'a'},
         {"aux-virtual", no_argument, 0, 'V'},
         {"aux-inline", required_argument, 0, 'B'},
+        {"no-companions", no_argument, 0, 'O'},
         {"dump-il2cpp", required_argument, 0, 'D'},
         {"dump-romfs", required_argument, 0, 'R'},
         {"install", required_argument, 0, 'I'},
@@ -956,6 +958,11 @@ std::optional<SDL_AppResult> ParseCommandLine(Session& session, int argc, char**
                 session.aux_inline_companion = rect;
                 break;
             }
+            case 'O':
+                // Stage 3 (dual screen mode Off): gate read once, before Core::System::Load()
+                // below selects/starts the companion for this run.
+                Core::Mods::SetCompanionsDisabledForLaunch(true);
+                break;
             case 'D':
                 dump_il2cpp_dir = optarg;
                 break;
