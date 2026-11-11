@@ -11,6 +11,8 @@
 #include <cmath>
 #include <cstdint>
 #include <dlfcn.h>
+#include <optional>
+#include <tuple>
 
 #include "common/android/id_cache.h"
 #include "common/logging.h"
@@ -22,6 +24,35 @@
 #include "input_common/main.h"
 #include "jni/emu_window/emu_window.h"
 #include "jni/native.h"
+#include "video_core/dsmod/aux_routing.h"
+#include "video_core/gpu.h"
+
+namespace {
+// Eden Duo Stage 2: Simulated (inline) dual screen keeps this window's own SurfaceView
+// full-window (EmulationFragment forces it, Stage 1 CHECK 3) so the native renderer alone
+// decides the game/companion split within one swapchain image -- so the game's own touch area
+// is narrower than the window without the window (or its framebuffer_layout, which
+// MapToTouchScreen below reads) ever knowing it. Returns the game's current rect in window
+// pixels when inline is active and it is narrower than the whole window, else nullopt (nothing
+// to remap: nullopt also covers "not powered on yet" and "GPU not created yet", both of which
+// make calling GPU() unsafe).
+std::optional<VideoCore::DSMod::CompanionRect> InlineGameRectIfNarrower(u32 window_w,
+                                                                        u32 window_h) {
+    auto& session = EmulationSession::GetInstance();
+    if (!session.System().IsPoweredOn()) {
+        return std::nullopt;
+    }
+    auto& aux = session.System().GPU().DSModAux();
+    if (!aux.inline_enabled.load(std::memory_order_acquire)) {
+        return std::nullopt;
+    }
+    const auto rects = aux.GetInlineRects(window_w, window_h);
+    if (rects.game.full || rects.game.w == 0 || rects.game.h == 0) {
+        return std::nullopt;
+    }
+    return rects.game;
+}
+} // namespace
 
 void EmuWindow_Android::OnSurfaceChanged(ANativeWindow* surface) {
     if (!surface) {
@@ -60,13 +91,37 @@ void EmuWindow_Android::OnSurfaceChanged(ANativeWindow* surface) {
 }
 
 void EmuWindow_Android::OnTouchPressed(int id, float x, float y) {
-    const auto [touch_x, touch_y] = MapToTouchScreen(x, y);
+    float touch_x, touch_y;
+    if (!m_is_aux) {
+        if (const auto rect =
+                InlineGameRectIfNarrower(static_cast<u32>(m_window_width),
+                                         static_cast<u32>(m_window_height))) {
+            std::tie(touch_x, touch_y) = VideoCore::DSMod::MapWindowPointToRect(
+                static_cast<u32>(x), static_cast<u32>(y), *rect);
+            EmulationSession::GetInstance().GetInputSubsystem().GetTouchScreen()->TouchPressed(
+                touch_x, touch_y, id);
+            return;
+        }
+    }
+    std::tie(touch_x, touch_y) = MapToTouchScreen(x, y);
     EmulationSession::GetInstance().GetInputSubsystem().GetTouchScreen()->TouchPressed(touch_x,
                                                                                        touch_y, id);
 }
 
 void EmuWindow_Android::OnTouchMoved(int id, float x, float y) {
-    const auto [touch_x, touch_y] = MapToTouchScreen(x, y);
+    float touch_x, touch_y;
+    if (!m_is_aux) {
+        if (const auto rect =
+                InlineGameRectIfNarrower(static_cast<u32>(m_window_width),
+                                         static_cast<u32>(m_window_height))) {
+            std::tie(touch_x, touch_y) = VideoCore::DSMod::MapWindowPointToRect(
+                static_cast<u32>(x), static_cast<u32>(y), *rect);
+            EmulationSession::GetInstance().GetInputSubsystem().GetTouchScreen()->TouchMoved(
+                touch_x, touch_y, id);
+            return;
+        }
+    }
+    std::tie(touch_x, touch_y) = MapToTouchScreen(x, y);
     EmulationSession::GetInstance().GetInputSubsystem().GetTouchScreen()->TouchMoved(touch_x,
                                                                                      touch_y, id);
 }

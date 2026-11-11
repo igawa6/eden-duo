@@ -229,6 +229,25 @@ namespace AndroidSettings {
         Settings::Setting<s32> no_companion{linkage, 0, "no_companion",
                                             Settings::Category::Android,
                                             Settings::Specialization::Default, true, true};
+
+        // Eden Duo Stage 2: Graphics -> Dual screen, Simulated group. Dual-screen Mode itself
+        // lives in Kotlin (DualScreenMode.kt), like Swap Screens and No Companion above, since it
+        // must be known before the game window opens; these three are read continuously by the
+        // renderer/layout engine instead, so they follow companion_ratio's own pattern.
+        Settings::SwitchableSetting<s32> companion_layout{linkage, 0, "companion_layout",
+                                                          Settings::Category::Android,
+                                                          Settings::Specialization::Default, true,
+                                                          true};
+        // Percent of the long edge the game pane takes in a side-by-side/stacked split.
+        Settings::SwitchableSetting<s32> divider_position{linkage, 60, "divider_position",
+                                                           Settings::Category::Android,
+                                                           Settings::Specialization::Default, true,
+                                                           true};
+        // "Companion scaling" in the Simulated group -- independent of companion_ratio (Physical's
+        // own, renamed in the UI but not in storage). See SecondScreenOptions::inline_companion_ratio.
+        Settings::SwitchableSetting<s32> companion_scaling_inline{
+            linkage, 0, "companion_scaling_inline", Settings::Category::Android,
+            Settings::Specialization::Default, true, true};
     };
 
     extern Values values;
