@@ -122,10 +122,13 @@ data class DualScreenAspect(val w: Int, val h: Int)
  *    their natural (full window width, un-shrunk) aspect height, the remainder to controls --
  *    RESEARCH.md I1's own phone illustration. With a controller, stacked is the aspect-locked
  *    two-band maximise, just vertical instead of horizontal.
- *  - Whatever the above computes, a companion pane whose short edge is under
- *    [MIN_PANE_SHORT_EDGE_DP] collapses: the game absorbs its space, companion stays reachable
- *    through the toggle. With both panes aspect-locked the reported rect already has no internal
- *    bars, so its own short edge is the relevant one directly (no separate Fit step needed here).
+ *  - Automatic only: a companion pane whose short edge is under [MIN_PANE_SHORT_EDGE_DP]
+ *    collapses: the game absorbs its space, companion stays reachable through the toggle. With
+ *    both panes aspect-locked the reported rect already has no internal bars, so its own short
+ *    edge is the relevant one directly (no separate Fit step needed here). An explicit Stacked or
+ *    Side by side choice (Beta 3 owner decision) is exempt from this one floor -- the user picked
+ *    that layout on purpose, so it stays visible at whatever the divider gives it -- but still
+ *    collapses under [MIN_WINDOW_SHORT_EDGE_DP] (the window itself is too small to use at all).
  */
 object DualScreenGeometry {
     /** The project's default companion canvas (CLAUDE.md "default new companion work"). */
@@ -175,6 +178,15 @@ object DualScreenGeometry {
         gameAspect: DualScreenAspect?
     ): DualScreenLayout {
         val divider = userLayout.dividerPercent.coerceIn(1, 99) / 100f
+        // Owner decision (Beta 3): the companion-size floor (MIN_PANE_SHORT_EDGE_DP) is an
+        // Automatic-only safety net against a shrink-to-fit maximise landing too small to read.
+        // An explicit choice (Stacked/Side by side) already budgets its own band by the user's
+        // own divider -- collapsing it anyway (as every branch did through Beta 2) defeats the
+        // explicit choice outright on any window whose budgeted companion band happens to be
+        // narrow, e.g. the Thor's own 1920x1080 top screen at the 60% default divider. Only the
+        // tiny-window floor (MIN_WINDOW_SHORT_EDGE_DP) still applies -- an explicit layout on a
+        // genuinely cramped window (a flip-phone cover screen) still collapses.
+        val applyPaneFloor = userLayout.choice == DualScreenLayoutChoice.AUTOMATIC
         val raw = when {
             userLayout.choice == DualScreenLayoutChoice.SIDE_BY_SIDE ->
                 sideBySide(window, divider, gameAspect, automatic = false)
@@ -192,7 +204,7 @@ object DualScreenGeometry {
             window.isLandscape -> sideBySide(window, divider, gameAspect, automatic = true)
             else -> stacked(window, divider, controllerConnected, gameAspect, automatic = true)
         }
-        return collapseIfTooSmall(raw, window)
+        return collapseIfTooSmall(raw, window, applyPaneFloor)
     }
 
     // ---- side by side (landscape default) ----
@@ -350,13 +362,19 @@ object DualScreenGeometry {
 
     private fun collapseIfTooSmall(
         layout: DualScreenLayout,
-        window: DualScreenWindow
+        window: DualScreenWindow,
+        applyPaneFloor: Boolean
     ): DualScreenLayout {
         if (layout.companionRect.isEmpty) {
             return layout
         }
         if (minOf(window.widthDp, window.heightDp) < MIN_WINDOW_SHORT_EDGE_DP) {
             return collapse(layout)
+        }
+        if (!applyPaneFloor) {
+            // Explicit Stacked/Side by side: the user already picked this split on purpose --
+            // only the window-itself floor above applies (Beta 3 owner decision).
+            return layout
         }
         val density = if (window.densityDpi <= 0) 1f else window.densityDpi / 160f
         val shortEdgeDp = minOf(layout.companionRect.w, layout.companionRect.h) / density

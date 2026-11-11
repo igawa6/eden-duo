@@ -233,6 +233,75 @@ class DualScreenGeometryTest {
         assertTrue(layout.companionRect.h < 1080) // letterboxed: bars above/below within the budget
     }
 
+    // ---- Beta 3: an explicit layout is exempt from the per-pane floor (owner decision) ----
+
+    @Test
+    fun explicitStackedOnTheThorTopScreenStaysVisibleAtTheDefaultDivider() {
+        // Thor top screen, 1920x1080, density 416 (~2.6, matching the real device) -- the Beta 2
+        // regression: Stacked with the default (unset, 60%) divider budgets the companion band at
+        // only 432 px tall, whose short edge (432 px = 166.2 dp) is under the 200 dp per-pane
+        // floor that every branch applied through Beta 2, collapsing the companion to nothing.
+        // An explicit choice is now exempt from that floor -- only the window-itself floor
+        // applies, and this window (415.4 dp short edge) clears it, so both panes stay visible.
+        val window = DualScreenWindow(widthPx = 1920, heightPx = 1080, densityDpi = 416)
+        val stacked = DualScreenUserLayout(DualScreenLayoutChoice.STACKED) // dividerPercent defaults to 60
+        val layout = DualScreenGeometry.compute(window, null, false, stacked, game169)
+        assertEquals(DualScreenRect(384, 0, 1152, 648), layout.gameRect)
+        assertEquals(DualScreenRect(712, 648, 496, 432), layout.companionRect)
+        assertEquals(DualScreenRect.EMPTY, layout.controlsRect)
+        assertAspectLocked(layout.gameRect, game169)
+        assertAspectLocked(layout.companionRect, DualScreenAspect(1240, 1080))
+    }
+
+    @Test
+    fun explicitStackedOnTheThorTopScreenStaysVisibleAtADifferentDivider() {
+        // Same window, divider moved to 50% (game/companion get equal height budgets). Still
+        // comfortably exempt from the per-pane floor as an explicit choice.
+        val window = DualScreenWindow(widthPx = 1920, heightPx = 1080, densityDpi = 416)
+        val stacked = DualScreenUserLayout(DualScreenLayoutChoice.STACKED, dividerPercent = 50)
+        val layout = DualScreenGeometry.compute(window, null, false, stacked, game169)
+        assertEquals(DualScreenRect(480, 0, 960, 540), layout.gameRect)
+        assertEquals(DualScreenRect(650, 540, 620, 540), layout.companionRect)
+        assertEquals(DualScreenRect.EMPTY, layout.controlsRect)
+        assertAspectLocked(layout.gameRect, game169)
+        assertAspectLocked(layout.companionRect, DualScreenAspect(1240, 1080))
+    }
+
+    @Test
+    fun explicitStackedOnALandscapePhoneStaysVisibleEvenThoughAutomaticWouldHaveUsedSideBySide() {
+        // Phone 2400x1080 landscape, density 420 -- same per-pane-floor-would-have-collapsed-it
+        // shape as the Thor top case (companion band short edge 432 px = 164.6 dp, under the 200
+        // dp floor), proving the Beta 3 fix is not Thor-specific. The user explicitly chose
+        // Stacked despite the landscape orientation (Automatic would pick Side by side here
+        // instead -- see [phoneLandscapeAspectLockedStaysSideBySide]); their explicit choice is
+        // honoured and stays visible.
+        val window = DualScreenWindow(widthPx = 2400, heightPx = 1080, densityDpi = 420)
+        val stacked = DualScreenUserLayout(DualScreenLayoutChoice.STACKED)
+        val layout = DualScreenGeometry.compute(window, null, false, stacked, game169)
+        assertEquals(DualScreenRect(624, 0, 1152, 648), layout.gameRect)
+        assertEquals(DualScreenRect(952, 648, 496, 432), layout.companionRect)
+        assertEquals(DualScreenRect.EMPTY, layout.controlsRect)
+        assertAspectLocked(layout.gameRect, game169)
+        assertAspectLocked(layout.companionRect, DualScreenAspect(1240, 1080))
+    }
+
+    @Test
+    fun explicitStackedStillCollapsesOnAWindowBelowTheWindowFloor() {
+        // The fold cover window (904x2316, density 420) from
+        // [foldCoverCollapsesRegardlessOfController] -- its own short edge (344.4 dp) is under
+        // MIN_WINDOW_SHORT_EDGE_DP regardless of the per-pane floor exemption, so an explicit
+        // Stacked choice still collapses here: the owner's Beta 3 decision exempts explicit
+        // layouts from the per-pane floor only, not the window-itself floor.
+        val window = DualScreenWindow(widthPx = 904, heightPx = 2316, densityDpi = 420)
+        val stacked = DualScreenUserLayout(DualScreenLayoutChoice.STACKED)
+        val layout = DualScreenGeometry.compute(window, null, false, stacked, game169)
+        assertTrue(layout.companionRect.isEmpty)
+        // The merge is the bounding box of the two (letterboxed, non-touching-at-every-edge)
+        // budgeted bands, not a clean full-window rect -- pre-existing collapse() behaviour,
+        // unchanged by this fix.
+        assertEquals(DualScreenRect(0, 440, 904, 1806), layout.gameRect)
+    }
+
     private fun assertAspectLocked(rect: DualScreenRect, aspect: DualScreenAspect) {
         // Integer rounding on both sides can disagree by a touch; allow it loosely rather than
         // asserting exact cross-multiplication equality.
