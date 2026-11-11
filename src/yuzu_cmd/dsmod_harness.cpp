@@ -85,6 +85,52 @@ static void PrintVersion() {
     std::cout << "Eden " << Common::g_scm_branch << " " << Common::g_scm_desc << std::endl;
 }
 
+// --aux-inline <x>,<y>,<w>,<h>: four comma-separated fractions (0..1) of the main window for the
+// companion's rect. Returns true (and fills `out`) only when all four parse as floats and the
+// string has nothing left over.
+static bool ParseAuxInlineRect(const std::string& text, std::array<float, 4>& out) {
+    std::istringstream stream(text);
+    std::string token;
+    for (float& value : out) {
+        if (!std::getline(stream, token, ',')) {
+            return false;
+        }
+        try {
+            size_t consumed = 0;
+            value = std::stof(token, &consumed);
+            if (consumed != token.size()) {
+                return false;
+            }
+        } catch (const std::exception&) {
+            return false;
+        }
+    }
+    std::string leftover;
+    return !std::getline(stream, leftover, ','); // nothing after the fourth field
+}
+
+// Eden Duo Stage 1 (Simulated/inline dual screen): the game's rect is the window's remaining
+// side -- whichever outer edge `companion` does not touch, complementary to it on that one axis
+// (matches Android's fixed landscape/portrait split, see AuxRouting::SetInlineLayoutSideSplit).
+// A companion rect that touches no edge (an inset box, not a side strip) is not the documented
+// --aux-inline use; it falls back to the whole window for the game, which then overlaps it.
+static VideoCore::DSMod::FracRect AuxInlineGameRect(VideoCore::DSMod::FracRect companion) {
+    constexpr float epsilon = 0.0005f;
+    if (companion.x > epsilon) { // companion on the right: game is the left strip
+        return {0.0f, 0.0f, companion.x, 1.0f};
+    }
+    if (companion.y > epsilon) { // companion on the bottom: game is the top strip
+        return {0.0f, 0.0f, 1.0f, companion.y};
+    }
+    if (companion.x + companion.w < 1.0f - epsilon) { // companion on the left
+        return {companion.x + companion.w, 0.0f, 1.0f - (companion.x + companion.w), 1.0f};
+    }
+    if (companion.y + companion.h < 1.0f - epsilon) { // companion on the top
+        return {0.0f, companion.y + companion.h, 1.0f, 1.0f - (companion.y + companion.h)};
+    }
+    return {0.0f, 0.0f, 1.0f, 1.0f};
+}
+
 // DSMod: pull the two files an IL2CPP dump needs out of a game -- the executable ("main", which is
 // the IL2CPP binary on Switch) and global-metadata.dat from the romfs. Eden already has all the
 // NCA crypto, so this beats standing up a separate extraction toolchain.
@@ -804,6 +850,7 @@ std::optional<SDL_AppResult> ParseCommandLine(Session& session, int argc, char**
         {"filter", required_argument, 0, 'x'},
         {"aux-window", no_argument, 0, 'a'},
         {"aux-virtual", no_argument, 0, 'V'},
+        {"aux-inline", required_argument, 0, 'B'},
         {"dump-il2cpp", required_argument, 0, 'D'},
         {"dump-romfs", required_argument, 0, 'R'},
         {"install", required_argument, 0, 'I'},
@@ -813,7 +860,7 @@ std::optional<SDL_AppResult> ParseCommandLine(Session& session, int argc, char**
     };
 
     while (optind < argc) {
-        int arg = getopt_long(argc, argv, "g:fhvc:i:p:u:d:D:R:I:S:aVx:ns", long_options, &option_index);
+        int arg = getopt_long(argc, argv, "g:fhvc:i:p:u:d:D:R:I:S:aVB:x:ns", long_options, &option_index);
         if (arg != -1) {
             switch (char(arg)) {
             case 'd':
@@ -898,6 +945,16 @@ std::optional<SDL_AppResult> ParseCommandLine(Session& session, int argc, char**
             case 'V':
                 session.aux_virtual_requested = true;
                 break;
+            case 'B': {
+                std::array<float, 4> rect{};
+                if (!ParseAuxInlineRect(optarg, rect)) {
+                    std::cout << "Wrong format for option --aux-inline (want x,y,w,h)\n";
+                    PrintHelp(argv[0]);
+                    return SDL_APP_FAILURE;
+                }
+                session.aux_inline_companion = rect;
+                break;
+            }
             case 'D':
                 dump_il2cpp_dir = optarg;
                 break;
@@ -998,6 +1055,21 @@ void OnGameLoaded(Session& session, Core::System& system) {
         aux.refresh_hz.store(60);
         aux.present.store(true);
         LOG_INFO(Frontend, "DSMod virtual aux screen enabled (1240x1080, no window)");
+    }
+    if (session.aux_inline_companion) {
+        // Eden Duo Stage 1 (Simulated/inline dual screen): no separate window at all -- the
+        // companion is drawn as a second rect of the main window's own frame. --aux-window (if
+        // also given) still wins; AuxRouting::inline_enabled is read only while no aux window is
+        // attached (DSModAuxPresenter::Route).
+        const auto& c = *session.aux_inline_companion;
+        const VideoCore::DSMod::FracRect companion{c[0], c[1], c[2], c[3]};
+        const auto game = AuxInlineGameRect(companion);
+        system.GPU().DSModAux().SetInlineLayout(true, game, companion);
+        LOG_INFO(Frontend,
+                 "DSMod inline dual screen enabled: game {},{} {}x{}; companion {},{} {}x{} "
+                 "(window fractions)",
+                 game.x, game.y, game.w, game.h, companion.x, companion.y, companion.w,
+                 companion.h);
     }
     // DSMod haptics: a desktop has nothing to vibrate, so the sink only logs what a device would
     // play (it runs on the routing's notifier thread, like the Android one).
