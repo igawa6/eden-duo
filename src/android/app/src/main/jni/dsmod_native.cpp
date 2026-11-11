@@ -191,6 +191,19 @@ void AuxSurfaceDestroyed() {
     std::scoped_lock lock(g_aux_mutex);
     DetachAuxWindowLocked();
     ReleaseAuxNativeWindowLocked();
+    // Eden Duo Stage 4 (RESEARCH.md I4): a lost aux surface (display eject, onStop, a
+    // Presentation the window manager dismissed) must not leave a stale companion touch point
+    // latched against a dsm:u service the game keeps receiving.
+    SetAuxTouchLocked({});
+}
+
+// g_aux_mutex held.
+bool SetAuxTouchLocked(std::span<const VideoCore::DSMod::AuxTouchPoint> points) {
+    if (!g_aux_renderer_ready) {
+        return false;
+    }
+    SessionSystem().GPU().DSModAux().SetTouch(points);
+    return true;
 }
 
 /// Forwards second-screen touch to the running game; false while no game renderer exists.
@@ -198,11 +211,7 @@ bool SetAuxTouch(std::span<const VideoCore::DSMod::AuxTouchPoint> points) {
     // Under g_aux_mutex the GPU cannot be torn down (ShutdownEmulation clears
     // g_aux_renderer_ready under the same lock before ShutdownMainProcess).
     std::scoped_lock lock(g_aux_mutex);
-    if (!g_aux_renderer_ready) {
-        return false;
-    }
-    SessionSystem().GPU().DSModAux().SetTouch(points);
-    return true;
+    return SetAuxTouchLocked(points);
 }
 
 // Eden Duo: 1 when the running game shows the idle page (no usable companion package), 0 when it

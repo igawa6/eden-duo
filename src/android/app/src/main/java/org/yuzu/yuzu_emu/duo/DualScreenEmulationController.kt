@@ -55,7 +55,13 @@ class DualScreenEmulationController(
      * A companion just appeared in Simulated mode for the first time ever (see
      * [DualScreenFirstRunNotice]) -- EmulationFragment should show the one-time notice.
      */
-    private val onFirstSimulatedCompanion: () -> Unit = {}
+    private val onFirstSimulatedCompanion: () -> Unit = {},
+    /**
+     * Eden Duo Stage 4 (RESEARCH.md I2): true while [pointerId] already belongs to the Simulated
+     * companion pane (EmulationFragment's own `CompanionPaneTouch.isOwned`) -- fed to [gameTouch]
+     * so its gesture recognizer never counts a pointer the companion pane already claimed.
+     */
+    private val companionPaneOwns: (Int) -> Boolean = { false }
 ) {
     private companion object {
         const val AUX_RETRY_DELAY_MS = 300L
@@ -313,7 +319,7 @@ class DualScreenEmulationController(
     /** The game screen's touch filter for the companion toggle gesture (InputOverlay). */
     val gameTouch: CompanionToggle.GameTouch by lazy {
         val density = fragment.context?.resources?.displayMetrics?.density ?: 1f
-        CompanionToggle.GameTouch(density) {
+        CompanionToggle.GameTouch(density, companionPaneOwns) {
             fragment.context?.let { CompanionToggle.toggle(it) }
         }
     }

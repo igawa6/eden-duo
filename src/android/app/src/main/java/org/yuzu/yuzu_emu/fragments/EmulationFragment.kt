@@ -164,7 +164,8 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
         { emulationViewModel.emulationStarted.value },
         { updateDualScreenLayout() },
         { showDualScreenModeRestartPrompt() },
-        { showDualScreenFirstRunNotice() }
+        { showDualScreenFirstRunNotice() },
+        { companionPaneTouch.isOwned(it) }
     )
 
     private lateinit var gpuModel: String

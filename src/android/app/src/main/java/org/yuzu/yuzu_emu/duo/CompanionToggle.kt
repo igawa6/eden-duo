@@ -119,8 +119,18 @@ object CompanionToggle {
     /**
      * Feeds the game screen's touches to a [CompanionGestureRecognizer] and keeps a gesture in
      * progress away from the emulated touchscreen. [onToggle] runs when the gesture completes.
+     *
+     * [isOwned] (Eden Duo Stage 4, RESEARCH.md I2): true while a pointer already belongs to the
+     * Simulated companion pane ([CompanionPaneTouch.isOwned], fed in by EmulationFragment) --
+     * such a pointer never reaches the recognizer, landing or otherwise, so a gesture whose
+     * fingers are deliberately split across both panes (e.g. 2+2) cannot complete the toggle by
+     * accident (Stage 2's own open risk).
      */
-    class GameTouch(pxPerDp: Float, private val onToggle: () -> Unit) {
+    class GameTouch(
+        pxPerDp: Float,
+        private val isOwned: (Int) -> Boolean = { false },
+        private val onToggle: () -> Unit
+    ) {
         private val recognizer = CompanionGestureRecognizer(pxPerDp)
 
         /** True to pass [event] on to the emulated touchscreen. */
@@ -137,15 +147,19 @@ object CompanionToggle {
                 MotionEvent.ACTION_CANCEL -> CompanionGestureRecognizer.Action.CANCEL
                 else -> return !recognizer.isSwallowing
             }
-            val pointers = (0 until event.pointerCount).map {
-                CompanionGestureRecognizer.Pointer(event.getPointerId(it), event.getX(it), event.getY(it))
+            val actingId = event.getPointerId(event.actionIndex)
+            if ((action == CompanionGestureRecognizer.Action.DOWN ||
+                    action == CompanionGestureRecognizer.Action.POINTER_DOWN) && isOwned(actingId)
+            ) {
+                // A finger landing in the companion pane never "lands" for the recognizer either
+                // -- it must not count toward the gesture's finger total.
+                return !recognizer.isSwallowing
             }
-            val decision = recognizer.onEvent(
-                action,
-                event.getPointerId(event.actionIndex),
-                pointers,
-                event.eventTime
-            )
+            val pointers = (0 until event.pointerCount).mapNotNull {
+                val id = event.getPointerId(it)
+                if (isOwned(id)) null else CompanionGestureRecognizer.Pointer(id, event.getX(it), event.getY(it))
+            }
+            val decision = recognizer.onEvent(action, actingId, pointers, event.eventTime)
             // Harmless for a pointer the touchscreen never got (an overlay button had it).
             decision.release.forEach { NativeInput.onTouchReleased(it) }
             if (decision.toggle) onToggle()
