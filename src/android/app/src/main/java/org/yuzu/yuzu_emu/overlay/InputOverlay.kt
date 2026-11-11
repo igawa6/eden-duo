@@ -87,6 +87,11 @@ class InputOverlay(context: Context, attrs: AttributeSet?) :
     // away from the emulated touchscreen.
     var touchscreenFilter: ((MotionEvent) -> Boolean)? = null
 
+    // Eden Duo Stage 2: Simulated's companion pane -- a pointer that lands on it never reaches
+    // the buttons/touchscreen below (isTouchInputConsumed), and is routed to the companion
+    // instead (onTouch). Null outside Simulated.
+    var companionPaneTouch: org.yuzu.yuzu_emu.duo.CompanionPaneTouch? = null
+
     override fun onCheckIsTextEditor(): Boolean = true
 
     override fun onCreateInputConnection(outAttrs: EditorInfo): InputConnection {
@@ -235,6 +240,9 @@ class InputOverlay(context: Context, attrs: AttributeSet?) :
         if (inEditMode) {
             return onTouchWhileEditing(event)
         }
+        // Eden Duo Stage 2: claims/updates/releases companion-owned pointers; isTouchInputConsumed
+        // below keeps them away from the buttons and the emulated touchscreen.
+        companionPaneTouch?.onEvent(event)
         val toTouchscreen = touchscreenFilter?.invoke(event) ?: true // Eden Duo
 
         var shouldUpdateView = false
@@ -358,6 +366,10 @@ class InputOverlay(context: Context, attrs: AttributeSet?) :
     }
 
     private fun isTouchInputConsumed(track_id: Int): Boolean {
+        // Eden Duo Stage 2: a pointer the companion pane claimed never reaches the touchscreen.
+        if (companionPaneTouch?.isOwned(track_id) == true) {
+            return true
+        }
         for (button in overlayButtons) {
             if (button.trackId == track_id) {
                 return true

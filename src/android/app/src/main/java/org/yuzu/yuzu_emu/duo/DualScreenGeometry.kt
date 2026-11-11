@@ -61,6 +61,10 @@ data class DualScreenRect(val x: Int, val y: Int, val w: Int, val h: Int) {
     }
 }
 
+/** True when ([px], [py]) (window/pane pixels) falls inside [rect]; always false for [DualScreenRect.EMPTY]. */
+fun DualScreenRect.contains(px: Int, py: Int): Boolean =
+    !isEmpty && px >= x && py >= y && px < x + w && py < y + h
+
 /** [rect] as a 0..1 fraction of a [windowW] x [windowH] window, for `NativeLibrary.setDualScreenInlineLayout`. */
 fun DualScreenRect.toFrac(windowW: Int, windowH: Int): FloatArray {
     if (windowW <= 0 || windowH <= 0) {

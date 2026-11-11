@@ -147,6 +147,14 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
     // companion-pane touch routing below.
     private var currentDualScreenLayout: org.yuzu.yuzu_emu.duo.DualScreenLayout? = null
 
+    // Eden Duo Stage 2: routes touches inside the companion pane (above) to NativeInput's
+    // existing aux touch path instead of the emulated touchscreen/buttons; reads
+    // currentDualScreenLayout fresh on every touch, so it is correct for whichever pane shape
+    // was last pushed, with no separate invalidation needed.
+    private val companionPaneTouch = org.yuzu.yuzu_emu.duo.CompanionPaneTouch {
+        currentDualScreenLayout?.companionRect
+    }
+
     // Eden Duo: second screen and No Companion (DualScreenEmulationController).
     private val dualScreen = org.yuzu.yuzu_emu.duo.DualScreenEmulationController(
         this,
@@ -1665,6 +1673,9 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
         handler.removeCallbacksAndMessages(null)
         clearPausedFrame()
         _binding?.surfaceInputOverlay?.touchEventListener = null
+        _binding?.surfaceInputOverlay?.companionPaneTouch = null // Eden Duo Stage 2
+        companionPaneTouch.clear()
+        currentDualScreenLayout = null
         _binding = null
         isAmiiboPickerOpen = false
     }
@@ -1707,6 +1718,7 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
         addQuickSettings()
         dualScreen.onResume()
         b.surfaceInputOverlay.touchscreenFilter = dualScreen.gameTouch::filter // Eden Duo
+        b.surfaceInputOverlay.companionPaneTouch = companionPaneTouch // Eden Duo Stage 2
     }
 
     // Eden Duo: the in-game menu's companion toggle names what it will do.
