@@ -36,6 +36,7 @@ class RasterizerVulkan;
 class Scheduler;
 class PresentManager;
 class WindowAdaptPass;
+struct CompanionQuad; // Eden Duo Stage 1, see present/window_adapt_pass.h
 
 struct Frame;
 
@@ -55,10 +56,14 @@ public:
                         Scheduler& scheduler, const PresentFilters& filters);
     ~BlitScreen();
 
+    /// `companion`: Eden Duo Stage 1 (Simulated/inline dual screen), forwarded to
+    /// WindowAdaptPass::Draw as-is; null (the default) draws nothing extra, as every call site
+    /// but the primary swapchain frame (RendererVulkan::Composite) wants.
     void DrawToFrame(const Device& device, RasterizerVulkan& rasterizer, Frame* frame,
                      std::span<const Tegra::FramebufferConfig> framebuffers,
                      const Layout::FramebufferLayout& layout, size_t current_swapchain_image_count,
-                     VkFormat current_swapchain_view_format);
+                     VkFormat current_swapchain_view_format,
+                     const CompanionQuad* companion = nullptr);
 
     void PrepareFrame(const Device& device, Frame* frame, const Layout::FramebufferLayout& layout);
 

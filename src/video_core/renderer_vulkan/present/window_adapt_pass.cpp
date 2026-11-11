@@ -41,6 +41,11 @@ WindowAdaptPass::WindowAdaptPass(const Device& device, MemoryAllocator& memory_a
     overlay_sampler = CreateNearestNeighborSampler(device);
     overlay_pipeline = CreateWrappedCoverageBlendingPipeline(
         device, render_pass, pipeline_layout, std::tie(vertex_shader, overlay_shader));
+    // Eden Duo Stage 1: the companion quad samples with the same filtering the physical aux
+    // blit used (VK_FILTER_LINEAR in DSModAuxPresenter::RenderAuxModUi), not the overlay panels'
+    // pixel-for-pixel nearest (their crisp text would blur, but the companion is a whole page
+    // meant to scale like the game does).
+    companion_sampler = CreateBilinearSampler(device);
 }
 
 WindowAdaptPass::~WindowAdaptPass() = default;
@@ -49,7 +54,7 @@ void WindowAdaptPass::Draw(const Device& device, RasterizerVulkan& rasterizer, S
                            std::list<Layer>& layers,
                            std::span<const Tegra::FramebufferConfig> configs,
                            const Layout::FramebufferLayout& layout, Frame* dst,
-                           bool overlay_panels) {
+                           bool overlay_panels, const CompanionQuad* companion) {
 
     const VkFramebuffer host_framebuffer{*dst->framebuffer};
     const VkRenderPass renderpass{*render_pass};
@@ -207,6 +212,67 @@ void WindowAdaptPass::Draw(const Device& device, RasterizerVulkan& rasterizer, S
         }
     }
 
+    // Eden Duo Stage 1 (Simulated/inline dual screen): one quad sampling the companion image the
+    // presenter already owns -- drawn after the game layers, before the overlay panels, only when
+    // inline is actually active this frame (zero cost otherwise). See CompanionQuad's doc comment.
+    //
+    // The pane is always cleared to the companion's background first, whether or not a quad
+    // follows: with no image yet (first frame, nothing published) the clear alone is the whole
+    // picture; with Fit bars it is just the bars, the quad overdrawing the rest; with a full-pane
+    // fit the quad overdraws all of it anyway, so the clear is simply redundant there, not wrong.
+    bool draw_companion_pane = false;
+    bool draw_companion_quad = false;
+    PresentPushConstants companion_push{};
+    VkDescriptorSet companion_set{};
+    VkRect2D companion_pane{};
+    u32 companion_bg = 0xFF000000u;
+    if (companion != nullptr && companion->pane.extent.width > 0 &&
+        companion->pane.extent.height > 0) {
+        companion_pane = companion->pane;
+        companion_bg = companion->background;
+        draw_companion_pane = true;
+        if (companion->view != VK_NULL_HANDLE) {
+            if (!companion_pool) {
+                companion_pool = CreateWrappedDescriptorPool(device, 1, 1);
+                const std::vector layouts(1u, *descriptor_set_layout);
+                companion_sets = CreateWrappedDescriptorSets(companion_pool, layouts);
+            }
+            if (companion_bound_view != companion->view || companion_bound_version != companion->version) {
+                const VkDescriptorImageInfo image_info{
+                    .sampler = *companion_sampler,
+                    .imageView = companion->view,
+                    .imageLayout = VK_IMAGE_LAYOUT_GENERAL,
+                };
+                const VkWriteDescriptorSet write{
+                    .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                    .dstSet = companion_sets[0],
+                    .dstBinding = 0,
+                    .dstArrayElement = 0,
+                    .descriptorCount = 1,
+                    .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                    .pImageInfo = &image_info,
+                    .pBufferInfo = nullptr,
+                    .pTexelBufferView = nullptr,
+                };
+                device.GetLogical().UpdateDescriptorSets(std::array{write}, {});
+                companion_bound_view = companion->view;
+                companion_bound_version = companion->version;
+            }
+            companion_push.modelview_matrix =
+                MakeOrthographicMatrix(f32(layout.width), static_cast<f32>(layout.height));
+            const f32 fx = static_cast<f32>(companion->fit.offset.x);
+            const f32 fy = static_cast<f32>(companion->fit.offset.y);
+            const f32 fw = static_cast<f32>(companion->fit.extent.width);
+            const f32 fh = static_cast<f32>(companion->fit.extent.height);
+            companion_push.vertices[0] = ScreenRectVertex(fx, fy, 0.f, 0.f);
+            companion_push.vertices[1] = ScreenRectVertex(fx + fw, fy, 1.f, 0.f);
+            companion_push.vertices[2] = ScreenRectVertex(fx, fy + fh, 0.f, 1.f);
+            companion_push.vertices[3] = ScreenRectVertex(fx + fw, fy + fh, 1.f, 1.f);
+            companion_set = companion_sets[0];
+            draw_companion_quad = true;
+        }
+    }
+
     scheduler.Record([=, this](vk::CommandBuffer cmdbuf) {
         const f32 bg_red = Settings::values.bg_red.GetValue() / 255.0f;
         const f32 bg_green = Settings::values.bg_green.GetValue() / 255.0f;
@@ -238,6 +304,36 @@ void WindowAdaptPass::Draw(const Device& device, RasterizerVulkan& rasterizer, S
                                  push_constants[i]);
             cmdbuf.BindDescriptorSets(VK_PIPELINE_BIND_POINT_GRAPHICS, graphics_pipeline_layout, 0,
                                       descriptor_sets[i], {});
+            cmdbuf.Draw(4, 1, 0, 0);
+        }
+
+        // Eden Duo Stage 1: companion pane, after the game layers, before the overlay panels.
+        if (draw_companion_pane) {
+            const f32 cr = static_cast<f32>((companion_bg >> 16) & 0xFF) / 255.0f;
+            const f32 cg = static_cast<f32>((companion_bg >> 8) & 0xFF) / 255.0f;
+            const f32 cb = static_cast<f32>(companion_bg & 0xFF) / 255.0f;
+            const f32 ca = static_cast<f32>((companion_bg >> 24) & 0xFF) / 255.0f;
+            const VkClearAttachment pane_clear{
+                .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                .colorAttachment = 0,
+                .clearValue = {.color = {.float32 = {cr, cg, cb, ca}}},
+            };
+            const VkClearRect pane_rect{
+                .rect = companion_pane,
+                .baseArrayLayer = 0,
+                .layerCount = 1,
+            };
+            cmdbuf.ClearAttachments({pane_clear}, {pane_rect});
+        }
+        if (draw_companion_quad) {
+            // The overlay panels' own pipeline: plain present shader (pixel for pixel, no
+            // upscaling-filter ringing/sharpening on UI content) with coverage blending, same
+            // reasoning as the controller hints just below.
+            cmdbuf.BindPipeline(VK_PIPELINE_BIND_POINT_GRAPHICS, *overlay_pipeline);
+            cmdbuf.PushConstants(graphics_pipeline_layout, VK_SHADER_STAGE_VERTEX_BIT,
+                                 companion_push);
+            cmdbuf.BindDescriptorSets(VK_PIPELINE_BIND_POINT_GRAPHICS, graphics_pipeline_layout, 0,
+                                      companion_set, {});
             cmdbuf.Draw(4, 1, 0, 0);
         }
 

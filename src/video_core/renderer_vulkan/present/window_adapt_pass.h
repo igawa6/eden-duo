@@ -31,6 +31,29 @@ class Layer;
 class Scheduler;
 class RasterizerVulkan;
 
+// Eden Duo Stage 1 ("Simulated"/inline dual screen, single-surface composition): the companion
+// image sampled as one more quad of the main window's own frame, drawn after the game layers but
+// before the overlay panels (controller hints stay on top). The presenter that owns the
+// companion image (DSModAuxPresenter) fills this each frame; `view == VK_NULL_HANDLE` (the
+// default) means nothing to draw. A top-level struct (not nested in WindowAdaptPass) so a caller
+// that only passes a pointer through (BlitScreen) can forward-declare it instead of pulling in
+// this whole header.
+struct CompanionQuad {
+    VkImageView view{};
+    VkExtent2D extent{};
+    /// Bumps whenever the image's content changed; together with `view` tells Draw() when a
+    /// cached descriptor binding is stale. Sampling itself always sees the image's current GPU
+    /// memory, version or not -- this is only for the "does the binding need updating" decision.
+    std::uint64_t version{};
+    // Window pixels. `pane` is the whole area the companion owns (cleared to `background` first);
+    // `fit` is the aspect-correct sub-rect of it the image is actually drawn into (bars outside
+    // it, inside `pane`, are the clear colour).
+    VkRect2D pane{};
+    VkRect2D fit{};
+    bool fit_is_pane{true}; ///< `fit` already covers the whole `pane`: skip the background clear
+    u32 background{0xFF000000u}; ///< 0xAARRGGBB, matches AuxRouting::ui_bg
+};
+
 class WindowAdaptPass final {
 public:
     explicit WindowAdaptPass(const Device& device, MemoryAllocator& memory_allocator,
@@ -39,9 +62,12 @@ public:
     ~WindowAdaptPass();
 
     /// (With the overlay panels on top only where asked: the screen's, not a capture)
+    /// `companion`: Eden Duo Stage 1, see CompanionQuad above. Null (the default) or an empty
+    /// (zero-extent `pane`) quad draws nothing extra -- zero cost when inline dual screen is off.
     void Draw(const Device& device, RasterizerVulkan& rasterizer, Scheduler& scheduler, size_t image_index,
               std::list<Layer>& layers, std::span<const Tegra::FramebufferConfig> configs,
-              const Layout::FramebufferLayout& layout, Frame* dst, bool overlay_panels = false);
+              const Layout::FramebufferLayout& layout, Frame* dst, bool overlay_panels = false,
+              const CompanionQuad* companion = nullptr);
 
     VkDescriptorSetLayout GetDescriptorSetLayout();
     VkRenderPass GetRenderPass();
@@ -91,6 +117,16 @@ private:
         std::uint64_t used_tick = 0;
     };
     std::array<OverlayQuad, Common::OverlayPanelCount> overlays;
+
+    // Eden Duo Stage 1: the companion quad's own descriptor (see CompanionQuad above). Unlike an
+    // OverlayQuad it owns no image and does no CPU upload -- the presenter's image already holds
+    // current content; only the descriptor binding needs to track which image/version it last
+    // pointed at.
+    vk::Sampler companion_sampler;
+    vk::DescriptorPool companion_pool;
+    vk::DescriptorSets companion_sets;
+    VkImageView companion_bound_view{};
+    std::uint64_t companion_bound_version{~std::uint64_t{0}};
 };
 
 } // namespace Vulkan
