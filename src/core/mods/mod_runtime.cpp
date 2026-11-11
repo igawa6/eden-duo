@@ -72,19 +72,33 @@ ModRuntime::ModRuntime(System& system_, Manifest manifest_)
     // Runtime 21 @perf.*: the non-resetting PerfStats totals (GetAndResetStats belongs to the
     // frontends' overlays). PerfStats is created after this runtime (System::Load) and exists once
     // the game runs, which the first tick proves; a module's create() can ask earlier.
-    host_values.SetSource(HostValueSource{.perf = [this]() -> std::optional<PerfSample> {
-        if (tick_count == 0 || !system.IsPoweredOn()) {
-            return std::nullopt;
-        }
-        const auto totals = system.GetPerfStats().GetTotals();
-        return PerfSample{
-            .game_frames = totals.game_frames,
-            .system_frames = totals.system_frames,
-            .frametime_ns =
-                std::chrono::duration_cast<std::chrono::nanoseconds>(totals.frametime).count(),
-            .emulated_us = core_timing.GetGlobalTimeUs().count(),
-        };
-    }});
+    host_values.SetSource(HostValueSource{
+        .perf = [this]() -> std::optional<PerfSample> {
+            if (tick_count == 0 || !system.IsPoweredOn()) {
+                return std::nullopt;
+            }
+            const auto totals = system.GetPerfStats().GetTotals();
+            return PerfSample{
+                .game_frames = totals.game_frames,
+                .system_frames = totals.system_frames,
+                .frametime_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                    totals.frametime)
+                                    .count(),
+                .emulated_us = core_timing.GetGlobalTimeUs().count(),
+            };
+        },
+        // Runtime 25 @screen.*: the companion pane is the same AuxRouting width/height/
+        // inline_enabled PublishUi already reads every tick for touch (panel_w/panel_h); "mode"
+        // is Stage 1's own inline wish, the only such signal AuxRouting exposes.
+        .screen = [this]() -> ScreenPane {
+            const auto& aux = system.GPU().DSModAux();
+            return ScreenPane{
+                .width = aux.width.load(std::memory_order_relaxed),
+                .height = aux.height.load(std::memory_order_relaxed),
+                .simulated = aux.inline_enabled.load(std::memory_order_relaxed),
+            };
+        },
+    });
 }
 
 Kernel::KProcess* ModRuntime::OwnerProcess() const {

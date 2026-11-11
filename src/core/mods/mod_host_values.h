@@ -18,6 +18,14 @@
 // values. Published only for a package that names them (Manifest::uses_host_keys,
 // JsonReferencesHostKeys); a native module reads them with get_i64 / get_f64 whether or not the
 // manifest names them. The sources are injectable so tests are deterministic.
+//
+// Runtime 25 adds the companion pane's own geometry, same publishing/get_i64 rule, sampled every
+// Update() call (plain atomic reads, no interval to wait out):
+//   @screen.pane_w     the companion pane's width, panel px (AuxRouting::width)
+//   @screen.pane_h     the companion pane's height, panel px (AuxRouting::height)
+//   @screen.orientation  "landscape" (pane_w >= pane_h) or "portrait" -- text, get_text only
+//   @screen.mode         "physical" (a real second display) or "simulated" (Stage 1 inline,
+//                        AuxRouting::inline_enabled) -- text, get_text only
 
 #pragma once
 
@@ -47,12 +55,24 @@ struct PerfSample {
     s64 emulated_us{0};  ///< CoreTiming global time
 };
 
+/// Runtime 25: one reading of the companion pane's own geometry (VideoCore::DSMod::AuxRouting).
+struct ScreenPane {
+    u32 width{0};  ///< panel px (AuxRouting::width): the pane, not the package's canvas
+    u32 height{0}; ///< panel px (AuxRouting::height)
+    /// Stage 1's own "wish" (AuxRouting::inline_enabled): true while Simulated (single-window)
+    /// dual screen is the setting in effect, else Physical (a real second display). The only
+    /// such signal AuxRouting exposes; DSModAuxPresenter::Route lets a real aux window win over
+    /// it, which this does not see -- read-only, best effort, like every other host value here.
+    bool simulated{false};
+};
+
 /// Where the values come from. Every member may be empty: the defaults are the steady clock, the
-/// device battery (ReadDevicePower) and no perf values.
+/// device battery (ReadDevicePower), no perf values and no screen pane.
 struct HostValueSource {
     std::function<s64()> now_ns; ///< monotonic wall clock
     std::function<PowerReading()> power;
     std::function<std::optional<PerfSample>()> perf; ///< nullopt while there are no stats
+    std::function<ScreenPane()> screen;               ///< runtime 25
 };
 
 /// The published key names (runtime 21).
@@ -64,6 +84,11 @@ inline constexpr const char* Fps = "@perf.fps";
 inline constexpr const char* SpeedPct = "@perf.speed_pct";
 inline constexpr const char* FrametimeMs = "@perf.frametime_ms";
 inline constexpr const char* FrametimeX10 = "@perf.frametime_x10";
+/// Runtime 25.
+inline constexpr const char* PaneW = "@screen.pane_w";
+inline constexpr const char* PaneH = "@screen.pane_h";
+inline constexpr const char* Orientation = "@screen.orientation";
+inline constexpr const char* Mode = "@screen.mode";
 } // namespace HostKeys
 
 /// "57,1" -> 57 %, charging; "57" -> 57 %, not charging; "none" or a negative percentage -> no
@@ -86,13 +111,19 @@ public:
 #endif
 
     void SetSource(HostValueSource source_);
-    /// Reads the battery when due and the perf totals every PerfIntervalNs. Cheap otherwise.
+    /// Reads the battery when due, the perf totals every PerfIntervalNs, and the screen pane
+    /// (runtime 25, plain atomic reads -- no interval to wait out). Cheap otherwise.
     void Update();
     /// Writes the keys that have a value into the snapshot.
     void Publish(StateSnapshot& snapshot) const;
     /// What get_i64 / get_f64 answer for a key; nullopt when it has no value (yet).
     [[nodiscard]] std::optional<s64> GetI64(std::string_view name) const;
     [[nodiscard]] std::optional<f64> GetF64(std::string_view name) const;
+    /// What get_text answers for a key (runtime 25: @screen.orientation / @screen.mode, the only
+    /// text host values so far); nullopt when it has no value (yet) or is not a text key. The
+    /// view borrows this object's own member, like every other get_text answer in this runtime:
+    /// valid only for the synchronous call that asked for it.
+    [[nodiscard]] std::optional<std::string_view> GetText(std::string_view name) const;
 
     /// Whether Update ever ran.
     [[nodiscard]] bool Sampled() const {
@@ -100,6 +131,9 @@ public:
     }
     [[nodiscard]] bool HasPerf() const {
         return have_perf;
+    }
+    [[nodiscard]] bool HasScreen() const {
+        return have_screen;
     }
     /// How many times the battery was read (tests).
     [[nodiscard]] u64 PowerReads() const {
@@ -125,14 +159,21 @@ private:
     f64 speed_pct{0.0};
     f64 frametime_ms{0.0};
     u64 power_reads{0};
+    /// Runtime 25.
+    bool have_screen{false};
+    u32 screen_w{0};
+    u32 screen_h{0};
+    std::string orientation_text; ///< "landscape" / "portrait"
+    std::string mode_text;        ///< "physical" / "simulated"
 };
 
-/// Whether `name` is a runtime 21 key ("@device." or "@perf."): published from the host, never
-/// from interaction, so not "volatile" for the post-tap derived pass.
+/// Whether `name` is a runtime 21 / 25 key ("@device.", "@perf." or "@screen."): published from
+/// the host, never from interaction, so not "volatile" for the post-tap derived pass.
 [[nodiscard]] bool IsHostValueKey(std::string_view name);
 
-/// Whether a manifest / data file can read the runtime 21 keys: a string or an object key anywhere
-/// in it containing "@device." or "@perf." (binds, derived sources, expressions, gates).
+/// Whether a manifest / data file can read the runtime 21 / 25 keys: a string or an object key
+/// anywhere in it containing "@device.", "@perf." or "@screen." (binds, derived sources,
+/// expressions, gates).
 [[nodiscard]] bool JsonReferencesHostKeys(const nlohmann::json& json);
 
 } // namespace Core::Mods
