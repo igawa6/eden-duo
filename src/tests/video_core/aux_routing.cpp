@@ -599,6 +599,60 @@ TEST_CASE("Companion touch rect: mirror pages map as Stretch; scripted touches f
     REQUIRE(aux.NormalisedToPanel(1.0f, 1.0f) == std::pair<u32, u32>{1580, 1080});
 }
 
+// Eden Duo Stage 2: Simulated's own "Companion scaling" is independent of Physical's Companion
+// Ratio (steward-reported bug: the Thor ships companion_ratio=Stretch, harmless on its own
+// 1240x1080 panel, wrong for a narrower inline pane). Reset the shared statics afterwards --
+// Catch2 test cases in this binary do not get a fresh process.
+TEST_CASE("Inline Fit is used for the companion pane even when the Physical ratio is Stretch",
+          "[dsmod]") {
+    using VideoCore::DSMod::CompanionRatio;
+    using VideoCore::DSMod::CompanionTouchRect;
+    using VideoCore::DSMod::SecondScreenOptions;
+    struct RestoreRatios {
+        ~RestoreRatios() {
+            SecondScreenOptions::companion_ratio.store(static_cast<u32>(CompanionRatio::Fit));
+            SecondScreenOptions::inline_companion_ratio.store(
+                static_cast<u32>(CompanionRatio::Fit));
+        }
+    } restore;
+    SecondScreenOptions::companion_ratio.store(static_cast<u32>(CompanionRatio::Stretch));
+    SecondScreenOptions::inline_companion_ratio.store(static_cast<u32>(CompanionRatio::Fit));
+    REQUIRE(SecondScreenOptions::Ratio() == CompanionRatio::Stretch);
+    REQUIRE(SecondScreenOptions::InlineRatio() == CompanionRatio::Fit);
+
+    // Physical (is_inline=false) follows the Stretch setting: the whole panel.
+    const auto physical = CompanionTouchRect(768, 1080, 1240, 1080, /*mirror=*/false,
+                                             /*is_inline=*/false);
+    REQUIRE(physical.full);
+    // Simulated (is_inline=true) ignores it and keeps Fit: letterboxed inside the narrow pane.
+    const auto inline_rect = CompanionTouchRect(768, 1080, 1240, 1080, /*mirror=*/false,
+                                                /*is_inline=*/true);
+    REQUIRE(!inline_rect.full);
+    REQUIRE(inline_rect.h < 1080);
+
+    // AuxRouting::panel_is_inline drives ModRuntime::TouchRect's own choice the same way.
+    VideoCore::DSMod::AuxRouting aux;
+    aux.panel_is_inline.store(false);
+    REQUIRE(SecondScreenOptions::ActiveRatio(aux.panel_is_inline.load()) == CompanionRatio::Stretch);
+    aux.panel_is_inline.store(true);
+    REQUIRE(SecondScreenOptions::ActiveRatio(aux.panel_is_inline.load()) == CompanionRatio::Fit);
+}
+
+TEST_CASE("MapWindowPointToRect normalises and clamps into a sub-rect", "[dsmod]") {
+    using VideoCore::DSMod::CompanionRect;
+    using VideoCore::DSMod::MapWindowPointToRect;
+    const CompanionRect pane{600, 0, 400, 500, false};
+    REQUIRE(MapWindowPointToRect(600, 0, pane) == std::pair<float, float>{0.0f, 0.0f});
+    REQUIRE(MapWindowPointToRect(800, 250, pane) == std::pair<float, float>{0.5f, 0.5f});
+    REQUIRE(MapWindowPointToRect(999, 499, pane) ==
+            std::pair<float, float>{399.0f / 400.0f, 499.0f / 500.0f});
+    // Past the rect's edges: clamped to the edge, not outside 0..1.
+    REQUIRE(MapWindowPointToRect(0, 0, pane) == std::pair<float, float>{0.0f, 0.0f});
+    REQUIRE(MapWindowPointToRect(5000, 5000, pane) ==
+            std::pair<float, float>{399.0f / 400.0f, 499.0f / 500.0f});
+    REQUIRE(MapWindowPointToRect(0, 0, CompanionRect{}) == std::pair<float, float>{0.0f, 0.0f});
+}
+
 // ---------------------------------------------------------------------------------------------
 // Stage 1: Simulated (single-surface) dual screen -- inline game/companion rect math.
 TEST_CASE("Inline FracToPixelRect converts and clamps a fractional rect", "[dsmod]") {

@@ -2002,9 +2002,12 @@ void ModRuntime::PublishInteraction(StateSnapshot& snapshot, bool before_taps) {
 VideoCore::DSMod::CompanionRect ModRuntime::TouchRect(u32 panel_w, u32 panel_h, u32 canvas_w,
                                                       u32 canvas_h) const {
     // A mirror page is drawn over the whole panel (renderer mirror path), so it maps as Stretch.
+    // Stage 2: panel_is_inline says whether Simulated's own scaling applies to this panel right
+    // now instead of Physical's, so the touch rect agrees with whichever one was drawn.
+    auto& aux = system.GPU().DSModAux();
     return VideoCore::DSMod::CompanionTouchRect(
-        panel_w, panel_h, canvas_w, canvas_h,
-        system.GPU().DSModAux().mirror_enabled.load(std::memory_order_relaxed));
+        panel_w, panel_h, canvas_w, canvas_h, aux.mirror_enabled.load(std::memory_order_relaxed),
+        aux.panel_is_inline.load(std::memory_order_relaxed));
 }
 
 void ModRuntime::DriveCmdDrag([[maybe_unused]] u32 panel_w, [[maybe_unused]] u32 panel_h,

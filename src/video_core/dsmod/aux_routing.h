@@ -223,6 +223,12 @@ enum class NoCompanion : u32 {
 struct SecondScreenOptions {
     static inline std::atomic<u32> companion_ratio{static_cast<u32>(CompanionRatio::Fit)};
     static inline std::atomic<u32> no_companion{static_cast<u32>(NoCompanion::Icon)};
+    // Eden Duo Stage 2: Simulated (inline) has its own scaling, independent of Physical's
+    // companion_ratio above. A device whose real second panel matches the companion canvas's
+    // shape (the AYN Thor ships Stretch, harmless on its 1240x1080 bottom screen) would otherwise
+    // stretch the companion inside whatever pane shape Simulated happens to compute -- wrong
+    // whenever the pane is not that exact shape, i.e. almost always. Defaults to Fit.
+    static inline std::atomic<u32> inline_companion_ratio{static_cast<u32>(CompanionRatio::Fit)};
 
     static CompanionRatio Ratio() {
         return companion_ratio.load(std::memory_order_relaxed) ==
@@ -230,6 +236,14 @@ struct SecondScreenOptions {
                    ? CompanionRatio::Stretch
                    : CompanionRatio::Fit;
     }
+    static CompanionRatio InlineRatio() {
+        return inline_companion_ratio.load(std::memory_order_relaxed) ==
+                       static_cast<u32>(CompanionRatio::Stretch)
+                   ? CompanionRatio::Stretch
+                   : CompanionRatio::Fit;
+    }
+    /// The ratio that governs the panel Simulated/Physical actually has up right now.
+    static CompanionRatio ActiveRatio(bool is_inline) { return is_inline ? InlineRatio() : Ratio(); }
     static NoCompanion WithoutCompanion() {
         const u32 v = no_companion.load(std::memory_order_relaxed);
         return v <= static_cast<u32>(NoCompanion::Off) ? static_cast<NoCompanion>(v)
@@ -281,16 +295,38 @@ inline CompanionRect FitCompanion(u32 fw, u32 fh, u32 cw, u32 ch, CompanionRatio
 }
 
 /// The rect a companion's touches map through. A mirror page (the game's own pixels) is always
-/// drawn over the whole panel, whatever Companion Ratio says.
-inline CompanionRect CompanionTouchRect(u32 fw, u32 fh, u32 cw, u32 ch, bool mirror) {
+/// drawn over the whole panel, whatever Companion Ratio says. [is_inline] picks Simulated's own
+/// scaling (SecondScreenOptions::InlineRatio) instead of Physical's (Ratio) -- the touch rect
+/// must agree with whichever one the draw path used for the panel currently up.
+inline CompanionRect CompanionTouchRect(u32 fw, u32 fh, u32 cw, u32 ch, bool mirror,
+                                        bool is_inline = false) {
     return FitCompanion(fw, fh, cw, ch,
-                        mirror ? CompanionRatio::Stretch : SecondScreenOptions::Ratio());
+                        mirror ? CompanionRatio::Stretch
+                               : SecondScreenOptions::ActiveRatio(is_inline));
 }
 
 /// One axis of a second-screen touch, panel pixels -> canvas pixels, for a point inside the
 /// rect (origin/extent = CompanionRect x/w or y/h). On a full rect this is v * canvas / panel.
 inline s32 PanelToCanvas(u32 v, u32 origin, u32 extent, u32 canvas) {
     return static_cast<s32>(static_cast<u64>(v - origin) * canvas / std::max(1u, extent));
+}
+
+// ---------------- Stage 2: Simulated touch routing ----------------
+
+/// A window-pixel point mapped into a sub-rect of that window, normalised 0..1 and clamped to
+/// the rect (so a point past its edge lands on the edge rather than outside 0..1). {0, 0} for an
+/// empty rect. Used both for the companion pane (pane-local coordinates the mod runtime expects,
+/// matching AuxTouchPoint's "aux surface space") and, on the Android frontend, for the narrowed
+/// game rect (EmuWindow_Android), which the SurfaceView itself does not shrink to (Stage 1 keeps
+/// it full-window so the native split alone decides game vs. companion).
+inline std::pair<float, float> MapWindowPointToRect(u32 px, u32 py, const CompanionRect& rect) {
+    if (rect.w == 0 || rect.h == 0) {
+        return {0.0f, 0.0f};
+    }
+    const u32 cx = std::clamp(px, rect.x, rect.x + rect.w - 1);
+    const u32 cy = std::clamp(py, rect.y, rect.y + rect.h - 1);
+    return {static_cast<float>(cx - rect.x) / static_cast<float>(rect.w),
+           static_cast<float>(cy - rect.y) / static_cast<float>(rect.h)};
 }
 
 // ---------------- Stage 1: Simulated (single-surface) dual screen ----------------
@@ -416,6 +452,10 @@ public:
     std::atomic<u32> height{0};
     std::atomic<u32> rotation{0};
     std::atomic<u32> refresh_hz{60};
+    // Eden Duo Stage 2: which scaling setting (and FitCompanion call) produced the width/height
+    // above right now -- Simulated's own, or Physical's -- set beside every width/height store.
+    // Touch mapping (CompanionTouchRect) reads this so it always agrees with what was drawn.
+    std::atomic<bool> panel_is_inline{false};
 
     // --- written by dsm:u (guest service thread), read by the renderer ---
     std::atomic<u64> bound_layer{NoLayer};
