@@ -39,17 +39,24 @@ data class DualScreenHinge(
     val boundsBottom: Int
 )
 
-enum class DualScreenLayoutChoice { AUTOMATIC, STACKED, SIDE_BY_SIDE }
+/** 1.4.0: CUSTOM added -- the freeform layout editor's result (LAYOUT-EDITOR-SPEC.md), which
+ *  replaces the Divider position slider for Stacked/Side by side (now a fixed ~60% split, see
+ *  [DualScreenGeometry.compute]) rather than reusing their own divider-budget machinery. */
+enum class DualScreenLayoutChoice { AUTOMATIC, STACKED, SIDE_BY_SIDE, CUSTOM }
 
 /**
  * The user's Simulated layout choice and the divider's position. [dividerPercent] (1..99) is
  * only used by an *explicit* [DualScreenLayoutChoice] (Stacked or Side by side): the budget
  * share, along the split axis, of the box the game pane is fit into. Automatic ignores it --
- * it aspect-locks and maximises both panes itself (see [DualScreenGeometry.compute]).
+ * it aspect-locks and maximises both panes itself (see [DualScreenGeometry.compute]). 1.4.0:
+ * [customLayout] is CUSTOM's own saved result (null = nothing saved yet, falls back to
+ * Automatic's own arrangement -- see [DualScreenLayoutEditor.refitOnWindowChange]'s caller in
+ * [compute]); unused by every other choice.
  */
 data class DualScreenUserLayout(
     val choice: DualScreenLayoutChoice = DualScreenLayoutChoice.AUTOMATIC,
-    val dividerPercent: Int = 60
+    val dividerPercent: Int = 60,
+    val customLayout: DualScreenCustomLayout? = null
 )
 
 /** A rectangle in window pixels. [EMPTY] marks "nothing here" (pane collapsed/not carved out). */
@@ -122,17 +129,25 @@ data class DualScreenAspect(val w: Int, val h: Int)
  *    their natural (full window width, un-shrunk) aspect height, the remainder to controls --
  *    RESEARCH.md I1's own phone illustration. With a controller, stacked is the aspect-locked
  *    two-band maximise, just vertical instead of horizontal.
+ *  - 1.4.0: CUSTOM reads [DualScreenUserLayout.customLayout] (the freeform editor's saved
+ *    fractions) and re-fits it to the current window ([DualScreenLayoutEditor
+ *    .refitOnWindowChange]), or falls back to Automatic's own arrangement when nothing is saved
+ *    yet. Like Stacked/Side by side, it ignores any hinge and is exempt from the per-pane floor
+ *    below (the user placed it on purpose) but not the window floor.
  *  - Automatic only: a companion pane whose short edge is under [MIN_PANE_SHORT_EDGE_DP]
  *    collapses: the game absorbs its space, companion stays reachable through the toggle. With
  *    both panes aspect-locked the reported rect already has no internal bars, so its own short
- *    edge is the relevant one directly (no separate Fit step needed here). An explicit Stacked or
- *    Side by side choice (Beta 3 owner decision) is exempt from this one floor -- the user picked
- *    that layout on purpose, so it stays visible at whatever the divider gives it -- but still
+ *    edge is the relevant one directly (no separate Fit step needed here). An explicit Stacked,
+ *    Side by side or Custom choice (Beta 3 owner decision, extended to Custom in 1.4.0) is exempt
+ *    from this one floor -- the user picked that layout on purpose, so it stays visible at
+ *    whatever the divider (or the editor) gave it -- but still
  *    collapses under [MIN_WINDOW_SHORT_EDGE_DP] (the window itself is too small to use at all).
  */
 object DualScreenGeometry {
-    /** The project's default companion canvas (CLAUDE.md "default new companion work"). */
-    private val CANVAS_ASPECT = DualScreenAspect(1240, 1080)
+    /** The project's default companion canvas (CLAUDE.md "default new companion work"). Internal
+     *  visibility: the 1.4.0 layout editor ([DualScreenFragmentHost]) reads it too, so both the
+     *  engine and the editor that seeds/saves its Custom layout agree on one aspect. */
+    internal val CANVAS_ASPECT = DualScreenAspect(1240, 1080)
 
     /** Only for budgeting the no-controller 3-band split when the game itself is unlocked
      *  (Stretch) -- it only ever changes how large the controls band ends up, never the game's
@@ -185,9 +200,18 @@ object DualScreenGeometry {
         // explicit choice outright on any window whose budgeted companion band happens to be
         // narrow, e.g. the Thor's own 1920x1080 top screen at the 60% default divider. Only the
         // tiny-window floor (MIN_WINDOW_SHORT_EDGE_DP) still applies -- an explicit layout on a
-        // genuinely cramped window (a flip-phone cover screen) still collapses.
-        val applyPaneFloor = userLayout.choice == DualScreenLayoutChoice.AUTOMATIC
+        // genuinely cramped window (a flip-phone cover screen) still collapses. 1.4.0: Custom
+        // with nothing saved yet (userLayout.customLayout == null) falls back to Automatic's own
+        // *arrangement* (see [custom]) and must also inherit its collapse rule -- otherwise
+        // picking Custom before ever opening the editor could render differently from Automatic
+        // on a window where the pane floor is the only thing deciding it, which would look like a
+        // bug rather than "nothing saved yet, using Automatic's own numbers".
+        val applyPaneFloor = userLayout.choice == DualScreenLayoutChoice.AUTOMATIC ||
+            (userLayout.choice == DualScreenLayoutChoice.CUSTOM && userLayout.customLayout == null)
         val raw = when {
+            userLayout.choice == DualScreenLayoutChoice.CUSTOM ->
+                custom(window, userLayout.customLayout, controllerConnected, gameAspect)
+
             userLayout.choice == DualScreenLayoutChoice.SIDE_BY_SIDE ->
                 sideBySide(window, divider, gameAspect, automatic = false)
 
@@ -305,6 +329,32 @@ object DualScreenGeometry {
         )
     }
 
+    // ---- custom (the freeform layout editor's result, 1.4.0) ----
+
+    /**
+     * [userLayout] is null (Custom picked but the editor never ran for this orientation -- e.g.
+     * right after switching Layout to Custom in Settings) falls back to the same arrangement
+     * Automatic would pick, exactly what the editor's own "Reset" button seeds from, so Custom
+     * never shows a broken or empty layout. Otherwise re-fits the saved fractions to this window
+     * (see [DualScreenLayoutEditor.refitOnWindowChange]) -- the no-overlap/clamp pass there
+     * doubles as this stage's own safety net if the window shrank since the layout was saved.
+     */
+    private fun custom(
+        window: DualScreenWindow,
+        userLayout: DualScreenCustomLayout?,
+        controllerConnected: Boolean,
+        gameAspect: DualScreenAspect?
+    ): DualScreenLayout {
+        if (userLayout == null) {
+            return if (window.isLandscape) {
+                sideBySide(window, 0.6f, gameAspect, automatic = true)
+            } else {
+                stacked(window, 0.6f, controllerConnected, gameAspect, automatic = true)
+            }
+        }
+        return DualScreenLayoutEditor.refitOnWindowChange(userLayout, window, gameAspect, CANVAS_ASPECT)
+    }
+
     // ---- folds: a physical hinge decides the split point, not either pane's aspect ----
 
     private fun hingeSplit(window: DualScreenWindow, hinge: DualScreenHinge): DualScreenLayout {
@@ -337,9 +387,10 @@ object DualScreenGeometry {
     // ---- shared helpers ----
 
     /** The largest [aspect]-shaped rect, with no internal bars, centred within a box; the whole
-     *  box when [aspect] is null (Stretch/unlocked) or the box has no area. Used only by an
-     *  explicit (non-Automatic) layout choice's manual divider budget. */
-    private fun fitWithinBox(
+     *  box when [aspect] is null (Stretch/unlocked) or the box has no area. Used by an explicit
+     *  (non-Automatic) layout choice's manual divider budget and (internal visibility: shared
+     *  with [DualScreenLayoutEditor]'s own re-fit/swap, 1.4.0) the Custom layout editor. */
+    internal fun fitWithinBox(
         boxX: Int,
         boxY: Int,
         boxW: Int,
