@@ -43,7 +43,14 @@ class SingleChoiceViewHolder(val binding: ListItemSettingBinding, adapter: Setti
             }
 
             is IntSingleChoiceSetting -> {
-                binding.textSettingValue.text = item.getChoiceAt(item.getSelectedValue())
+                // Eden Duo fix: getSelectedValue() is the setting's stored *value* (e.g. -1 for
+                // Automatic), not its position in choices -- getChoiceAt() needs the latter.
+                // Every pre-existing IntSingleChoiceSetting row in this app happens to use an
+                // identity values array (values[i] == i), which hid this: for those,
+                // selectedValueIndex and getSelectedValue() are the same number. Eden Duo's Mode
+                // row (DualScreenMode, values -1/0/1/2) is the first one where they differ, which
+                // is what made the summary line lag one entry behind the real selection.
+                binding.textSettingValue.text = item.getChoiceAt(item.selectedValueIndex)
             }
         }
         if (binding.textSettingValue.text.isEmpty()) {
