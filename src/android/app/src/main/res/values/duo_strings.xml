@@ -5,11 +5,28 @@
 -->
 <!-- Eden Duo strings. Duo ships these in English only; upstream strings.xml stays untouched. -->
 <resources xmlns:tools="http://schemas.android.com/tools" tools:ignore="MissingTranslation">
-    <!-- Eden Duo: Graphics -> Second Screen -->
-    <string name="second_screen">Second Screen</string>
+    <!-- Eden Duo: Graphics -> Dual screen -->
+    <string name="second_screen">Dual screen</string>
+    <!-- Eden Duo Stage 2: dual-screen Mode -->
+    <string name="dual_screen_mode">Mode</string>
+    <string name="dual_screen_mode_description">Physical: a real second screen. Simulated: the companion drawn on this screen. Off: no companion for this game. Automatic: Physical when a second screen is detected, else Simulated. Off applies on the next launch.</string>
+    <string name="dual_screen_mode_automatic">Automatic</string>
+    <string name="dual_screen_mode_physical">Physical</string>
+    <string name="dual_screen_mode_simulated">Simulated</string>
+    <string name="dual_screen_mode_off">Off</string>
+    <string name="dual_screen_mode_no_second_screen">No second screen detected.</string>
+    <!-- Eden Duo Stage 2: Simulated group -->
+    <string name="dual_screen_layout">Layout</string>
+    <string name="dual_screen_layout_description">Automatic sizes the game and the companion to their own shape and fits as much of both as possible. Stacked and Side by side split the screen by the divider below instead.</string>
+    <string name="dual_screen_layout_automatic">Automatic</string>
+    <string name="dual_screen_layout_stacked">Stacked</string>
+    <string name="dual_screen_layout_side_by_side">Side by side</string>
+    <string name="dual_screen_divider">Divider position</string>
+    <string name="dual_screen_divider_description">How much of the screen the game takes when Layout is Stacked or Side by side. Automatic ignores this.</string>
+    <!-- Eden Duo Stage 2: Physical group header (reuses dual_screen_mode_physical\'s text) -->
     <string name="swap_screens">Swap Screens</string>
     <string name="swap_screens_description">Game on the second screen, companion on the main one. Applies when a game starts.</string>
-    <string name="companion_ratio">Companion Ratio</string>
+    <string name="companion_ratio">Companion scaling</string>
     <string name="companion_ratio_description">Fit keeps the companion page shape; Stretch fills the screen.</string>
     <string name="companion_ratio_fit">Fit</string>
     <string name="companion_ratio_stretch">Stretch</string>

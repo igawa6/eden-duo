@@ -75,9 +75,12 @@ enum class IntSetting(override val key: String) : AbstractIntSetting {
     GPU_LOG_RING_BUFFER_SIZE("gpu_log_ring_buffer_size"),
     ANDROID_PIPELINE_WORKERS("pipeline_worker_count"),
 
-    // Eden Duo: Graphics -> Second Screen
+    // Eden Duo: Graphics -> Dual screen
     COMPANION_RATIO("companion_ratio"),
-    NO_COMPANION("no_companion")
+    NO_COMPANION("no_companion"),
+    // Eden Duo Stage 2: Simulated group (dual-screen Mode itself is Kotlin-side, DualScreenMode.kt)
+    COMPANION_LAYOUT("companion_layout"),
+    DIVIDER_POSITION("divider_position")
     ;
 
     override fun getInt(needsGlobal: Boolean): Int = NativeConfig.getInt(key, needsGlobal)
