@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    SPDX-FileCopyrightText: Copyright 2026 igawa6
+    SPDX-License-Identifier: GPL-3.0-or-later
+-->
+<!-- Eden Duo 1.4.0: the freeform layout editor's toolbar (Swap / Reset / Cancel / Done), added
+     over the running game by DualScreenFragmentHost next to DualScreenLayoutEditorView: a small
+     overlay added at runtime, no change to fragment_emulation.xml, the same shape the done
+     control config button already uses for the controls editor. -->
+<com.google.android.material.card.MaterialCardView xmlns:android="http://schemas.android.com/apk/res/android"
+    style="?attr/materialCardViewOutlinedStyle"
+    android:layout_width="wrap_content"
+    android:layout_height="wrap_content"
+    android:layout_gravity="bottom|center_horizontal"
+    android:layout_marginBottom="24dp">
+
+    <LinearLayout
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:padding="4dp">
+
+        <Button
+            android:id="@+id/dual_screen_layout_editor_swap"
+            style="@style/Widget.Material3.Button.TextButton"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/dual_screen_layout_editor_swap" />
+
+        <Button
+            android:id="@+id/dual_screen_layout_editor_reset"
+            style="@style/Widget.Material3.Button.TextButton"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/dual_screen_layout_editor_reset" />
+
+        <Button
+            android:id="@+id/dual_screen_layout_editor_cancel"
+            style="@style/Widget.Material3.Button.TextButton"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/dual_screen_layout_editor_cancel" />
+
+        <Button
+            android:id="@+id/dual_screen_layout_editor_done"
+            style="@style/Widget.Material3.Button.ElevatedButton"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/dual_screen_layout_editor_done" />
+
+    </LinearLayout>
+
+</com.google.android.material.card.MaterialCardView>

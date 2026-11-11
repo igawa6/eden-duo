@@ -44,6 +44,14 @@
         android:icon="@drawable/ic_dual_screen"
         android:title="@string/companion_toggle_hide" />
 
+    <!-- Eden Duo 1.4.0: the freeform layout editor (Simulated only; visibility set in
+         DualScreenFragmentHost.onResume) -->
+    <item
+        android:id="@+id/menu_edit_dual_screen_layout"
+        android:icon="@drawable/ic_dual_screen"
+        android:title="@string/dual_screen_layout_editor_title"
+        android:visible="false" />
+
     <item
         android:id="@+id/menu_load_amiibo"
         android:icon="@drawable/ic_nfc"

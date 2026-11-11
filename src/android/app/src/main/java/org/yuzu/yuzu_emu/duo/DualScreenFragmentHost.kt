@@ -3,9 +3,15 @@
 
 package org.yuzu.yuzu_emu.duo
 
+import android.annotation.SuppressLint
+import android.content.pm.ActivityInfo
 import android.content.res.Configuration
 import android.util.Rational
+import android.view.LayoutInflater
+import android.view.View
 import android.view.ViewGroup
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.fragment.app.Fragment
 import androidx.window.layout.FoldingFeature
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
@@ -13,6 +19,7 @@ import org.yuzu.yuzu_emu.NativeLibrary
 import org.yuzu.yuzu_emu.R
 import org.yuzu.yuzu_emu.databinding.FragmentEmulationBinding
 import org.yuzu.yuzu_emu.features.settings.model.IntSetting
+import org.yuzu.yuzu_emu.features.settings.model.Settings.EmulationOrientation
 import org.yuzu.yuzu_emu.features.settings.model.Settings.EmulationVerticalAlignment
 import org.yuzu.yuzu_emu.overlay.model.OverlayLayout
 import org.yuzu.yuzu_emu.utils.Log
@@ -52,6 +59,13 @@ class DualScreenFragmentHost(
     private var currentLayout: DualScreenLayout? = null
     private var pausedForDisplayEject = false
 
+    // Eden Duo 1.4.0: the freeform layout editor (LAYOUT-EDITOR-SPEC.md). Both non-null exactly
+    // while editing; orientationLockedForEditor mirrors EmulationFragment's own
+    // startConfiguringControls/stopConfiguringControls pattern for the controls editor.
+    private var layoutEditorView: DualScreenLayoutEditorView? = null
+    private var layoutEditorToolbar: View? = null
+    private var orientationLockedForEditor = false
+
     /** Routes touches inside the companion pane to NativeInput instead of the emulated input. */
     val companionPaneTouch = CompanionPaneTouch { currentLayout?.companionRect }
 
@@ -63,16 +77,21 @@ class DualScreenFragmentHost(
     override fun onEjectReconnected() = resumeAfterDisplayEjectIfPaused()
     override fun onSimulatedStaysHint() = showSimulatedStaysHint()
 
-    /** EmulationFragment.onResume: wires the companion pane's touch routing into the overlay. */
+    /** EmulationFragment.onResume: wires the companion pane's touch routing into the overlay and
+     *  (1.4.0) keeps the in-game menu's "Edit dual screen layout" entry's visibility current. */
     fun onResume() {
         binding()?.surfaceInputOverlay?.companionPaneTouch = companionPaneTouch
+        binding()?.inGameMenu?.menu?.findItem(R.id.menu_edit_dual_screen_layout)?.isVisible =
+            dualScreen().isSimulatedActive() && !isEditingLayout
     }
 
-    /** EmulationFragment.onDestroyView: unwires the overlay and drops any in-flight touch. */
+    /** EmulationFragment.onDestroyView: unwires the overlay, drops any in-flight touch and (1.4.0)
+     *  tears down the layout editor if it was still open (no save -- same as Cancel). */
     fun onDestroyView() {
         binding()?.surfaceInputOverlay?.companionPaneTouch = null
         companionPaneTouch.clear()
         currentLayout = null
+        if (isEditingLayout) stopEditingLayout(save = false)
     }
 
     /**
@@ -149,16 +168,10 @@ class DualScreenFragmentHost(
             )
         } else {
             val window = DualScreenWindow(windowW, windowH, fragment.resources.displayMetrics.densityDpi)
-            val userLayout = DualScreenUserLayout(
-                choice = DualScreenLayoutChoice.entries.getOrElse(
-                    IntSetting.COMPANION_LAYOUT.getInt()
-                ) { DualScreenLayoutChoice.AUTOMATIC },
-                dividerPercent = IntSetting.DIVIDER_POSITION.getInt()
-            )
             val gameAspect =
                 DualScreenGeometry.aspectForRendererSetting(IntSetting.RENDERER_ASPECT_RATIO.getInt())
             DualScreenGeometry.compute(
-                window, currentHinge, hasPhysicalControllerConnected(), userLayout, gameAspect
+                window, currentHinge, hasPhysicalControllerConnected(), currentUserLayout(window), gameAspect
             )
         }
         currentLayout = layout
@@ -170,6 +183,184 @@ class DualScreenFragmentHost(
             companionFrac[0], companionFrac[1], companionFrac[2], companionFrac[3]
         )
         applyControlsBand(layout.controlsRect)
+    }
+
+    /**
+     * The Simulated layout engine's input for the live window [window]: the saved Layout choice,
+     * plus (1.4.0) Custom's own saved fractions for this orientation/title when that is the
+     * choice. Shared by [updateLayout] and [startEditingLayout] so both always agree on what
+     * "the current layout" means. 1.4.0: Stacked/Side by side no longer read the retired Divider
+     * position setting -- they use [DualScreenUserLayout]'s own fixed ~60% default (see its
+     * class doc).
+     */
+    private fun currentUserLayout(window: DualScreenWindow): DualScreenUserLayout {
+        val choice = DualScreenLayoutChoice.entries.getOrElse(
+            IntSetting.COMPANION_LAYOUT.getInt()
+        ) { DualScreenLayoutChoice.AUTOMATIC }
+        val customLayout = if (choice == DualScreenLayoutChoice.CUSTOM) {
+            fragment.context?.let {
+                DualScreenCustomLayoutStore.load(it, window.isLandscape, dualScreen().currentSecondScreenTitle())
+            }
+        } else {
+            null
+        }
+        return DualScreenUserLayout(choice = choice, customLayout = customLayout)
+    }
+
+    // ---- 1.4.0: the freeform layout editor (LAYOUT-EDITOR-SPEC.md) ----
+
+    /** True while the "Edit dual screen layout" editor is open over the game. */
+    val isEditingLayout: Boolean get() = layoutEditorView != null
+
+    /**
+     * EmulationFragment's "Edit dual screen layout" in-game menu entry (Simulated only): opens
+     * the freeform editor over the running game, seeded from whatever is on screen right now
+     * (today's resolved layout, Automatic or otherwise) -- reuses InputOverlay's own edit-mode
+     * shape (a view added over the game, a Done button, an orientation lock) rather than
+     * inventing a new one. The live native split is untouched until Done commits it.
+     */
+    @SuppressLint("SourceLockedOrientationActivity")
+    fun startEditingLayout() {
+        if (isEditingLayout) return
+        val b = binding() ?: return
+        val context = fragment.context ?: return
+        val windowW = b.surfaceEmulation.width
+        val windowH = b.surfaceEmulation.height
+        if (windowW <= 0 || windowH <= 0) return
+        val window = DualScreenWindow(windowW, windowH, fragment.resources.displayMetrics.densityDpi)
+        val gameAspect = DualScreenGeometry.aspectForRendererSetting(IntSetting.RENDERER_ASPECT_RATIO.getInt())
+        val companionAspect = DualScreenGeometry.CANVAS_ASPECT
+        var current = DualScreenGeometry.compute(
+            window, currentHinge, hasPhysicalControllerConnected(), currentUserLayout(window), gameAspect
+        )
+        if (current.companionRect.isEmpty) {
+            // The companion is collapsed (today's Automatic pane floor, or the toggle) -- there
+            // would be nothing to see or drag. Seed from the exempt-from-the-floor explicit
+            // arrangement instead (same shape "Reset" uses), so the editor always opens with a
+            // visible, draggable companion rect.
+            current = DualScreenGeometry.compute(
+                window, null, hasPhysicalControllerConnected(),
+                DualScreenUserLayout(
+                    if (window.isLandscape) DualScreenLayoutChoice.SIDE_BY_SIDE else DualScreenLayoutChoice.STACKED
+                ),
+                gameAspect
+            )
+        }
+        // Lock orientation while editing, same as EmulationFragment's own controls editor
+        // (startConfiguringControls) -- a rotation mid-edit would invalidate the window this
+        // editor was seeded from.
+        if (IntSetting.RENDERER_SCREEN_LAYOUT.getInt() == EmulationOrientation.Unspecified.int) {
+            fragment.activity?.let {
+                it.requestedOrientation = if (
+                    fragment.resources.configuration.orientation == Configuration.ORIENTATION_PORTRAIT
+                ) {
+                    ActivityInfo.SCREEN_ORIENTATION_USER_PORTRAIT
+                } else {
+                    ActivityInfo.SCREEN_ORIENTATION_USER_LANDSCAPE
+                }
+            }
+            orientationLockedForEditor = true
+        }
+        val companionBox = companionSafeBox(windowW, windowH)
+        val editorView = DualScreenLayoutEditorView(context, null).apply {
+            configure(
+                window, DualScreenRect(0, 0, windowW, windowH), companionBox,
+                gameAspect, companionAspect,
+                current.gameRect.takeUnless { it.isEmpty } ?: DualScreenRect(0, 0, windowW, windowH),
+                current.companionRect
+            )
+        }
+        b.overlayContainer.addView(
+            editorView, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+        )
+        val toolbar = LayoutInflater.from(context)
+            .inflate(R.layout.view_dual_screen_layout_editor_toolbar, b.overlayContainer, false)
+        wireToolbar(toolbar, editorView, window, gameAspect, companionAspect)
+        b.overlayContainer.addView(toolbar)
+        layoutEditorView = editorView
+        layoutEditorToolbar = toolbar
+        binding()?.inGameMenu?.menu?.findItem(R.id.menu_edit_dual_screen_layout)?.isVisible = false
+    }
+
+    private fun wireToolbar(
+        toolbar: View,
+        editorView: DualScreenLayoutEditorView,
+        window: DualScreenWindow,
+        gameAspect: DualScreenAspect?,
+        companionAspect: DualScreenAspect
+    ) {
+        toolbar.findViewById<View>(R.id.dual_screen_layout_editor_swap)
+            ?.setOnClickListener { editorView.swap() }
+        toolbar.findViewById<View>(R.id.dual_screen_layout_editor_reset)
+            ?.setOnClickListener {
+                val automatic = DualScreenGeometry.compute(
+                    window, currentHinge, hasPhysicalControllerConnected(),
+                    DualScreenUserLayout(DualScreenLayoutChoice.AUTOMATIC), gameAspect
+                )
+                editorView.reset(automatic)
+            }
+        toolbar.findViewById<View>(R.id.dual_screen_layout_editor_cancel)
+            ?.setOnClickListener { stopEditingLayout(save = false) }
+        toolbar.findViewById<View>(R.id.dual_screen_layout_editor_done)
+            ?.setOnClickListener { stopEditingLayout(save = true) }
+    }
+
+    /**
+     * Closes the editor; [save] (Done, true) persists its current rects as the saved Custom
+     * layout and sets Layout = Custom, mirroring how Eden's own per-game settings decide global
+     * vs. per-title (LAYOUT-EDITOR-SPEC.md item 3): per-title exactly when this game session has
+     * a per-game config loaded ([NativeConfig.isPerGameConfigLoaded]), global otherwise -- the
+     * same condition the app's own per-game settings save path already uses. Cancel (false)
+     * discards the in-progress edit; the live native layout was never touched either way.
+     */
+    private fun stopEditingLayout(save: Boolean) {
+        val editorView = layoutEditorView ?: return
+        val b = binding()
+        if (save) {
+            val context = fragment.context
+            val perGame = NativeConfig.isPerGameConfigLoaded()
+            val gameId = if (perGame) dualScreen().currentSecondScreenTitle() else null
+            if (context != null) {
+                DualScreenCustomLayoutStore.save(
+                    context, editorView.window.isLandscape, gameId,
+                    DualScreenCustomLayout(
+                        editorView.gameRect.toNormRect(editorView.window),
+                        editorView.companionRect.toNormRect(editorView.window)
+                    )
+                )
+            }
+            IntSetting.COMPANION_LAYOUT.global = !perGame
+            IntSetting.COMPANION_LAYOUT.setInt(DualScreenLayoutChoice.CUSTOM.ordinal)
+            if (perGame) NativeConfig.savePerGameConfig() else NativeConfig.saveGlobalConfig()
+        }
+        b?.overlayContainer?.removeView(editorView)
+        layoutEditorToolbar?.let { b?.overlayContainer?.removeView(it) }
+        layoutEditorView = null
+        layoutEditorToolbar = null
+        if (orientationLockedForEditor) {
+            fragment.activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+            orientationLockedForEditor = false
+        }
+        if (save) updateLayout()
+        binding()?.inGameMenu?.menu?.findItem(R.id.menu_edit_dual_screen_layout)?.isVisible =
+            dualScreen().isSimulatedActive()
+    }
+
+    /**
+     * The companion pane's safe-drawing box (spec item 2: "safe-drawing insets for the
+     * companion"), approximated from the system bars + display cutout of the current root window
+     * insets; the full window when insets are not available yet (same fallback behaviour as
+     * showing no inset at all).
+     */
+    private fun companionSafeBox(windowW: Int, windowH: Int): DualScreenRect {
+        val root = binding()?.root
+        val insets = root?.let { ViewCompat.getRootWindowInsets(it) }
+            ?.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
+        val left = insets?.left ?: 0
+        val top = insets?.top ?: 0
+        val right = insets?.right ?: 0
+        val bottom = insets?.bottom ?: 0
+        return DualScreenRect(left, top, (windowW - left - right).coerceAtLeast(0), (windowH - top - bottom).coerceAtLeast(0))
     }
 
     /**

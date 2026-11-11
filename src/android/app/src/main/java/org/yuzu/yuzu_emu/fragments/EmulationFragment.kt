@@ -942,6 +942,13 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
                     true
                 }
 
+                // Eden Duo 1.4.0: the freeform layout editor (DualScreenFragmentHost).
+                R.id.menu_edit_dual_screen_layout -> {
+                    binding.drawerLayout.close()
+                    dualScreenHost.startEditingLayout()
+                    true
+                }
+
                 R.id.menu_load_amiibo -> handleLoadAmiiboSelection()
 
                 R.id.menu_cheats -> {
