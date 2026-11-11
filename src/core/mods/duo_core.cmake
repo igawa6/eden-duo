@@ -62,6 +62,8 @@ target_sources(core PRIVATE
     mods/mod_font_epoch.h
     mods/mod_load_plan.cpp
     mods/mod_load_plan.h
+    mods/mod_launch_gate.cpp
+    mods/mod_launch_gate.h
     mods/dsmod_module_extensions.h
     mods/mod_module.h
     mods/mod_types.h
