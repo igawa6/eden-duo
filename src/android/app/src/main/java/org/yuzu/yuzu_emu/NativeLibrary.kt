@@ -775,9 +775,38 @@ object NativeLibrary {
      * setting -- see duo.InlineDualScreen. [enabled] turns it on for the next renderer; when on,
      * [landscape] picks the fixed split (game left ~60% / companion right ~40% in landscape,
      * game top / companion below in portrait). Applied once the renderer exists
-     * (DSModSession::OnRendererReady), so it is safe to call any time before or during boot.
+     * (DSModSession::OnRendererReady), so it is safe to call any time before or during boot. It
+     * overrides [setDualScreenInlineLayout] below while it is on (a developer override).
      */
     external fun setInlineDualScreen(enabled: Boolean, landscape: Boolean)
+
+    /**
+     * Eden Duo Stage 2: the real Simulated layout -- [org.yuzu.yuzu_emu.duo.DualScreenGeometry]'s
+     * game/companion rects, each a fraction (0..1) of the main window on both axes. Safe to call
+     * any time, including live while a game runs: rotation, resize, fold change and divider drag
+     * all call this again with the recomputed rects, and it applies immediately if the renderer
+     * already exists (no pause, no swapchain rebuild).
+     */
+    external fun setDualScreenInlineLayout(
+        enabled: Boolean,
+        gameX: Float,
+        gameY: Float,
+        gameW: Float,
+        gameH: Float,
+        companionX: Float,
+        companionY: Float,
+        companionW: Float,
+        companionH: Float
+    )
+
+    /**
+     * Eden Duo Stage 2: dual-screen Mode "Off" for the next launch (true), or not (false) --
+     * [org.yuzu.yuzu_emu.duo.DualScreenEmulationController] calls this before every boot, from
+     * the resolved active mode. While true, no companion package is selected for the launch and
+     * the companion runtime never starts (Core::Mods::SetCompanionsDisabledForLaunch); it never
+     * changes which add-ons the user has enabled.
+     */
+    external fun setCompanionsDisabledForLaunch(disabled: Boolean)
 
     /**
      * DSMod: a haptic the dual-screen runtime asked for (strength 1 light, 2 click, 3 confirm,

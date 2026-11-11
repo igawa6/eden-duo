@@ -230,6 +230,16 @@ struct SecondScreenOptions {
                    ? CompanionRatio::Stretch
                    : CompanionRatio::Fit;
     }
+    // Eden Duo Stage 2 (owner decision, revised from an earlier draft of this stage that gave
+    // Simulated its own Fit/Stretch setting): Simulated is always Fit, unconditionally -- never
+    // user-settable, never reading companion_ratio. The layout engine (DualScreenGeometry) sizes
+    // the companion pane to the canvas's own aspect in the first place, so Fit draws it with no
+    // bars in normal use; this is just the safety net for a pane a manual divider shaped
+    // differently. [is_inline] (the panel currently up is Simulated, not Physical) is kept as
+    // CompanionTouchRect's own parameter -- see ActiveRatio.
+    static CompanionRatio ActiveRatio(bool is_inline) {
+        return is_inline ? CompanionRatio::Fit : Ratio();
+    }
     static NoCompanion WithoutCompanion() {
         const u32 v = no_companion.load(std::memory_order_relaxed);
         return v <= static_cast<u32>(NoCompanion::Off) ? static_cast<NoCompanion>(v)
@@ -281,16 +291,38 @@ inline CompanionRect FitCompanion(u32 fw, u32 fh, u32 cw, u32 ch, CompanionRatio
 }
 
 /// The rect a companion's touches map through. A mirror page (the game's own pixels) is always
-/// drawn over the whole panel, whatever Companion Ratio says.
-inline CompanionRect CompanionTouchRect(u32 fw, u32 fh, u32 cw, u32 ch, bool mirror) {
+/// drawn over the whole panel, whatever Companion Ratio says. [is_inline] forces Fit (Simulated
+/// is always Fit) instead of Physical's own Companion Ratio -- the touch rect must agree with
+/// whichever one the draw path used for the panel currently up.
+inline CompanionRect CompanionTouchRect(u32 fw, u32 fh, u32 cw, u32 ch, bool mirror,
+                                        bool is_inline = false) {
     return FitCompanion(fw, fh, cw, ch,
-                        mirror ? CompanionRatio::Stretch : SecondScreenOptions::Ratio());
+                        mirror ? CompanionRatio::Stretch
+                               : SecondScreenOptions::ActiveRatio(is_inline));
 }
 
 /// One axis of a second-screen touch, panel pixels -> canvas pixels, for a point inside the
 /// rect (origin/extent = CompanionRect x/w or y/h). On a full rect this is v * canvas / panel.
 inline s32 PanelToCanvas(u32 v, u32 origin, u32 extent, u32 canvas) {
     return static_cast<s32>(static_cast<u64>(v - origin) * canvas / std::max(1u, extent));
+}
+
+// ---------------- Stage 2: Simulated touch routing ----------------
+
+/// A window-pixel point mapped into a sub-rect of that window, normalised 0..1 and clamped to
+/// the rect (so a point past its edge lands on the edge rather than outside 0..1). {0, 0} for an
+/// empty rect. Used both for the companion pane (pane-local coordinates the mod runtime expects,
+/// matching AuxTouchPoint's "aux surface space") and, on the Android frontend, for the narrowed
+/// game rect (EmuWindow_Android), which the SurfaceView itself does not shrink to (Stage 1 keeps
+/// it full-window so the native split alone decides game vs. companion).
+inline std::pair<float, float> MapWindowPointToRect(u32 px, u32 py, const CompanionRect& rect) {
+    if (rect.w == 0 || rect.h == 0) {
+        return {0.0f, 0.0f};
+    }
+    const u32 cx = std::clamp(px, rect.x, rect.x + rect.w - 1);
+    const u32 cy = std::clamp(py, rect.y, rect.y + rect.h - 1);
+    return {static_cast<float>(cx - rect.x) / static_cast<float>(rect.w),
+           static_cast<float>(cy - rect.y) / static_cast<float>(rect.h)};
 }
 
 // ---------------- Stage 1: Simulated (single-surface) dual screen ----------------
@@ -416,6 +448,10 @@ public:
     std::atomic<u32> height{0};
     std::atomic<u32> rotation{0};
     std::atomic<u32> refresh_hz{60};
+    // Eden Duo Stage 2: which scaling setting (and FitCompanion call) produced the width/height
+    // above right now -- Simulated's own, or Physical's -- set beside every width/height store.
+    // Touch mapping (CompanionTouchRect) reads this so it always agrees with what was drawn.
+    std::atomic<bool> panel_is_inline{false};
 
     // --- written by dsm:u (guest service thread), read by the renderer ---
     std::atomic<u64> bound_layer{NoLayer};

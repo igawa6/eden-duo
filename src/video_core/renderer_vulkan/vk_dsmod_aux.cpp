@@ -434,6 +434,7 @@ void DSModAuxPresenter::SetAuxWindow(Core::Frontend::EmuWindow* aux_window_) {
         const auto& layout = aux_window_->GetFramebufferLayout();
         aux.width.store(layout.width);
         aux.height.store(layout.height);
+        aux.panel_is_inline.store(false, std::memory_order_relaxed);
         aux.present.store(true);
         return;
     }
@@ -510,6 +511,7 @@ void DSModAuxPresenter::SyncAuxWindow() {
         aux_window = wanted;
         aux.width.store(layout.width);
         aux.height.store(layout.height);
+        aux.panel_is_inline.store(false, std::memory_order_relaxed);
         aux.present.store(true);
         LOG_INFO(Render_Vulkan, "DSMod aux window attached ({}x{})", layout.width, layout.height);
     } catch (const vk::Exception& exception) {
@@ -766,8 +768,11 @@ bool DSModAuxPresenter::RenderInlineModUi(const VideoCore::DSMod::CompanionRect&
     }
     // Eden Duo: Fit keeps the canvas shape inside the pane (bars in the page background), same
     // math as the physical blit's own Fit, just against the pane instead of the aux window.
+    // Stage 2 (owner decision): Simulated is always Fit, never Physical's own Companion Ratio --
+    // DualScreenGeometry already sizes the pane to the canvas's own aspect, so this is a safety
+    // net (a manually-dragged divider) rather than the normal case.
     const auto fit = VideoCore::DSMod::FitCompanion(pane.w, pane.h, aux_ui_w, aux_ui_h,
-                                                    VideoCore::DSMod::SecondScreenOptions::Ratio());
+                                                    VideoCore::DSMod::CompanionRatio::Fit);
     inline_companion.view = *aux_ui_view;
     inline_companion.extent = VkExtent2D{aux_ui_w, aux_ui_h};
     inline_companion.version = aux_ui_serial;
@@ -793,12 +798,17 @@ std::optional<VideoCore::DSMod::CompanionRect> DSModAuxPresenter::RenderInline(
     if (rects.companion.w == 0 || rects.companion.h == 0) {
         inline_companion = CompanionQuad{};
         aux.present.store(false, std::memory_order_relaxed);
+        // Stage 2 I4 (inline): the pane just disappeared (collapsed by the companion toggle, or
+        // too small for Fit) -- drop any touch still held against it, same fix as AuxSurfaceDestroyed
+        // already applies to a lost Physical window.
+        aux.SetTouch({});
         return std::nullopt;
     }
     // Stage 1 work item 1: while inline is active and the pane is non-empty, present/width/height
     // read as they would with a real second screen (__aux_present, HUD-hide, runtime ticks).
     aux.width.store(rects.companion.w, std::memory_order_relaxed);
     aux.height.store(rects.companion.h, std::memory_order_relaxed);
+    aux.panel_is_inline.store(true, std::memory_order_relaxed);
     aux.present.store(true, std::memory_order_relaxed);
 
     const bool drew = (aux.gpu_composite.load(std::memory_order_relaxed) && aux.HasComposite())
@@ -1285,9 +1295,10 @@ bool DSModAuxPresenter::RenderInlineModUiGpu(const VideoCore::DSMod::CompanionRe
         aux_c_dirty = false;
     }
     // Eden Duo: Fit keeps the composited canvas' shape inside the pane (bars in its background);
-    // a full rect is the plain whole-pane draw.
+    // a full rect is the plain whole-pane draw. Stage 2 (owner decision): always Fit, see
+    // RenderInlineModUi's own note above.
     const auto fit = VideoCore::DSMod::FitCompanion(pane.w, pane.h, aux_c_cw, aux_c_ch,
-                                                    VideoCore::DSMod::SecondScreenOptions::Ratio());
+                                                    VideoCore::DSMod::CompanionRatio::Fit);
     inline_companion.view = *aux_inline_view;
     inline_companion.extent = VkExtent2D{aux_c_cw, aux_c_ch};
     inline_companion.version = aux_c_comp_serial;
@@ -1309,6 +1320,7 @@ void DSModAuxPresenter::RenderAuxWindow(std::span<const Tegra::FramebufferConfig
     auto& aux = gpu.DSModAux();
     aux.width.store(window_layout.width);
     aux.height.store(window_layout.height);
+    aux.panel_is_inline.store(false, std::memory_order_relaxed);
 
     // Fit the guest layer into the panel without distorting it. The panel is not 16:9 (the Thor's
     // second screen is 1240x1080), so neither stretching to fill nor the 16:9 default layout is
