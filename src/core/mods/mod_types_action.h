@@ -70,7 +70,7 @@ struct Action {
     /// Write: before writing V to `point`, if this point currently equals V, it receives
     /// `point`'s previous value (an exclusive pair of equip slots swapping like a pause menu).
     std::string swap_point;
-    std::string button; ///< Button: A, B, X, Y, L, R, ZL, ZR, Plus, Minus, DUp, ...
+    std::string button; ///< Button: A, B, X, Y, L, R, ZL, ZR, Plus, Minus, DUp, ..., L3/R3 (25)
     u32 frames{4};      ///< Button: how many runtime ticks to hold
     /// Button: press repeatedly. When `counter` is set the number of presses is worked out from
     /// where the game currently is -- (target - counter) wrapped by `modulo` -- so a tap on the

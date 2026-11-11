@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Package compatibility gating ("min_runtime"): the raw-JSON requirement read, and the built-in
 // "update Eden" page shown instead of a package that needs a newer dual-screen runtime.
+#include <format>
 #include <limits>
 
 #include <catch2/catch_test_macros.hpp>
@@ -98,6 +99,22 @@ TEST_CASE("DSMod min_runtime: the built-in update page", "[dsmod][min-runtime]")
         ink += px == 0xFFFFFFFFu || px == 0xFFE6ECF2u || px == 0xFFFFC040u;
     }
     REQUIRE(ink > 1000);
+}
+
+TEST_CASE("DSMod min_runtime: a package using canvas_alt / @screen. / L3-R3 gates on runtime 25",
+          "[dsmod][min-runtime][runtime25]") {
+    REQUIRE(DualScreenRuntimeVersion >= 25);
+    // A companion that uses canvas_alt / @screen.* / L3/R3 is expected to declare
+    // "min_runtime": 25, exactly like every earlier bump (runtime21.cpp's own
+    // "DualScreenRuntimeVersion >= 21" case): this (current) runtime accepts it...
+    REQUIRE(Need(R"({"min_runtime":25})") == 25);
+    REQUIRE(Need(R"({"min_runtime":25})") <= DualScreenRuntimeVersion);
+    // ...and a package asking for one more than this runtime has is refused (the built-in
+    // update page), the same PackageMinRuntime comparison every min_runtime value already uses
+    // -- nothing new to implement for this gate.
+    const auto future =
+        nlohmann::json::parse(std::format(R"({{"min_runtime":{}}})", DualScreenRuntimeVersion + 1));
+    REQUIRE(PackageMinRuntime(&future, nullptr) > DualScreenRuntimeVersion);
 }
 
 // ModRuntime pulls in the whole core (like eden-cli): the VMA implementation lives in the

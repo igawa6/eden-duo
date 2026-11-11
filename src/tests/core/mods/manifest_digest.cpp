@@ -606,6 +606,7 @@ std::string R(const Widget& o) {
     F(fill_image);
     F(chart);
     if (o.pan_bounds) { F(pan_bounds); }
+    if (o.rect_alt) { F(rect_alt); }
     DUMP_END;
 }
 std::string R(const ScrollRegion& o) {
@@ -1112,6 +1113,9 @@ std::string DumpManifest(const Manifest& o) {
         F(poll_hz);
         F(canvas_w);
         F(canvas_h);
+        F(canvas_alt_w);
+        F(canvas_alt_h);
+        F(canvas_alt_when);
         C(background);
         F(enforce_gate);
         F(enforce_gate_max);
@@ -1277,9 +1281,9 @@ void CheckLayouts() {
     };
     // clang-format off
     const Size sizes[] = {
-        {"Manifest", sizeof(Manifest), 2472},
+        {"Manifest", sizeof(Manifest), 2488}, // runtime 25: canvas_alt_w/_h/_when
         {"Page", sizeof(Page), 160},
-        {"Widget", sizeof(Widget), 2344},
+        {"Widget", sizeof(Widget), 2360}, // runtime 25: rect_alt
         {"ChartSpec", sizeof(ChartSpec), 64},
         {"ViewDefaultBinds", sizeof(ViewDefaultBinds), 128},
         {"ScrollRegion", sizeof(ScrollRegion), 368},

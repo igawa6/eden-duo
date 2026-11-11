@@ -556,6 +556,14 @@ struct Widget {
     /// the pan / zoom window may show (ClampPanAxis, mod_view_default.h). A padded picture can
     /// then be panned only over its content. nullopt = the whole picture, as before.
     std::optional<std::array<float, 4>> pan_bounds;
+    // --- runtime 25 ------------------------------------------------------------------------------
+    /// "rect_alt": this widget's {x, y, w, h} while the manifest's canvas_alt is the active canvas
+    /// (ModRuntime::ApplyCanvasVariant swaps it in for `rect`, mod_redraw.cpp); unset (the
+    /// default) = the widget keeps `rect` on both canvases. The smaller of the two manifest
+    /// shapes weighed for per-canvas layout against duplicating whole pages per canvas: one
+    /// widget can reposition for a narrower pane without a second copy of the page and its
+    /// actions / binds / nav_order.
+    std::optional<std::array<s32, 4>> rect_alt;
 };
 
 /// A drag-to-scroll list region on a page (page "scrolls", or a widget's inline "scroll" object).

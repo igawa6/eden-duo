@@ -401,6 +401,13 @@ void ModRuntime::InitializeGameModule() {
             const auto value = rt.sequence_texts.find(name + SequencePrefix.size());
             return value == rt.sequence_texts.end() ? nullptr : value->second.c_str();
         }
+        if (IsHostValueKey(name)) {
+            // Runtime 25: @screen.orientation / @screen.mode, the only text host values so far
+            // (@device./@perf./@screen.pane_* have no get_text answer). Borrowed for this
+            // callback only, like every other get_text result.
+            const auto text = rt.ModuleHostValues().GetText(name);
+            return text ? text->data() : nullptr;
+        }
         if (rt.module_snapshot) {
             const auto value = rt.module_snapshot->texts.find(name);
             if (value != rt.module_snapshot->texts.end()) {

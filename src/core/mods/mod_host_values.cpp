@@ -117,6 +117,16 @@ void HostValues::Update() {
         last_power_ns = now;
         ++power_reads;
     }
+    if (source.screen) {
+        // Runtime 25: plain atomic reads already done elsewhere every tick (panel_w/panel_h in
+        // PublishUi) -- no interval to throttle, unlike the battery/perf reads above.
+        const ScreenPane pane = source.screen();
+        screen_w = pane.width;
+        screen_h = pane.height;
+        orientation_text = pane.width >= pane.height ? "landscape" : "portrait";
+        mode_text = pane.simulated ? "simulated" : "physical";
+        have_screen = true;
+    }
     if (!source.perf) {
         last_update_ns = now;
         return;
@@ -174,6 +184,12 @@ void HostValues::Publish(StateSnapshot& snapshot) const {
         snapshot.ints[HostKeys::FrametimeMs] = Rounded(frametime_ms);
         snapshot.ints[HostKeys::FrametimeX10] = Rounded(frametime_ms * 10.0);
     }
+    if (have_screen) {
+        snapshot.ints[HostKeys::PaneW] = static_cast<s64>(screen_w);
+        snapshot.ints[HostKeys::PaneH] = static_cast<s64>(screen_h);
+        snapshot.texts[HostKeys::Orientation] = orientation_text;
+        snapshot.texts[HostKeys::Mode] = mode_text;
+    }
 }
 
 std::optional<s64> HostValues::GetI64(std::string_view name) const {
@@ -204,6 +220,27 @@ std::optional<s64> HostValues::GetI64(std::string_view name) const {
             return Rounded(frametime_ms * 10.0);
         }
     }
+    if (have_screen) {
+        if (name == HostKeys::PaneW) {
+            return static_cast<s64>(screen_w);
+        }
+        if (name == HostKeys::PaneH) {
+            return static_cast<s64>(screen_h);
+        }
+    }
+    return std::nullopt;
+}
+
+std::optional<std::string_view> HostValues::GetText(std::string_view name) const {
+    if (!have_screen) {
+        return std::nullopt;
+    }
+    if (name == HostKeys::Orientation) {
+        return std::string_view{orientation_text};
+    }
+    if (name == HostKeys::Mode) {
+        return std::string_view{mode_text};
+    }
     return std::nullopt;
 }
 
@@ -227,13 +264,15 @@ std::optional<f64> HostValues::GetF64(std::string_view name) const {
 }
 
 bool IsHostValueKey(std::string_view name) {
-    return name.starts_with("@device.") || name.starts_with("@perf.");
+    return name.starts_with("@device.") || name.starts_with("@perf.") ||
+           name.starts_with("@screen.");
 }
 
 bool JsonReferencesHostKeys(const nlohmann::json& json) {
     const auto names_host = [](std::string_view text) {
         return text.find("@device.") != std::string_view::npos ||
-               text.find("@perf.") != std::string_view::npos;
+               text.find("@perf.") != std::string_view::npos ||
+               text.find("@screen.") != std::string_view::npos;
     };
     if (json.is_string()) {
         return names_host(json.get_ref<const std::string&>());
