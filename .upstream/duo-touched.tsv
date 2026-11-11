@@ -512,3 +512,7 @@ upstream-hook	M	1	7	0	src/android/app/src/main/java/org/yuzu/yuzu_emu/adapters/S
 upstream-hook	M	1	8	1	src/android/app/src/main/java/org/yuzu/yuzu_emu/fragments/DriverFetcherFragment.kt
 upstream-hook	M	1	9	0	src/android/app/src/main/res/layout/card_game_grid_compact.xml
 upstream-hook	M	1	9	0	src/core/hle/kernel/kernel.h
+upstream-hook	M	4	37	1	src/video_core/renderer_vulkan/present/window_adapt_pass.h
+upstream-hook	M	4	97	1	src/video_core/renderer_vulkan/present/window_adapt_pass.cpp
+upstream-hook	M	3	6	1	src/video_core/renderer_vulkan/vk_blit_screen.h
+upstream-hook	M	2	3	2	src/video_core/renderer_vulkan/vk_blit_screen.cpp
