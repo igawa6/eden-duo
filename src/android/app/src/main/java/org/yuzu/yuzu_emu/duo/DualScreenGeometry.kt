@@ -136,8 +136,27 @@ object DualScreenGeometry {
      *  own rendering, which still uses whatever box it is given. */
     private val DEFAULT_GAME_ASPECT = DualScreenAspect(16, 9)
 
-    /** RESEARCH.md Â§4.1 F4 / Â§4.2 R4: below this, a companion pane is not worth drawing. */
-    const val MIN_PANE_SHORT_EDGE_DP = 320f
+    /**
+     * RESEARCH.md Â§4.1 F4 / Â§4.2 R4, lowered in Stage 4 (owner decision 5: landscape default is
+     * side by side) -- 320 dp collapsed the common case the owner wants visible: a 16:9 game
+     * beside the 8:7 companion canvas needs 3160 px of full-height width, so on a phone
+     * (2400x1080) or the Thor's own top screen (1920x1080) Automatic shrinks both panes to fit
+     * and the companion's short edge lands at ~312 dp / ~262 dp respectively (see
+     * DualScreenGeometryTest) -- just under the old floor. 200 dp clears both while still
+     * collapsing a genuinely cramped manual-divider budget or hinge split.
+     */
+    const val MIN_PANE_SHORT_EDGE_DP = 200f
+
+    /**
+     * Stage 4: a second, independent floor on the *window* itself. A single per-pane floor low
+     * enough to keep the phone/Thor case above visible cannot, by itself, also collapse a
+     * flip-phone cover screen (904x2316 in the device table): that window's own companion pane
+     * lands at ~300 dp -- above a 200 dp per-pane floor -- even though the window carrying it
+     * (344 dp on its short edge) is too small to read anything on. 360 dp sits strictly between
+     * every cover-screen-class window in the table (344 dp) and every normal phone/Thor/tablet
+     * one (411-800 dp), so it catches the former without touching the latter.
+     */
+    const val MIN_WINDOW_SHORT_EDGE_DP = 360f
 
     /** Eden's `aspect_ratio` IntSetting (0 16:9, 1 4:3, 2 21:9, 3 16:10, 4 Stretch) as a lock. */
     fun aspectForRendererSetting(value: Int): DualScreenAspect? = when (value) {
@@ -336,16 +355,21 @@ object DualScreenGeometry {
         if (layout.companionRect.isEmpty) {
             return layout
         }
+        if (minOf(window.widthDp, window.heightDp) < MIN_WINDOW_SHORT_EDGE_DP) {
+            return collapse(layout)
+        }
         val density = if (window.densityDpi <= 0) 1f else window.densityDpi / 160f
         val shortEdgeDp = minOf(layout.companionRect.w, layout.companionRect.h) / density
         if (shortEdgeDp >= MIN_PANE_SHORT_EDGE_DP) {
             return layout
         }
-        return layout.copy(
-            gameRect = mergeAdjacent(layout.gameRect, layout.companionRect),
-            companionRect = DualScreenRect.EMPTY
-        )
+        return collapse(layout)
     }
+
+    private fun collapse(layout: DualScreenLayout): DualScreenLayout = layout.copy(
+        gameRect = mergeAdjacent(layout.gameRect, layout.companionRect),
+        companionRect = DualScreenRect.EMPTY
+    )
 
     /** The bounding box of two rects that share an edge (every branch above produces exactly that). */
     private fun mergeAdjacent(a: DualScreenRect, b: DualScreenRect): DualScreenRect {

@@ -14,13 +14,16 @@ import org.junit.Test
  * are chosen per device family, documented at each test, to make the numbers exactly
  * hand-verifiable; they do not need to match one specific real unit's reported dpi.
  *
- * Finding worth flagging to the steward: a 16:9 game beside the project's 8:7 companion, side by
- * side at full height, needs 3160 px of width (1920 + 1240) for every landscape window in this
- * table except the tablet. On a phone (2400 px wide) or the Thor's own top screen (1920 px
- * wide), shrinking both to fit collapses the companion straight through the 320 dp floor -- see
- * [phoneLandscapeAspectLockedThenCollapses] and [thorTopAspectLockedThenCollapses]. Portrait
- * stacking (full window width instead) does not hit this on the same phone -- see
- * [phonePortraitStaysVisibleBothControllerStates].
+ * Stage 4 (owner decision 5, landscape default is side by side): a 16:9 game beside the
+ * project's 8:7 companion, side by side at full height, needs 3160 px of width (1920 + 1240) for
+ * every landscape window in this table except the tablet. On a phone (2400 px wide) or the
+ * Thor's own top screen (1920 px wide), shrinking both to fit used to collapse the companion
+ * through the old 320 dp per-pane floor; [DualScreenGeometry.MIN_PANE_SHORT_EDGE_DP] is now 200
+ * dp, so both stay visible -- see [phoneLandscapeAspectLockedStaysSideBySide] and
+ * [thorTopAspectLockedStaysSideBySide]. The flip-phone cover screen case still collapses, now
+ * through the new [DualScreenGeometry.MIN_WINDOW_SHORT_EDGE_DP] window-level floor instead -- see
+ * [foldCoverCollapsesRegardlessOfController]. Portrait stacking (full window width instead) never
+ * hit this on the same phone -- see [phonePortraitStaysVisibleBothControllerStates].
  */
 class DualScreenGeometryTest {
     private val sideBySide = DualScreenUserLayout(DualScreenLayoutChoice.AUTOMATIC)
@@ -36,34 +39,41 @@ class DualScreenGeometryTest {
         assertNull(DualScreenGeometry.aspectForRendererSetting(99)) // unrecognised: as given
     }
 
-    // ---- phone 2400x1080, landscape: side by side, aspect-locked, then collapses ----
+    // ---- phone 2400x1080, landscape: side by side, aspect-locked, stays visible (Stage 4) ----
 
     @Test
-    fun phoneLandscapeAspectLockedThenCollapses() {
+    fun phoneLandscapeAspectLockedStaysSideBySide() {
         // density 420: a believable ~6.3" panel at 2400x1080 (matches named phones in this
         // class, e.g. Pixel 7). Both panes are sized at their own locked aspect with no bars
         // (1920+1240 game+companion naturally needs 3160 px at full 1080 px height; scaled down
-        // by 2400/3160 = 60/79 to fit), but the companion's own short edge then lands at
-        // round(1080*60/79) = 820 px = 820/2.625 = 312.4 dp, under the 320 dp floor, so the
-        // automatic result collapses to game-only (still reachable through the toggle).
+        // by 2400/3160 = 60/79 to fit): game 1458x820, companion 942x820. Window short edge
+        // (1080 px = 411.4 dp) clears the 360 dp window floor; companion short edge (820 px =
+        // 312.4 dp) clears the 200 dp per-pane floor (Stage 4 lowers it from 320) -- both panes
+        // stay visible, matching the owner's side-by-side-by-default decision.
         val window = DualScreenWindow(widthPx = 2400, heightPx = 1080, densityDpi = 420)
         val layout = DualScreenGeometry.compute(window, null, false, sideBySide, game169)
-        assertTrue(layout.companionRect.isEmpty)
-        assertEquals(DualScreenRect(0, 130, 2400, 820), layout.gameRect)
+        assertEquals(DualScreenRect(0, 130, 1458, 820), layout.gameRect)
+        assertEquals(DualScreenRect(1458, 130, 942, 820), layout.companionRect)
         assertEquals(DualScreenRect.EMPTY, layout.controlsRect)
+        assertAspectLocked(layout.gameRect, game169)
+        assertAspectLocked(layout.companionRect, DualScreenAspect(1240, 1080))
     }
 
-    // ---- Thor top 1920x1080, landscape: same shape problem, worse (narrower window) ----
+    // ---- Thor top 1920x1080, landscape: same shape, narrower, stays visible too (Stage 4) ----
 
     @Test
-    fun thorTopAspectLockedThenCollapses() {
+    fun thorTopAspectLockedStaysSideBySide() {
         // density 400 (approximation of the Thor's own ~6" 1920x1080 top panel). Scale =
-        // 1920/3160 = 48/79; companion short edge = round(1080*48/79) = 656 px = 656/2.5 =
-        // 262.4 dp -- also under the floor.
+        // 1920/3160 = 48/79: game 1167x656, companion 753x656. Window short edge (1080 px =
+        // 432 dp) clears the 360 dp window floor; companion short edge (656 px = 262.4 dp)
+        // clears the 200 dp per-pane floor.
         val window = DualScreenWindow(widthPx = 1920, heightPx = 1080, densityDpi = 400)
         val layout = DualScreenGeometry.compute(window, null, false, sideBySide, game169)
-        assertTrue(layout.companionRect.isEmpty)
-        assertEquals(DualScreenRect(0, 212, 1920, 656), layout.gameRect)
+        assertEquals(DualScreenRect(0, 212, 1167, 656), layout.gameRect)
+        assertEquals(DualScreenRect(1167, 212, 753, 656), layout.companionRect)
+        assertEquals(DualScreenRect.EMPTY, layout.controlsRect)
+        assertAspectLocked(layout.gameRect, game169)
+        assertAspectLocked(layout.companionRect, DualScreenAspect(1240, 1080))
     }
 
     // ---- split-screen half 1200x1080, landscape: narrower still ----
@@ -121,8 +131,13 @@ class DualScreenGeometryTest {
     @Test
     fun foldCoverCollapsesRegardlessOfController() {
         // density 420 (phone-family cover screen). game 904*9/16 = 509 px, companion
-        // 904*1080/1240 = 787 px -- short edge 787/2.625 = 299.8 dp, just under the floor,
-        // whether or not a controller is connected (pane sizing does not depend on it).
+        // 904*1080/1240 = 787 px -- companion short edge 787/2.625 = 299.8 dp, which actually
+        // clears the Stage 4 200 dp per-pane floor on its own. It still collapses because the
+        // *window* itself is the real problem here: its own short edge (width 904/2.625 =
+        // 344.4 dp) is under MIN_WINDOW_SHORT_EDGE_DP (360 dp) -- this is exactly why Stage 4
+        // needs that second, window-level floor: a per-pane floor alone, lowered enough to keep
+        // the Thor top case (262.4 dp) visible, could not also collapse this one (299.8 dp).
+        // Collapses whether or not a controller is connected (pane sizing does not depend on it).
         val window = DualScreenWindow(widthPx = 904, heightPx = 2316, densityDpi = 420)
         val stacked = DualScreenUserLayout(DualScreenLayoutChoice.AUTOMATIC)
 
