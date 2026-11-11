@@ -237,7 +237,14 @@ void WindowAdaptPass::Draw(const Device& device, RasterizerVulkan& rasterizer, S
                 const std::vector layouts(1u, *descriptor_set_layout);
                 companion_sets = CreateWrappedDescriptorSets(companion_pool, layouts);
             }
-            if (companion_bound_view != companion->view || companion_bound_version != companion->version) {
+            // Content (version) changes need no rebind at all: the producer writes new pixels
+            // into the SAME image/view, which this binding already points at, and sampling
+            // always sees current GPU memory. Only a view-handle change (the producer resized
+            // and recreated its image) needs one -- and only after any command buffer that may
+            // still be executing with the OLD binding has retired (Vulkan forbids updating a
+            // descriptor set referenced by a pending submission without UPDATE_AFTER_BIND).
+            if (companion_bound_view != companion->view) {
+                scheduler.Wait(companion_used_tick);
                 const VkDescriptorImageInfo image_info{
                     .sampler = *companion_sampler,
                     .imageView = companion->view,
@@ -256,7 +263,6 @@ void WindowAdaptPass::Draw(const Device& device, RasterizerVulkan& rasterizer, S
                 };
                 device.GetLogical().UpdateDescriptorSets(std::array{write}, {});
                 companion_bound_view = companion->view;
-                companion_bound_version = companion->version;
             }
             companion_push.modelview_matrix =
                 MakeOrthographicMatrix(f32(layout.width), static_cast<f32>(layout.height));
@@ -270,6 +276,9 @@ void WindowAdaptPass::Draw(const Device& device, RasterizerVulkan& rasterizer, S
             companion_push.vertices[3] = ScreenRectVertex(fx + fw, fy + fh, 1.f, 1.f);
             companion_set = companion_sets[0];
             draw_companion_quad = true;
+            // This tick's recording (below) will reference companion_sets[0]; retired before a
+            // future rebind replaces its binding (see the Wait above).
+            companion_used_tick = scheduler.CurrentTick();
         }
         // The quad already covers the whole pane: the clear above would be fully overdrawn, so
         // skip it (one fewer ClearAttachments per frame in the common no-bars case).

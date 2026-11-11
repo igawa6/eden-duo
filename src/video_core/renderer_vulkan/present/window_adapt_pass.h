@@ -41,9 +41,10 @@ class RasterizerVulkan;
 struct CompanionQuad {
     VkImageView view{};
     VkExtent2D extent{};
-    /// Bumps whenever the image's content changed; together with `view` tells Draw() when a
-    /// cached descriptor binding is stale. Sampling itself always sees the image's current GPU
-    /// memory, version or not -- this is only for the "does the binding need updating" decision.
+    /// Bumps whenever the image's content changed. Informational only -- Draw() samples the
+    /// image's current GPU memory regardless, and a content-only change needs no descriptor
+    /// rebind (the producer writes new pixels into the same `view`); only `view` itself changing
+    /// (the producer resized and recreated its image) does.
     std::uint64_t version{};
     // Window pixels. `pane` is the whole area the companion owns (cleared to `background` first);
     // `fit` is the aspect-correct sub-rect of it the image is actually drawn into (bars outside
@@ -125,8 +126,15 @@ private:
     vk::Sampler companion_sampler;
     vk::DescriptorPool companion_pool;
     vk::DescriptorSets companion_sets;
+    /// The view companion_sets[0] currently points at; rebind only when this changes (the
+    /// producer writes new content into the SAME image/view, so a content-only change needs no
+    /// descriptor update at all -- sampling always sees current GPU memory).
     VkImageView companion_bound_view{};
-    std::uint64_t companion_bound_version{~std::uint64_t{0}};
+    /// Last tick whose recorded draw referenced companion_sets[0]; waited on before rewriting the
+    /// binding, so a still-in-flight command buffer is never updated out from under it (Vulkan
+    /// forbids updating a descriptor set while any pending submission references it, without
+    /// UPDATE_AFTER_BIND). Same role as OverlayQuad::used_tick above.
+    std::uint64_t companion_used_tick{};
 };
 
 } // namespace Vulkan
