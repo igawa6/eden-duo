@@ -216,10 +216,10 @@ void WindowAdaptPass::Draw(const Device& device, RasterizerVulkan& rasterizer, S
     // presenter already owns -- drawn after the game layers, before the overlay panels, only when
     // inline is actually active this frame (zero cost otherwise). See CompanionQuad's doc comment.
     //
-    // The pane is always cleared to the companion's background first, whether or not a quad
-    // follows: with no image yet (first frame, nothing published) the clear alone is the whole
-    // picture; with Fit bars it is just the bars, the quad overdrawing the rest; with a full-pane
-    // fit the quad overdraws all of it anyway, so the clear is simply redundant there, not wrong.
+    // The pane is cleared to the companion's background first, unless the quad that follows
+    // already covers all of it: with no image yet (first frame, nothing published) the clear
+    // alone is the whole picture; with Fit bars it is just the bars, the quad overdrawing the
+    // rest; with a full-pane fit the clear is skipped entirely (the quad would overdraw it).
     bool draw_companion_pane = false;
     bool draw_companion_quad = false;
     PresentPushConstants companion_push{};
@@ -270,6 +270,11 @@ void WindowAdaptPass::Draw(const Device& device, RasterizerVulkan& rasterizer, S
             companion_push.vertices[3] = ScreenRectVertex(fx + fw, fy + fh, 1.f, 1.f);
             companion_set = companion_sets[0];
             draw_companion_quad = true;
+        }
+        // The quad already covers the whole pane: the clear above would be fully overdrawn, so
+        // skip it (one fewer ClearAttachments per frame in the common no-bars case).
+        if (draw_companion_quad && companion->fit_is_pane) {
+            draw_companion_pane = false;
         }
     }
 
