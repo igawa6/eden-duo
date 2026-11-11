@@ -2024,14 +2024,31 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
 
     private fun updateScreenLayout() {
         val b = _binding ?: return
-        val verticalAlignment =
+        // Eden Duo Stage 1 (Simulated/inline dual screen): the native renderer does its own
+        // game/companion split and fits the game inside its own rect (RendererVulkan::Composite),
+        // so the SurfaceView itself must fill the whole window first -- a Top/Bottom vertical
+        // alignment with a fixed aspect ratio would otherwise shrink the surface (and the Vulkan
+        // swapchain behind it) to that shape before the native split ever sees it, breaking the
+        // layout. Force the "fill the window" case (Center, no aspect constraint) while the
+        // hidden switch is on; the chosen Vertical Alignment/Aspect Ratio settings still apply
+        // normally once it is off.
+        val context = context
+        val inlineActive = context != null && org.yuzu.yuzu_emu.duo.InlineDualScreen.isEnabled(context)
+        val verticalAlignment = if (inlineActive) {
+            EmulationVerticalAlignment.Center
+        } else {
             EmulationVerticalAlignment.from(IntSetting.VERTICAL_ALIGNMENT.getInt())
-        val aspectRatio = when (IntSetting.RENDERER_ASPECT_RATIO.getInt()) {
-            0 -> Rational(16, 9)
-            1 -> Rational(4, 3)
-            2 -> Rational(21, 9)
-            3 -> Rational(16, 10)
-            else -> null // Best fit
+        }
+        val aspectRatio = if (inlineActive) {
+            null
+        } else {
+            when (IntSetting.RENDERER_ASPECT_RATIO.getInt()) {
+                0 -> Rational(16, 9)
+                1 -> Rational(4, 3)
+                2 -> Rational(21, 9)
+                3 -> Rational(16, 10)
+                else -> null // Best fit
+            }
         }
         when (verticalAlignment) {
             EmulationVerticalAlignment.Top -> {
