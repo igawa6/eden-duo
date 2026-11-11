@@ -110,7 +110,7 @@ data class DualScreenAspect(val w: Int, val h: Int)
  * its own budgeted box -- Fit is kept in the native draw/touch path as that safety net, not as a
  * normal-use outcome.
  *
- * Rules (RESEARCH.md Â§4.1/Â§4.2/Â§4.4, simplified to this stage's exact spec):
+ * Rules (RESEARCH.md §4.1/§4.2/§4.4, simplified to this stage's exact spec):
  *  - An explicit choice (not Automatic) ignores any hinge.
  *  - Automatic: a vertical separating hinge (book posture) splits game/companion at the hinge --
  *    the hinge's own position is a physical constraint, not an aspect choice, so this one case
@@ -137,7 +137,7 @@ object DualScreenGeometry {
     private val DEFAULT_GAME_ASPECT = DualScreenAspect(16, 9)
 
     /**
-     * RESEARCH.md Â§4.1 F4 / Â§4.2 R4, lowered in Stage 4 (owner decision 5: landscape default is
+     * RESEARCH.md §4.1 F4 / §4.2 R4, lowered in Stage 4 (owner decision 5: landscape default is
      * side by side) -- 320 dp collapsed the common case the owner wants visible: a 16:9 game
      * beside the 8:7 companion canvas needs 3160 px of full-height width, so on a phone
      * (2400x1080) or the Thor's own top screen (1920x1080) Automatic shrinks both panes to fit

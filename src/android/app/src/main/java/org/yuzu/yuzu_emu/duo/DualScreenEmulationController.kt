@@ -63,7 +63,7 @@ class DualScreenEmulationController(
      */
     private val companionPaneOwns: (Int) -> Boolean = { false },
     /**
-     * Eden Duo Stage 4 (RESEARCH.md Â§0 decision 3): the display hosting the companion or the
+     * Eden Duo Stage 4 (RESEARCH.md §0 decision 3): the display hosting the companion or the
      * game was just removed -- EmulationFragment should pause emulation and show the
      * "Second screen disconnected" three-choice dialog.
      */
@@ -75,7 +75,7 @@ class DualScreenEmulationController(
      */
     private val onEjectReconnected: () -> Unit = {},
     /**
-     * Eden Duo Stage 4 (RESEARCH.md E4 / Â§0 item 2): a display appeared mid-game while the user
+     * Eden Duo Stage 4 (RESEARCH.md E4 / §0 item 2): a display appeared mid-game while the user
      * had explicitly chosen Simulated, so Mode stays put -- EmulationFragment should show the
      * one-time hint pointing at Dual screen settings.
      */
@@ -143,7 +143,7 @@ class DualScreenEmulationController(
 
         override fun onDisplayRemoved(displayId: Int) {
             auxDisplayStates.remove(displayId)
-            // Eden Duo Stage 4 (RESEARCH.md Â§0 decision 3): a display hosting the companion or
+            // Eden Duo Stage 4 (RESEARCH.md §0 decision 3): a display hosting the companion or
             // the game going away is an eject -- pause and ask, never auto-resume. Never for an
             // unrelated display (item 3: STATE_OFF never reaches onDisplayRemoved at all, so a
             // lid closing or a TV going to standby is not handled here either way).
@@ -369,7 +369,7 @@ class DualScreenEmulationController(
     }
 
     /**
-     * Eden Duo Stage 4 (RESEARCH.md E4 / Â§0 item 2): a display was added or turned back on --
+     * Eden Duo Stage 4 (RESEARCH.md E4 / §0 item 2): a display was added or turned back on --
      * the same live mode-switch [reapplyMode] already does for a settings change, triggered by a
      * display event instead, with the owner's "display added mid-game" rule layered on top:
      * promotes live to Physical when the resolver says so, or shows a one-time hint when an

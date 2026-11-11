@@ -25,7 +25,7 @@ object DualScreenFirstRunNotice {
 }
 
 /**
- * Eden Duo Stage 4 (RESEARCH.md Â§0 item 2 / E4): the one-time hint shown the first time a
+ * Eden Duo Stage 4 (RESEARCH.md §0 item 2 / E4): the one-time hint shown the first time a
  * display appears mid-game while the user had explicitly chosen Simulated -- unlike
  * [DualScreenFirstRunNotice], which is about the companion showing up at all, this is purely
  * "a second screen exists now; Dual screen settings is where to use it", so it needs its own

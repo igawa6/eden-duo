@@ -71,7 +71,7 @@ class CompanionToggleState {
 
     /**
      * Forces hidden, idempotent, without going through [toggle]'s own debounce/decision table --
-     * Eden Duo Stage 4's eject "Continue game only" choice (RESEARCH.md Â§0 decision 3) needs to
+     * Eden Duo Stage 4's eject "Continue game only" choice (RESEARCH.md §0 decision 3) needs to
      * guarantee the window stays down regardless of [hiddenByUser]'s current value or how
      * recently it last changed.
      */

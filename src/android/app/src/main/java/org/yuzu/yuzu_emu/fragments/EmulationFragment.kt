@@ -1662,7 +1662,7 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
     }
 
     /**
-     * Eden Duo Stage 4 item 1 (RESEARCH.md Â§0 decision 3): the display hosting the companion or
+     * Eden Duo Stage 4 item 1 (RESEARCH.md §0 decision 3): the display hosting the companion or
      * the game was just removed. Pauses emulation (unless the user had already paused it
      * themselves -- [pausedForDisplayEject] remembers which) and shows the three-choice dialog,
      * non-cancelable so it can never be dismissed without a choice ("Never auto-resume without a

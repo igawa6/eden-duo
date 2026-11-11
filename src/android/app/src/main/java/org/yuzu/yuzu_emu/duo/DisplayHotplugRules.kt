@@ -5,7 +5,7 @@ package org.yuzu.yuzu_emu.duo
 
 /**
  * Eden Duo Stage 4: the Android-free eject / reconnect / display-added decision (unit tested).
- * RESEARCH.md Â§4.3, owner decision 3 ("pause and ask" on eject) and decision 4 (the existing
+ * RESEARCH.md §4.3, owner decision 3 ("pause and ask" on eject) and decision 4 (the existing
  * [DualScreenModeResolver]: Physical wins when a second screen is detected, an explicit choice
  * is kept). Everything here is a pure function of state [DualScreenEmulationController] already
  * tracks or is told by a display event; the Android side -- which display id plays which role,
@@ -48,7 +48,7 @@ object DisplayHotplugRules {
         RemovedDisplayKind.COMPANION -> modeBeforeEvent == DualScreenMode.PHYSICAL
     }
 
-    /** The three choices on the "Second screen disconnected" dialog (RESEARCH.md Â§0 decision 3). */
+    /** The three choices on the "Second screen disconnected" dialog (RESEARCH.md §0 decision 3). */
     enum class EjectChoice { CONTINUE_SIMULATED, CONTINUE_GAME_ONLY, WAIT_FOR_RECONNECT }
 
     /**

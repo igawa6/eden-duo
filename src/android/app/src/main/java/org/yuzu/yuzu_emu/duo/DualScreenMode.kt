@@ -115,7 +115,7 @@ object DualScreenModeSetting {
  * is saved (global + per-title, absent = inherit, see [DualScreenModeSetting]); the active mode
  * is never saved, resolved again at every launch.
  *
- * Binding owner rules (RESEARCH.md Â§0 decisions 2 and 4):
+ * Binding owner rules (RESEARCH.md §0 decisions 2 and 4):
  *  - Physical is offered only when a second screen is detected: a requested Physical with none
  *    resolves to Simulated instead (the same "no display -> fall back" shape as the physical
  *    aux path's own E1 recommendation), never to Off.
