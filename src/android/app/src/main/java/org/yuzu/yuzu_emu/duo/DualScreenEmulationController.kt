@@ -263,7 +263,7 @@ class DualScreenEmulationController(
         if (auxPresentation != null || AuxCompanionActivity.isUpOrPending()) return true
         if (AuxCompanionActivity.isWantedFor(game)) return true // the default display
         val own = AuxCompanionActivity.activityDisplayId(game)
-        return AuxPresentation.auxDisplayCandidates(game, own).isNotEmpty()
+        return SecondScreenDetection.hasSecondScreen(game, own)
     }
 
     private fun displayManager(): DisplayManager? =

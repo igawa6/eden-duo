@@ -74,6 +74,11 @@ class AuxPresentation(outerContext: Context, display: Display) :
     }
 
     companion object {
+        // Eden Duo Stage 2 (I4/E6 hardening): a display that threw out of show() below, for the
+        // rest of this process's life -- WindowManager keeps refusing the same display, so
+        // retrying it on every later call just repeats the same failure and delays a real one.
+        private val quarantined = java.util.concurrent.ConcurrentHashMap.newKeySet<Int>()
+
         /**
          * Candidate aux displays, best first. Physical second panels come first and simulated or
          * overlay displays last: both kinds can carry FLAG_PRESENTATION (the AYN Thor's
@@ -81,6 +86,17 @@ class AuxPresentation(outerContext: Context, display: Display) :
          * find the real panel. A Presentation is refused on any display without the flag -- the
          * default display never has it -- and some displays refuse app windows anyway, so
          * callers must fall back down the list.
+         *
+         * Stage 2 hardening: a non-simulated candidate must also carry FLAG_PRESENTATION and not
+         * FLAG_PRIVATE (RESEARCH.md E6 -- a public virtual display such as `scrcpy --new-display`
+         * must not pass as a second screen just because it matches the plain union above). A
+         * simulated/overlay display (the name heuristic below) is exempt from that flag check,
+         * same as before, but is only returned at all when
+         * [SecondScreenDetection.countsSimulatedDisplays] is on -- off by default, so Cuttlefish
+         * and the developer-options overlay display no longer count as a second screen unless a
+         * developer opts in, while that workflow still works the moment they do, regardless of
+         * what that display's own flags turn out to be. A display [showOnBestDisplay] saw throw
+         * is dropped from every later candidate list.
          */
         fun auxDisplayCandidates(context: Context, ownDisplayId: Int): List<Display> {
             val dm = context.getSystemService(Context.DISPLAY_SERVICE) as DisplayManager
@@ -101,12 +117,19 @@ class AuxPresentation(outerContext: Context, display: Display) :
                 )
             }
             val candidates = all.values.filter {
-                it.displayId != ownDisplayId && it.state != Display.STATE_OFF
+                it.displayId != ownDisplayId && it.state != Display.STATE_OFF &&
+                    it.displayId !in quarantined
             }
-            val simulated = candidates.filter { isSimulatedDisplay(it) }
-            val physical = candidates - simulated.toSet()
-            return (physical.sortedByDescending { it.name.contains("Screen-2", ignoreCase = true) } +
-                simulated)
+            val countSimulated = SecondScreenDetection.countsSimulatedDisplays(context)
+            val accepted = candidates.filter {
+                SecondScreenDetection.isAcceptableCandidate(
+                    it.flags, isSimulatedDisplay(it), countSimulated
+                )
+            }
+            val simulated = accepted.filter { isSimulatedDisplay(it) }
+            val physical = accepted - simulated.toSet()
+            return physical.sortedByDescending { it.name.contains("Screen-2", ignoreCase = true) } +
+                simulated
         }
 
         /** A developer-options overlay or a virtual display rather than a real panel. */
@@ -118,7 +141,8 @@ class AuxPresentation(outerContext: Context, display: Display) :
         /**
          * Shows the aux presentation on the first candidate display that accepts a window.
          * WindowManager throws InvalidDisplayException ("the specified display can not be found")
-         * for displays that refuse app windows, so try them in order.
+         * for displays that refuse app windows, so try them in order; a display that throws here
+         * is quarantined (see [quarantined]) so later calls stop offering it.
          */
         fun showOnBestDisplay(context: Context): AuxPresentation? {
             val ownDisplayId = try {
@@ -144,9 +168,10 @@ class AuxPresentation(outerContext: Context, display: Display) :
                     return presentation
                 } catch (e: Exception) {
                     presentation?.cleanupAfterFailedShow()
+                    quarantined += display.displayId
                     Log.warning(
                         "[AuxPresentation] display ${display.displayId} (${display.name}) " +
-                            "refused the window: ${e.message}"
+                            "refused the window and is quarantined for this session: ${e.message}"
                     )
                 }
             }
