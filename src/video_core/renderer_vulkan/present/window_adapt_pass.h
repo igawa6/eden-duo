@@ -12,6 +12,7 @@
 
 #include "common/math_util.h"
 #include "common/overlay_panels.h"
+#include "video_core/renderer_vulkan/present/dsmod_companion_quad.h" // Eden Duo Stage 1
 #include "video_core/vulkan_common/vulkan_wrapper.h"
 
 namespace Layout {
@@ -30,30 +31,6 @@ struct Frame;
 class Layer;
 class Scheduler;
 class RasterizerVulkan;
-
-// Eden Duo Stage 1 ("Simulated"/inline dual screen, single-surface composition): the companion
-// image sampled as one more quad of the main window's own frame, drawn after the game layers but
-// before the overlay panels (controller hints stay on top). The presenter that owns the
-// companion image (DSModAuxPresenter) fills this each frame; `view == VK_NULL_HANDLE` (the
-// default) means nothing to draw. A top-level struct (not nested in WindowAdaptPass) so a caller
-// that only passes a pointer through (BlitScreen) can forward-declare it instead of pulling in
-// this whole header.
-struct CompanionQuad {
-    VkImageView view{};
-    VkExtent2D extent{};
-    /// Bumps whenever the image's content changed. Informational only -- Draw() samples the
-    /// image's current GPU memory regardless, and a content-only change needs no descriptor
-    /// rebind (the producer writes new pixels into the same `view`); only `view` itself changing
-    /// (the producer resized and recreated its image) does.
-    std::uint64_t version{};
-    // Window pixels. `pane` is the whole area the companion owns (cleared to `background` first);
-    // `fit` is the aspect-correct sub-rect of it the image is actually drawn into (bars outside
-    // it, inside `pane`, are the clear colour).
-    VkRect2D pane{};
-    VkRect2D fit{};
-    bool fit_is_pane{true}; ///< `fit` already covers the whole `pane`: skip the background clear
-    u32 background{0xFF000000u}; ///< 0xAARRGGBB, matches AuxRouting::ui_bg
-};
 
 class WindowAdaptPass final {
 public:
@@ -119,22 +96,9 @@ private:
     };
     std::array<OverlayQuad, Common::OverlayPanelCount> overlays;
 
-    // Eden Duo Stage 1: the companion quad's own descriptor (see CompanionQuad above). Unlike an
-    // OverlayQuad it owns no image and does no CPU upload -- the presenter's image already holds
-    // current content; only the descriptor binding needs to track which image/version it last
-    // pointed at.
-    vk::Sampler companion_sampler;
-    vk::DescriptorPool companion_pool;
-    vk::DescriptorSets companion_sets;
-    /// The view companion_sets[0] currently points at; rebind only when this changes (the
-    /// producer writes new content into the SAME image/view, so a content-only change needs no
-    /// descriptor update at all -- sampling always sees current GPU memory).
-    VkImageView companion_bound_view{};
-    /// Last tick whose recorded draw referenced companion_sets[0]; waited on before rewriting the
-    /// binding, so a still-in-flight command buffer is never updated out from under it (Vulkan
-    /// forbids updating a descriptor set while any pending submission references it, without
-    /// UPDATE_AFTER_BIND). Same role as OverlayQuad::used_tick above.
-    std::uint64_t companion_used_tick{};
+    // Eden Duo Stage 1: the companion quad's own descriptor/sampler and draw steps (see
+    // dsmod_companion_quad.h).
+    CompanionQuadRenderer companion_renderer;
 };
 
 } // namespace Vulkan

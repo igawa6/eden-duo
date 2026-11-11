@@ -335,6 +335,20 @@ void RendererVulkan::SetAuxWindow(Core::Frontend::EmuWindow* aux_window_) {
     dsmod_aux->SetAuxWindow(aux_window_);
 }
 
+Layout::FramebufferLayout DSModAuxPresenter::FitInlineGameLayout(
+    const Layout::FramebufferLayout& window_layout) const {
+    Layout::FramebufferLayout layout = window_layout;
+    if (inline_game_rect && inline_game_rect->w > 0 && inline_game_rect->h > 0) {
+        // Letterbox bars (when the rect's own shape doesn't match the chosen aspect ratio) show
+        // the window's usual background colour -- the full-frame clear at the top of
+        // WindowAdaptPass::Draw already covers the whole window, game rect included, before any
+        // layer is drawn.
+        const auto fitted = Layout::DefaultFrameLayout(inline_game_rect->w, inline_game_rect->h).screen;
+        layout.screen = fitted.TranslateX(inline_game_rect->x).TranslateY(inline_game_rect->y);
+    }
+    return layout;
+}
+
 bool DSModAuxPresenter::PrimaryPresentDisabled() {
     // Headless verification: a compositor that suspends a hidden window stops consuming
     // swapchain images, and presenting then blocks the GPU thread, which stalls the guest with

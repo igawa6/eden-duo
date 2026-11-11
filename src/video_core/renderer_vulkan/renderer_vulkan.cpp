@@ -242,22 +242,11 @@ void RendererVulkan::Composite(std::span<const Tegra::FramebufferConfig> framebu
 
     Frame* frame = present_manager.GetRenderFrame();
 
-    // Eden Duo Stage 1: when inline is active this frame, the game draws into its own rect of
-    // the window (not the whole thing) and the companion quad samples the image dsmod_aux
-    // already produced for its rect -- see WindowAdaptPass::Draw. Both are the upstream default
-    // (the whole window; no companion quad) whenever inline is not in effect.
-    Layout::FramebufferLayout layout = render_window.GetFramebufferLayout();
-    const auto inline_game_rect = dsmod_aux->GetInlineGameRect();
-    if (inline_game_rect && inline_game_rect->w > 0 && inline_game_rect->h > 0) {
-        // Fit the game into its rect the same way upstream fits it into the whole window
-        // (DefaultFrameLayout honours Settings::values.aspect_ratio, including Stretch), then
-        // place that fitted rect at the game rect's own position. Letterbox bars (when the
-        // rect's own shape doesn't match the chosen aspect ratio) show the window's usual
-        // background colour -- the full-frame clear at the top of WindowAdaptPass::Draw already
-        // covers the whole window, game rect included, before any layer is drawn.
-        const auto fitted = Layout::DefaultFrameLayout(inline_game_rect->w, inline_game_rect->h).screen;
-        layout.screen = fitted.TranslateX(inline_game_rect->x).TranslateY(inline_game_rect->y);
-    }
+    // Eden Duo Stage 1: fits the game into its own rect of the window when inline dual screen is
+    // active (and the companion quad to sample alongside it) -- both are the upstream default
+    // (the whole window; no companion quad) otherwise. See DSModAuxPresenter::FitInlineGameLayout.
+    const Layout::FramebufferLayout layout =
+        dsmod_aux->FitInlineGameLayout(render_window.GetFramebufferLayout());
     const auto companion_quad = dsmod_aux->GetInlineCompanionQuad();
 
     scheduler.RequestOutsideRenderPassOperationContext();
@@ -266,12 +255,9 @@ void RendererVulkan::Composite(std::span<const Tegra::FramebufferConfig> framebu
                                swapchain.GetImageViewFormat(), &companion_quad);
 
 #ifdef HAS_LSFG
-    // Eden Duo Stage 1: a generated frame is a motion-vector blend of two real frames' own
-    // pixels, including whatever WindowAdaptPass just drew into them -- a UI quad warped by
-    // game-motion interpolation would look wrong, and frame_gen has no notion of a second quad
-    // to redraw on its own output. Simplest safe choice for this prototype: skip generation
-    // while inline is active rather than teach it about one (see the Stage 1 report).
-    if (!inline_game_rect) {
+    // Eden Duo Stage 1: skip LSFG generation while inline is active -- see
+    // DSModAuxPresenter::IsInlineActive.
+    if (!dsmod_aux->IsInlineActive()) {
         void(frame_gen.WantedGenerations(present_manager.MaxExtraFrames()));
 
         frame_gen.Process(device, frame, present_manager.SwapchainImageFormat(),

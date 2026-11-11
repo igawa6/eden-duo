@@ -22,7 +22,7 @@
 #include "video_core/dsmod/aux_routing.h"
 #include "video_core/framebuffer_config.h"
 #include "video_core/host1x/gpu_device_memory_manager.h"
-#include "video_core/renderer_vulkan/present/window_adapt_pass.h" // Eden Duo Stage 1: CompanionQuad
+#include "video_core/renderer_vulkan/present/dsmod_companion_quad.h" // Eden Duo Stage 1: CompanionQuad
 #include "video_core/renderer_vulkan/vk_blit_screen.h"
 #include "video_core/renderer_vulkan/vk_present_manager.h"
 #include "video_core/renderer_vulkan/vk_swapchain.h"
@@ -85,6 +85,19 @@ public:
     [[nodiscard]] std::optional<VideoCore::DSMod::CompanionRect> GetInlineGameRect() const {
         return inline_game_rect;
     }
+
+    /// Eden Duo Stage 1: true while the game is drawing into its own rect of the window (not the
+    /// whole thing) rather than upstream's normal full-window layout -- RendererVulkan::Composite
+    /// skips LSFG frame generation while this holds (a generated frame would warp the companion
+    /// quad WindowAdaptPass drew alongside the game, and frame_gen has no notion of it).
+    [[nodiscard]] bool IsInlineActive() const { return inline_game_rect.has_value(); }
+
+    /// Eden Duo Stage 1: `window_layout`'s screen rect, fitted into GetInlineGameRect() the same
+    /// way upstream's own DefaultFrameLayout fits it into the whole window (honouring
+    /// Settings::values.aspect_ratio, including Stretch) and placed at the game rect's own
+    /// position -- or `window_layout` unchanged when inline is not in effect.
+    [[nodiscard]] Layout::FramebufferLayout FitInlineGameLayout(
+        const Layout::FramebufferLayout& window_layout) const;
 
 private:
     void SyncAuxWindow();

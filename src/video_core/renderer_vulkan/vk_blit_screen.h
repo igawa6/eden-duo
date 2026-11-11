@@ -36,7 +36,7 @@ class RasterizerVulkan;
 class Scheduler;
 class PresentManager;
 class WindowAdaptPass;
-struct CompanionQuad; // Eden Duo Stage 1, see present/window_adapt_pass.h
+struct CompanionQuad; // Eden Duo Stage 1, see present/dsmod_companion_quad.h
 
 struct Frame;
 

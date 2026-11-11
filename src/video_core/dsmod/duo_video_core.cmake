@@ -8,6 +8,8 @@
 target_sources(video_core PRIVATE
     dsmod/aux_routing.h
     dsmod/texture_readback.h
+    renderer_vulkan/present/dsmod_companion_quad.cpp
+    renderer_vulkan/present/dsmod_companion_quad.h
     renderer_vulkan/vk_dsmod_aux.cpp
     renderer_vulkan/vk_dsmod_aux.h
     renderer_vulkan/vk_dsmod_rt_probe.cpp
