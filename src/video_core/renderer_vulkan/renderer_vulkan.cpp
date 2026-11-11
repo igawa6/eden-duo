@@ -248,10 +248,15 @@ void RendererVulkan::Composite(std::span<const Tegra::FramebufferConfig> framebu
     // (the whole window; no companion quad) whenever inline is not in effect.
     Layout::FramebufferLayout layout = render_window.GetFramebufferLayout();
     const auto inline_game_rect = dsmod_aux->GetInlineGameRect();
-    if (inline_game_rect) {
-        layout.screen = Common::Rectangle<u32>{
-            inline_game_rect->x, inline_game_rect->y, inline_game_rect->x + inline_game_rect->w,
-            inline_game_rect->y + inline_game_rect->h};
+    if (inline_game_rect && inline_game_rect->w > 0 && inline_game_rect->h > 0) {
+        // Fit the game into its rect the same way upstream fits it into the whole window
+        // (DefaultFrameLayout honours Settings::values.aspect_ratio, including Stretch), then
+        // place that fitted rect at the game rect's own position. Letterbox bars (when the
+        // rect's own shape doesn't match the chosen aspect ratio) show the window's usual
+        // background colour -- the full-frame clear at the top of WindowAdaptPass::Draw already
+        // covers the whole window, game rect included, before any layer is drawn.
+        const auto fitted = Layout::DefaultFrameLayout(inline_game_rect->w, inline_game_rect->h).screen;
+        layout.screen = fitted.TranslateX(inline_game_rect->x).TranslateY(inline_game_rect->y);
     }
     const auto companion_quad = dsmod_aux->GetInlineCompanionQuad();
 
