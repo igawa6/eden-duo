@@ -162,7 +162,9 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
         { game?.programId },
         { game?.programId?.takeIf { !(game == args.game && !args.custom) } },
         { emulationViewModel.emulationStarted.value },
-        { updateDualScreenLayout() }
+        { updateDualScreenLayout() },
+        { showDualScreenModeRestartPrompt() },
+        { showDualScreenFirstRunNotice() }
     )
 
     private lateinit var gpuModel: String
@@ -1603,6 +1605,40 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
             AmiiboLoadResult.WrongDeviceState -> showAmiiboDialog(R.string.amiibo_wrong_state)
             AmiiboLoadResult.Unknown -> showAmiiboDialog(R.string.amiibo_unknown_error)
         }
+    }
+
+    /**
+     * Eden Duo Stage 2 item 8: Mode just crossed to or from Off, which only applies at the next
+     * launch. "Exit now" reuses the existing menu_exit path verbatim (see its handler above) --
+     * it does not attempt to relaunch the game itself, since this app has no existing "restart"
+     * action to build on and a mis-timed one risks a worse outcome than leaving the user to
+     * relaunch from the game list. Not verified on a device this session.
+     */
+    private fun showDualScreenModeRestartPrompt() {
+        if (!isAdded || _binding == null) return
+        MaterialAlertDialogBuilder(requireContext())
+            .setTitle(R.string.dual_screen_mode_restart_title)
+            .setMessage(R.string.dual_screen_mode_restart_message)
+            .setPositiveButton(R.string.dual_screen_mode_restart_exit) { _, _ ->
+                val b = _binding ?: return@setPositiveButton
+                clearPausedFrame()
+                emulationState.stop()
+                NativeConfig.reloadGlobalConfig()
+                emulationViewModel.setIsEmulationStopping(true)
+                b.drawerLayout.close()
+            }
+            .setNegativeButton(R.string.dual_screen_mode_restart_later, null)
+            .show()
+    }
+
+    /** Eden Duo Stage 2 item 9: the one-time notice the first time a companion appears in Simulated. */
+    private fun showDualScreenFirstRunNotice() {
+        if (!isAdded) return
+        MaterialAlertDialogBuilder(requireContext())
+            .setTitle(R.string.dual_screen_first_run_title)
+            .setMessage(R.string.dual_screen_first_run_message)
+            .setPositiveButton(android.R.string.ok, null)
+            .show()
     }
 
     private fun showAmiiboDialog(@StringRes messageRes: Int) {

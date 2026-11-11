@@ -44,7 +44,18 @@ class DualScreenEmulationController(
      * fold and controller state this needs). Called after a companion toggle while Simulated is
      * active; a no-op the caller can safely give when Simulated support is not wired up.
      */
-    private val pushDualScreenLayout: () -> Unit = {}
+    private val pushDualScreenLayout: () -> Unit = {},
+    /**
+     * Mode just changed in the in-game settings to or from Off, which only takes effect at the
+     * next launch (the launch gate is read once, before the game loads) -- EmulationFragment
+     * should offer to restart. Simulated <-> Physical, which both apply live, never call this.
+     */
+    private val onModeChangedAcrossOff: () -> Unit = {},
+    /**
+     * A companion just appeared in Simulated mode for the first time ever (see
+     * [DualScreenFirstRunNotice]) -- EmulationFragment should show the one-time notice.
+     */
+    private val onFirstSimulatedCompanion: () -> Unit = {}
 ) {
     private companion object {
         const val AUX_RETRY_DELAY_MS = 300L
@@ -71,6 +82,8 @@ class DualScreenEmulationController(
     private var companionAppTried = false
     // No Companion and its app as this game session last applied them (null before boot).
     private var noCompanionApplied: Pair<Int, String?>? = null
+    // Eden Duo Stage 2: the resolved Mode as this game session last applied it (null before boot).
+    private var modeApplied: DualScreenMode? = null
     // dropIdleCompanion asked before the game finished loading: ask again a little later.
     private var idleRecheckLeft = 0
     private val idleRecheck = Runnable { dropIdleCompanion() }
@@ -186,7 +199,25 @@ class DualScreenEmulationController(
     fun onEmulationStarted() {
         idleRecheckLeft = IDLE_RECHECK_ATTEMPTS
         noCompanionApplied = noCompanionNow()
+        modeApplied = resolvedMode()
         dropIdleCompanion()
+        maybeShowFirstRunNotice()
+    }
+
+    /**
+     * Eden Duo Stage 2: the one-time notice (item 9), the first time a companion appears in
+     * Simulated mode for this install. [NoCompanion.hasPackage] is the same disk check
+     * [org.yuzu.yuzu_emu.utils.NoCompanion.wantsWindow] already makes for Off/App, so this adds
+     * no new I/O pattern.
+     */
+    private fun maybeShowFirstRunNotice() {
+        if (resolvedMode() != DualScreenMode.SIMULATED) return
+        val id = programId() ?: return
+        if (NoCompanion.hasPackage(id) != true) return
+        val context = fragment.context ?: return
+        if (!DualScreenFirstRunNotice.shouldShow(context)) return
+        DualScreenFirstRunNotice.markShown(context)
+        onFirstSimulatedCompanion()
     }
 
     /** A multi-program title switched program. */
@@ -237,8 +268,34 @@ class DualScreenEmulationController(
 
     fun onResume() {
         reapplyNoCompanion()
+        reapplyMode()
         // Settings closed: Mode, Layout, divider position or the aspect ratio may have changed.
         pushDualScreenLayout()
+    }
+
+    /**
+     * Mode may have changed in the in-game settings: decided again without a restart, same shape
+     * as [reapplyNoCompanion]. Simulated <-> Physical switch live here (both reuse the aux path
+     * -- Physical's own Presentation/AuxCompanionActivity, Simulated the inline push
+     * [pushDualScreenLayout] does separately); a change to or from Off cannot (the launch gate is
+     * read once, before the game loads), so [onModeChangedAcrossOff] offers a restart instead.
+     */
+    private fun reapplyMode() {
+        val before = modeApplied ?: return
+        if (!emulationStarted()) return
+        val now = resolvedMode()
+        if (now == before) return
+        modeApplied = now
+        Log.info("[EmulationFragment] DSMod: Mode changed in game: $before -> $now")
+        if (now == DualScreenMode.PHYSICAL) {
+            if (auxWanted) showAuxPresentation()
+        } else {
+            dismissAuxPresentation()
+            AuxCompanionActivity.dismiss(fragment)
+        }
+        if (before == DualScreenMode.OFF || now == DualScreenMode.OFF) {
+            onModeChangedAcrossOff()
+        }
     }
 
     fun onDestroyView() {
