@@ -43,7 +43,8 @@ struct Session {
     bool aux_virtual_requested = false;
     /// --aux-inline <x>,<y>,<w>,<h>: the companion's rect, fractions of the main window (0..1).
     /// The game takes whichever outer edge the companion rect does not touch (its complement on
-    /// that one axis); set only when the flag parsed. See ApplyAuxInline in dsmod_harness.cpp.
+    /// that one axis); set only when the flag parsed. Applied in OnGameLoaded, see
+    /// AuxInlineGameRect in dsmod_harness.cpp.
     std::optional<std::array<float, 4>> aux_inline_companion;
     /// `-u <name>`: resolved once the config is loaded, see ResolveSelectedUser.
     std::optional<std::string> selected_username;
