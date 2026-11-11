@@ -291,6 +291,9 @@ void ModRuntime::ReleaseHeldInputs() {
 
 void ModRuntime::UpdateHeldButtons() {
     if (!press_queue.empty()) {
+        auto* const pad = system.GetInputSubsystem() != nullptr
+                              ? system.GetInputSubsystem()->GetVirtualGamepad()
+                              : nullptr;
         for (auto it = press_queue.begin(); it != press_queue.end();) {
             if (it->at_tick > tick_count) {
                 ++it;
