@@ -23,6 +23,15 @@
     <!-- Eden Duo Stage 2: first-run notice -->
     <string name="dual_screen_first_run_title">Second screen companion</string>
     <string name="dual_screen_first_run_message">This game has a second-screen companion. Since no second screen was detected, it is shown on this screen instead (Simulated mode). Change this in Settings -> Graphics -> Dual screen -> Mode -- Off turns the companion off entirely.</string>
+    <!-- Eden Duo Stage 4: eject (pause and ask) -->
+    <string name="dual_screen_eject_title">Second screen disconnected</string>
+    <string name="dual_screen_eject_message">The screen the companion (or the game) was using is gone. Choose how to continue -- emulation stays paused until you do.</string>
+    <string name="dual_screen_eject_continue_simulated">Continue on this screen</string>
+    <string name="dual_screen_eject_continue_game_only">Continue game only</string>
+    <string name="dual_screen_eject_wait_reconnect">Wait for reconnect</string>
+    <!-- Eden Duo Stage 4: display added mid-game, Mode stays Simulated (one-time hint) -->
+    <string name="dual_screen_simulated_stays_hint_title">Second screen detected</string>
+    <string name="dual_screen_simulated_stays_hint_message">A second screen was detected, but this game is set to Simulated. Switch in Settings -> Graphics -> Dual screen -> Mode to use the new screen instead.</string>
     <!-- Eden Duo Stage 2: Simulated group -->
     <string name="dual_screen_layout">Layout</string>
     <string name="dual_screen_layout_description">Automatic sizes the game and the companion to their own shape and fits as much of both as possible. Stacked and Side by side split the screen by the divider below instead.</string>

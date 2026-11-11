@@ -23,3 +23,22 @@ object DualScreenFirstRunNotice {
         prefs(context).edit { putBoolean(KEY, true) }
     }
 }
+
+/**
+ * Eden Duo Stage 4 (RESEARCH.md Â§0 item 2 / E4): the one-time hint shown the first time a
+ * display appears mid-game while the user had explicitly chosen Simulated -- unlike
+ * [DualScreenFirstRunNotice], which is about the companion showing up at all, this is purely
+ * "a second screen exists now; Dual screen settings is where to use it", so it needs its own
+ * shown-once flag.
+ */
+object DualScreenSimulatedStaysHint {
+    private const val KEY = "dual_screen_simulated_stays_hint_shown"
+
+    private fun prefs(context: Context) = SecondScreenPerGame.prefs(context)
+
+    fun shouldShow(context: Context): Boolean = !prefs(context).getBoolean(KEY, false)
+
+    fun markShown(context: Context) {
+        prefs(context).edit { putBoolean(KEY, true) }
+    }
+}

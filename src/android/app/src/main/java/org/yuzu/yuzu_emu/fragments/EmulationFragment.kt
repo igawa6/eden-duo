@@ -165,7 +165,10 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
         { updateDualScreenLayout() },
         { showDualScreenModeRestartPrompt() },
         { showDualScreenFirstRunNotice() },
-        { companionPaneTouch.isOwned(it) }
+        { companionPaneTouch.isOwned(it) },
+        { kind -> showDualScreenEjectDialog(kind) },
+        { resumeAfterDisplayEjectIfWePaused() },
+        { showDualScreenSimulatedStaysHint() }
     )
 
     private lateinit var gpuModel: String
@@ -189,6 +192,11 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
     private var wasInputOverlayAutoHidden = false
     private var overlayTouchActive = false
     private var pausedFrameBitmap: Bitmap? = null
+
+    // Eden Duo Stage 4: true while emulation is paused for the eject dialog -- distinguishes
+    // "we paused it, resume once the user chooses" from the user having already paused manually
+    // before the eject happened (which an eject choice must never silently undo).
+    private var pausedForDisplayEject = false
 
     var shouldUseCustom = false
     private var isQuickSettingsMenuOpen = false
@@ -1653,6 +1661,59 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
             .show()
     }
 
+    /**
+     * Eden Duo Stage 4 item 1 (RESEARCH.md Â§0 decision 3): the display hosting the companion or
+     * the game was just removed. Pauses emulation (unless the user had already paused it
+     * themselves -- [pausedForDisplayEject] remembers which) and shows the three-choice dialog,
+     * non-cancelable so it can never be dismissed without a choice ("Never auto-resume without a
+     * choice"). [kind] only decides the log line here; all three choices behave the same
+     * regardless of whether the companion's own display or the game's (Swap Screens) was lost.
+     */
+    private fun showDualScreenEjectDialog(kind: org.yuzu.yuzu_emu.duo.DisplayHotplugRules.RemovedDisplayKind) {
+        if (!isAdded || _binding == null) return
+        Log.info("[EmulationFragment] DSMod: eject dialog for $kind")
+        pausedForDisplayEject = this::emulationState.isInitialized && emulationState.isRunning
+        if (pausedForDisplayEject) {
+            pauseEmulationAndCaptureFrame()
+        }
+        MaterialAlertDialogBuilder(requireContext())
+            .setTitle(R.string.dual_screen_eject_title)
+            .setMessage(R.string.dual_screen_eject_message)
+            .setCancelable(false)
+            .setPositiveButton(R.string.dual_screen_eject_continue_simulated) { _, _ ->
+                dualScreen.ejectChoiceContinueSimulated()
+                resumeAfterDisplayEjectIfWePaused()
+            }
+            .setNegativeButton(R.string.dual_screen_eject_continue_game_only) { _, _ ->
+                dualScreen.ejectChoiceContinueGameOnly()
+                resumeAfterDisplayEjectIfWePaused()
+            }
+            .setNeutralButton(R.string.dual_screen_eject_wait_reconnect) { _, _ ->
+                // Stays paused: dualScreen resumes it via resumeAfterDisplayEjectIfWePaused once
+                // Physical actually shows again (DualScreenEmulationController.onEjectReconnected).
+                dualScreen.ejectChoiceWaitForReconnect()
+            }
+            .show()
+    }
+
+    /** Resumes emulation only if [showDualScreenEjectDialog] was the one that paused it. */
+    private fun resumeAfterDisplayEjectIfWePaused() {
+        if (!pausedForDisplayEject) return
+        pausedForDisplayEject = false
+        if (!isAdded || _binding == null) return
+        resumeEmulationFromUi()
+    }
+
+    /** Eden Duo Stage 4 item 2: a display appeared while Mode stayed Simulated (the user's own explicit choice). */
+    private fun showDualScreenSimulatedStaysHint() {
+        if (!isAdded) return
+        MaterialAlertDialogBuilder(requireContext())
+            .setTitle(R.string.dual_screen_simulated_stays_hint_title)
+            .setMessage(R.string.dual_screen_simulated_stays_hint_message)
+            .setPositiveButton(android.R.string.ok, null)
+            .show()
+    }
+
     private fun showAmiiboDialog(@StringRes messageRes: Int) {
         if (!isAdded) {
             return
@@ -2186,7 +2247,11 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
         if (windowW <= 0 || windowH <= 0) {
             return // Not measured yet; the next trigger (surfaceChanged, a later layout pass) retries.
         }
-        val layout = if (dualScreen.isCompanionHiddenByUser) {
+        // Eden Duo Stage 4 item 3 (RESEARCH.md R5): PiP shows the game only -- the companion pane
+        // is hidden through this same full-window path, not paused, exactly like the user's own
+        // toggle. Physical is unaffected (it lives on its own display, untouched by PiP).
+        val pip = emulationActivity?.isInPictureInPictureMode == true
+        val layout = if (dualScreen.isCompanionHiddenByUser || pip) {
             org.yuzu.yuzu_emu.duo.DualScreenLayout(
                 org.yuzu.yuzu_emu.duo.DualScreenRect(0, 0, windowW, windowH),
                 org.yuzu.yuzu_emu.duo.DualScreenRect.EMPTY,

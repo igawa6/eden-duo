@@ -69,6 +69,16 @@ class CompanionToggleState {
     /** Whether display events, retries, onStart and No Companion changes may show the window. */
     fun allowsAutoShow(): Boolean = !hiddenByUser
 
+    /**
+     * Forces hidden, idempotent, without going through [toggle]'s own debounce/decision table --
+     * Eden Duo Stage 4's eject "Continue game only" choice (RESEARCH.md Â§0 decision 3) needs to
+     * guarantee the window stays down regardless of [hiddenByUser]'s current value or how
+     * recently it last changed.
+     */
+    fun forceHidden() {
+        hiddenByUser = true
+    }
+
     /** One toggle at [nowMs] (a monotonic clock); applies the outcome to [hiddenByUser]. */
     fun toggle(nowMs: Long, window: CompanionWindow, hasSecondScreen: Boolean): CompanionToggleOutcome {
         val last = lastToggleAt
