@@ -771,6 +771,15 @@ object NativeLibrary {
     external fun setNoCompanionOverride(value: Int)
 
     /**
+     * Eden Duo Stage 1 (Simulated/inline dual screen): a hidden developer switch, not a user
+     * setting -- see duo.InlineDualScreen. [enabled] turns it on for the next renderer; when on,
+     * [landscape] picks the fixed split (game left ~60% / companion right ~40% in landscape,
+     * game top / companion below in portrait). Applied once the renderer exists
+     * (DSModSession::OnRendererReady), so it is safe to call any time before or during boot.
+     */
+    external fun setInlineDualScreen(enabled: Boolean, landscape: Boolean)
+
+    /**
      * DSMod: a haptic the dual-screen runtime asked for (strength 1 light, 2 click, 3 confirm,
      * 4 heavy, 5 reject; kind = what raised it; flags bit 0 = honour the system's touch-feedback
      * setting). Called on a native notifier thread; the second screen plays it on its UI thread.

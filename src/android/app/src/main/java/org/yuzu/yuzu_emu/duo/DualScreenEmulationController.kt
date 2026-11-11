@@ -166,7 +166,22 @@ class DualScreenEmulationController(
             for (display in dm.displays) auxDisplayStates[display.displayId] = display.state
             dm.registerDisplayListener(auxDisplayListener, auxHandler)
         }
+        applyInlineDualScreen()
         showAuxPresentation()
+    }
+
+    /**
+     * Eden Duo Stage 1: tells the native renderer whether Simulated (inline) dual screen is on
+     * for this boot (hidden developer switch, see [InlineDualScreen]) -- applied once the
+     * renderer exists (DSModSession::OnRendererReady), so calling it here, ahead of that, is
+     * fine. [showAuxPresentation] below is what actually skips opening a second window for it.
+     */
+    private fun applyInlineDualScreen() {
+        val context = fragment.context ?: return
+        NativeLibrary.setInlineDualScreen(
+            InlineDualScreen.isEnabled(context),
+            InlineDualScreen.isLandscape(context)
+        )
     }
 
     fun onStop() {
@@ -352,6 +367,9 @@ class DualScreenEmulationController(
     private fun showAuxPresentation() {
         if (!toggleState.allowsAutoShow()) return
         if (isAuxOff()) return
+        // Eden Duo Stage 1: Simulated (inline) dual screen draws the companion into the game's
+        // own surface -- no second window or Activity for it (see InlineDualScreen).
+        fragment.context?.let { if (InlineDualScreen.isEnabled(it)) return }
         // Eden Duo: with the game on a secondary display the second screen is the default one,
         // where a Presentation cannot go; AuxCompanionActivity hosts it there instead.
         val game = emulationActivity() ?: fragment.activity ?: return

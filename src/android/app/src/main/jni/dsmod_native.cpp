@@ -61,6 +61,13 @@ std::shared_ptr<Common::DynamicLibrary> g_vulkan_library; // the session's, whil
 // Kept in the Kotlin per-game store, since Off must be known before the game window opens.
 std::atomic<s32> g_no_companion_override{-1};
 
+// Eden Duo Stage 1 (Simulated/inline dual screen): the hidden developer switch's wish, set by
+// Kotlin (NativeLibrary.setInlineDualScreen) at any time and applied once the renderer/GPU exist
+// (OnRendererReady) -- same "override atomic, pulled later" shape as g_no_companion_override
+// above, because AuxRouting lives inside GPU and calling GPU() before it exists would crash.
+std::atomic<bool> g_inline_dual_screen_enabled{false};
+std::atomic<bool> g_inline_dual_screen_landscape{true};
+
 Core::System& SessionSystem() {
     return EmulationSession::GetInstance().System();
 }
@@ -278,6 +285,13 @@ void OnRendererReady(std::shared_ptr<Common::DynamicLibrary> vulkan_library) {
     g_vulkan_library = std::move(vulkan_library);
     g_aux_renderer_ready = true;
     AttachAuxWindowLocked();
+    // Eden Duo Stage 1: the GPU (and AuxRouting inside it) exists from here on too.
+    if (g_inline_dual_screen_enabled.load()) {
+        SessionSystem().GPU().DSModAux().SetInlineLayoutSideSplit(
+            true, g_inline_dual_screen_landscape.load());
+        LOG_INFO(Frontend, "DSMod inline dual screen enabled (hidden switch, landscape={})",
+                 g_inline_dual_screen_landscape.load());
+    }
 }
 
 void OnShutdownEmulation(bool program_change_pending) {
@@ -330,6 +344,15 @@ jint Java_org_yuzu_yuzu_1emu_NativeLibrary_isCompanionIdle(JNIEnv* env, jobject 
 void Java_org_yuzu_yuzu_1emu_NativeLibrary_setNoCompanionOverride(JNIEnv* env, jobject instance,
                                                                   jint value) {
     g_no_companion_override.store(value >= 0 && value <= 3 ? static_cast<s32>(value) : -1);
+}
+
+// Eden Duo Stage 1: see g_inline_dual_screen_enabled above. Safe to call before the renderer
+// exists -- it only stores the wish; OnRendererReady applies it.
+void Java_org_yuzu_yuzu_1emu_NativeLibrary_setInlineDualScreen(JNIEnv* env, jobject instance,
+                                                                jboolean enabled,
+                                                                jboolean landscape) {
+    g_inline_dual_screen_enabled.store(enabled != JNI_FALSE);
+    g_inline_dual_screen_landscape.store(landscape != JNI_FALSE);
 }
 
 jint Java_org_yuzu_yuzu_1emu_NativeLibrary_dualScreenRuntimeVersion(JNIEnv* env,
