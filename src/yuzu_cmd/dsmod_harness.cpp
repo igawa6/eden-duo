@@ -456,6 +456,9 @@ static std::optional<InputCommon::VirtualGamepad::VirtualButton> ButtonFromName(
         {"DUP", VB::ButtonUp},    {"DDOWN", VB::ButtonDown}, {"DLEFT", VB::ButtonLeft},
         {"DRIGHT", VB::ButtonRight}, {"L", VB::TriggerL},    {"R", VB::TriggerR},
         {"ZL", VB::TriggerZL},    {"ZR", VB::TriggerZR},     {"HOME", VB::ButtonHome},
+        // Runtime 25 stick clicks, same tokens/aliases as ParseButton (mod_actions.cpp).
+        {"L3", VB::StickL},       {"R3", VB::StickR},
+        {"STICKL", VB::StickL},  {"STICKR", VB::StickR},
     };
     std::string upper = name;
     std::ranges::transform(upper, upper.begin(), [](unsigned char c) { return std::toupper(c); });

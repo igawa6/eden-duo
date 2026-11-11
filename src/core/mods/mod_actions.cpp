@@ -71,6 +71,12 @@ InputCommon::VirtualGamepad::VirtualButton ParseButton(const std::string& name, 
         return VB::ButtonLeft;
     if (name == "DRight")
         return VB::ButtonRight;
+    // Runtime 25: stick clicks. "L3"/"R3" match the other tokens' short controller-button
+    // naming; "StickL"/"StickR" alias the enum's own names.
+    if (name == "L3" || name == "StickL")
+        return VB::StickL;
+    if (name == "R3" || name == "StickR")
+        return VB::StickR;
     ok = false;
     return VB::ButtonA;
 }
