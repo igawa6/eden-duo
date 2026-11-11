@@ -32,14 +32,23 @@
     <!-- Eden Duo Stage 4: display added mid-game, Mode stays Simulated (one-time hint) -->
     <string name="dual_screen_simulated_stays_hint_title">Second screen detected</string>
     <string name="dual_screen_simulated_stays_hint_message">A second screen was detected, but this game is set to Simulated. Switch in Settings -> Graphics -> Dual screen -> Mode to use the new screen instead.</string>
-    <!-- Eden Duo Stage 2: Simulated group -->
+    <!-- Eden Duo Stage 2: Simulated group. 1.4.0: Divider position removed (owner request, the
+         freeform layout editor replaces it); Custom added. -->
     <string name="dual_screen_layout">Layout</string>
-    <string name="dual_screen_layout_description">Automatic sizes the game and the companion to their own shape and fits as much of both as possible. Stacked and Side by side split the screen by the divider below instead.</string>
+    <string name="dual_screen_layout_description">Automatic sizes the game and the companion to their own shape and fits as much of both as possible. Stacked and Side by side use a fixed split instead. Custom is whatever you placed in the in-game layout editor.</string>
     <string name="dual_screen_layout_automatic">Automatic</string>
     <string name="dual_screen_layout_stacked">Stacked</string>
     <string name="dual_screen_layout_side_by_side">Side by side</string>
-    <string name="dual_screen_divider">Divider position</string>
-    <string name="dual_screen_divider_description">How much of the screen the game takes when Layout is Stacked or Side by side. Automatic ignores this.</string>
+    <string name="dual_screen_layout_custom">Custom</string>
+    <string name="dual_screen_layout_edit_in_game">Edit from the in-game menu.</string>
+    <!-- Eden Duo 1.4.0: the in-game freeform layout editor (LAYOUT-EDITOR-SPEC.md) -->
+    <string name="dual_screen_layout_editor_title">Edit dual screen layout</string>
+    <string name="dual_screen_layout_editor_game">Game</string>
+    <string name="dual_screen_layout_editor_companion">Companion</string>
+    <string name="dual_screen_layout_editor_swap">Swap</string>
+    <string name="dual_screen_layout_editor_reset">Reset</string>
+    <string name="dual_screen_layout_editor_cancel">Cancel</string>
+    <string name="dual_screen_layout_editor_done">Done</string>
     <!-- Eden Duo Stage 2: Physical group header (reuses dual_screen_mode_physical\'s text) -->
     <string name="swap_screens">Swap Screens</string>
     <string name="swap_screens_description">Game on the second screen, companion on the main one. Applies when a game starts.</string>

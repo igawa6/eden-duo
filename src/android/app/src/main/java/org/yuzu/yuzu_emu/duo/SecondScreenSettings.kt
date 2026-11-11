@@ -11,7 +11,6 @@ import org.yuzu.yuzu_emu.features.settings.model.view.HeaderSetting
 import org.yuzu.yuzu_emu.features.settings.model.view.IntSingleChoiceSetting
 import org.yuzu.yuzu_emu.features.settings.model.view.SettingsItem
 import org.yuzu.yuzu_emu.features.settings.model.view.SingleChoiceSetting
-import org.yuzu.yuzu_emu.features.settings.model.view.SliderSetting
 import org.yuzu.yuzu_emu.features.settings.model.view.SwitchSetting
 import org.yuzu.yuzu_emu.model.Game
 import org.yuzu.yuzu_emu.utils.CompanionApp
@@ -28,11 +27,12 @@ object SecondScreenSettings {
      *
      * Mode (this file's [DualScreenMode]) and Swap Screens/No Companion keep their value in Eden
      * Duo's own store (read before the game window opens, see [SecondScreenPerGame]), so they
-     * need a real title id to have a per-game value at all. Layout, Divider position and
-     * Companion scaling are native per-game settings like most others in this app -- always
-     * added, since the per-game settings screen already offers a "use global" control for those
-     * generically; they are read continuously by the renderer/layout engine, never before the
-     * window opens, so they do not need Eden Duo's own store.
+     * need a real title id to have a per-game value at all. Layout and Companion scaling are
+     * native per-game settings like most others in this app -- always added, since the per-game
+     * settings screen already offers a "use global" control for those generically; they are read
+     * continuously by the renderer/layout engine, never before the window opens, so they do not
+     * need Eden Duo's own store. 1.4.0: Custom's own freeform rects are a third kind -- neither
+     * native nor read before the window opens -- see [DualScreenCustomLayoutStore].
      */
     fun addTo(sl: ArrayList<SettingsItem>, game: Game?, context: Context) {
         val gameId = game?.let { SecondScreenPerGame.usableProgramId(it) }
@@ -40,7 +40,6 @@ object SecondScreenSettings {
         if (!NativeConfig.isPerGameConfigLoaded() && !NativeLibrary.isRunning()) {
             IntSetting.COMPANION_RATIO.global = true
             IntSetting.COMPANION_LAYOUT.global = true
-            IntSetting.DIVIDER_POSITION.global = true
         }
         val hasSecondScreen = SecondScreenDetection.hasSecondScreen(context)
         val effectiveMode = DualScreenModeResolver.resolveActive(
@@ -55,23 +54,25 @@ object SecondScreenSettings {
             }
             if (effectiveMode == DualScreenMode.SIMULATED) {
                 add(HeaderSetting(R.string.dual_screen_mode_simulated))
+                // 1.4.0: the Divider position slider is gone (owner request, superseded by the
+                // in-game freeform layout editor) -- Stacked/Side by side now use a fixed split
+                // (see DualScreenFragmentHost.updateLayout); IntSetting.DIVIDER_POSITION itself
+                // is untouched so an old .ini that still has the key keeps loading harmlessly,
+                // it is just never read here any more. Custom shows where to edit it instead of
+                // a second, settings-page preview editor (no beta needs one yet).
                 add(
                     SingleChoiceSetting(
                         IntSetting.COMPANION_LAYOUT,
                         titleId = R.string.dual_screen_layout,
-                        descriptionId = R.string.dual_screen_layout_description,
+                        descriptionString = if (IntSetting.COMPANION_LAYOUT.getInt() ==
+                            DualScreenLayoutChoice.CUSTOM.ordinal
+                        ) {
+                            context.getString(R.string.dual_screen_layout_edit_in_game)
+                        } else {
+                            context.getString(R.string.dual_screen_layout_description)
+                        },
                         choicesId = R.array.dualScreenLayoutEntries,
                         valuesId = R.array.dualScreenLayoutValues
-                    )
-                )
-                add(
-                    SliderSetting(
-                        IntSetting.DIVIDER_POSITION,
-                        titleId = R.string.dual_screen_divider,
-                        descriptionId = R.string.dual_screen_divider_description,
-                        min = 10,
-                        max = 90,
-                        units = "%"
                     )
                 )
             }
