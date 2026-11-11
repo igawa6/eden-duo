@@ -38,7 +38,13 @@ class DualScreenEmulationController(
     private val emulationActivity: () -> Activity?,
     private val programId: () -> String?,
     private val secondScreenTitle: () -> String?,
-    private val emulationStarted: () -> Boolean
+    private val emulationStarted: () -> Boolean,
+    /**
+     * Recomputes and pushes the Simulated layout now (EmulationFragment owns the window size,
+     * fold and controller state this needs). Called after a companion toggle while Simulated is
+     * active; a no-op the caller can safely give when Simulated support is not wired up.
+     */
+    private val pushDualScreenLayout: () -> Unit = {}
 ) {
     private companion object {
         const val AUX_RETRY_DELAY_MS = 300L
@@ -115,31 +121,66 @@ class DualScreenEmulationController(
     /**
      * The game's configuration is loaded; [customConfigGame] is the game whose per-game config
      * applies, null for global. Hands this game's No Companion to the idle page the runtime
-     * builds at boot.
+     * builds at boot, and the resolved dual-screen Mode to the launch gate (Off) -- both must be
+     * known before [org.yuzu.yuzu_emu.NativeLibrary.run], and this is the first point where
+     * [secondScreenTitle] reliably is (see [onGameResolved] for the async-resolution race).
      */
     fun onGameConfigLoaded(customConfigGame: Game?) {
         SecondScreenPerGame.runningConfigGame = customConfigGame
         NativeLibrary.setNoCompanionOverride(NoCompanion.perGameValue(secondScreenTitle()) ?: -1)
+        NativeLibrary.setCompanionsDisabledForLaunch(resolvedMode() == DualScreenMode.OFF)
     }
 
     /**
      * The fragment's `game` is now known after an async intent resolution (see
-     * EmulationFragment.resolveIntentGameAsync); [isAuxOff] could not answer for this game before
+     * EmulationFragment.resolveIntentGameAsync); [isAuxOff] (and the Mode resolver, which also
+     * reads [secondScreenTitle] for a per-title override) could not answer for this game before
      * now, so [onStart] may have shown the second-screen window on the assumption that it was
-     * wanted. Closes it if No Companion turns out to hide it for the resolved game.
-     * launchCompanionApp is not called here: it only runs after boot, from dropIdleCompanion.
+     * wanted, on the global Mode. Closes it if No Companion or the now-known Mode hide it for the
+     * resolved game, and re-sends the launch gate in case [onGameConfigLoaded] ran with it still
+     * unresolved. launchCompanionApp is not called here: it only runs after boot, from
+     * dropIdleCompanion.
      */
     fun onGameResolved() {
+        NativeLibrary.setCompanionsDisabledForLaunch(resolvedMode() == DualScreenMode.OFF)
+        pushDualScreenLayout()
         val decidedBefore = auxOffChecked
         val hidesNow = isAuxOff()
-        if (!AuxWindowRules.closesWindowOnResolve(decidedBefore, hidesNow)) return
+        val closesForNoCompanion = AuxWindowRules.closesWindowOnResolve(decidedBefore, hidesNow)
+        val closesForMode = resolvedMode() != DualScreenMode.PHYSICAL
+        if (!closesForNoCompanion && !closesForMode) return
         Log.info(
-            "[EmulationFragment] DSMod: No Companion hides the second screen for this game; " +
-                "closing the window shown before the title was known"
+            "[EmulationFragment] DSMod: the second screen is hidden for this game (No Companion " +
+                "or Mode); closing the window shown before the title was known"
         )
         dismissAuxPresentation()
         AuxCompanionActivity.dismiss(fragment)
     }
+
+    /**
+     * The resolved dual-screen Mode for the running (or about to run) game -- never cached
+     * (cheap to recompute: no disk access, unlike [isAuxOff]), so it always reflects the latest
+     * second-screen detection and requested-mode setting. [secondScreenTitle] may still be
+     * unknown (null) when this is asked from [onStart]; [DualScreenModeSetting.requested] then
+     * falls back to the global value, same as a real global launch would.
+     */
+    private fun resolvedMode(): DualScreenMode {
+        val context = fragment.context
+        val hasSecondScreen = context != null && SecondScreenDetection.hasSecondScreen(context)
+        return DualScreenModeResolver.resolveActive(
+            DualScreenModeSetting.requested(secondScreenTitle()),
+            hasSecondScreen,
+            companionAvailable = true
+        )
+    }
+
+    /**
+     * True when the resolved Mode is Simulated: EmulationFragment should drive the native inline
+     * layout from [DualScreenGeometry] instead of leaving it disabled. The Stage 1 hidden
+     * developer switch ([InlineDualScreen]) is unaffected either way -- it is applied natively
+     * and wins over whatever this reports (see dsmod_native.cpp's ApplyInlineLayoutLocked).
+     */
+    fun isSimulatedActive(): Boolean = resolvedMode() == DualScreenMode.SIMULATED
 
     /** The game finished booting. */
     fun onEmulationStarted() {
@@ -168,6 +209,7 @@ class DualScreenEmulationController(
         }
         applyInlineDualScreen()
         showAuxPresentation()
+        pushDualScreenLayout()
     }
 
     /**
@@ -195,6 +237,8 @@ class DualScreenEmulationController(
 
     fun onResume() {
         reapplyNoCompanion()
+        // Settings closed: Mode, Layout, divider position or the aspect ratio may have changed.
+        pushDualScreenLayout()
     }
 
     fun onDestroyView() {
@@ -219,10 +263,24 @@ class DualScreenEmulationController(
 
     /**
      * One companion toggle (gesture, Quick Settings tile or in-game menu): hides or shows the
-     * second-screen window where it was, per CompanionToggleState's decision table. Never loads
-     * a companion and never starts the No Companion app. Main thread.
+     * companion where it was, per CompanionToggleState's decision table. Never loads a companion
+     * and never starts the No Companion app. Main thread.
+     *
+     * Eden Duo Stage 2: in Simulated this collapses or restores the inline pane (item 7) --
+     * [pushDualScreenLayout] does the actual recompute, reading [isCompanionHiddenByUser] to
+     * force the game full-window while hidden, exactly as if dual screen were off; "a second
+     * screen" always exists for this purpose (the pane shares the game's own window), so unlike
+     * Physical this never reports [CompanionToggleOutcome.NO_SECOND_SCREEN].
      */
     fun toggleCompanion(nowMs: Long): CompanionToggleOutcome {
+        if (isSimulatedActive()) {
+            val outcome = toggleState.toggle(nowMs, windowState(), hasSecondScreen = true)
+            Log.info("[EmulationFragment] DSMod: companion toggle (Simulated): $outcome")
+            if (outcome == CompanionToggleOutcome.HIDDEN || outcome == CompanionToggleOutcome.SHOWN) {
+                pushDualScreenLayout()
+            }
+            return outcome
+        }
         val game = emulationActivity() ?: fragment.activity
         val outcome = toggleState.toggle(nowMs, windowState(), game != null && hasSecondScreen(game))
         Log.info("[EmulationFragment] DSMod: companion toggle: $outcome")
@@ -367,9 +425,14 @@ class DualScreenEmulationController(
     private fun showAuxPresentation() {
         if (!toggleState.allowsAutoShow()) return
         if (isAuxOff()) return
-        // Eden Duo Stage 1: Simulated (inline) dual screen draws the companion into the game's
-        // own surface -- no second window or Activity for it (see InlineDualScreen).
+        // Eden Duo Stage 1: the hidden developer switch always wins (a developer override);
+        // Simulated (inline) dual screen then draws the companion into the game's own surface --
+        // no second window or Activity for it (see InlineDualScreen).
         fragment.context?.let { if (InlineDualScreen.isEnabled(it)) return }
+        // Eden Duo Stage 2: Simulated (the real, geometry-driven version of the above) and Off
+        // (no companion runtime at all) equally open no Presentation/AuxCompanionActivity here;
+        // Physical is the only mode this function's own logic applies to.
+        if (resolvedMode() != DualScreenMode.PHYSICAL) return
         // Eden Duo: with the game on a secondary display the second screen is the default one,
         // where a Presentation cannot go; AuxCompanionActivity hosts it there instead.
         val game = emulationActivity() ?: fragment.activity ?: return

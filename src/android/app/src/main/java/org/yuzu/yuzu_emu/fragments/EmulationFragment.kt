@@ -69,6 +69,10 @@ import org.yuzu.yuzu_emu.HomeNavigationDirections
 import org.yuzu.yuzu_emu.NativeLibrary
 import org.yuzu.yuzu_emu.R
 import org.yuzu.yuzu_emu.activities.EmulationActivity
+// Eden Duo Stage 2: DualScreenGeometry's extension function needs an explicit import to be
+// called in receiver syntax; everything else in org.yuzu.yuzu_emu.duo stays fully qualified
+// inline below, matching this file's existing style for that package.
+import org.yuzu.yuzu_emu.duo.toFrac
 import org.yuzu.yuzu_emu.databinding.DialogOverlayAdjustBinding
 import org.yuzu.yuzu_emu.databinding.FragmentEmulationBinding
 import org.yuzu.yuzu_emu.dialogs.QuickSettings
@@ -135,13 +139,22 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
     private var isInFoldableLayout = false
     private var emulationStarted = false
 
+    // Eden Duo Stage 2: the last seen separating FoldingFeature (either orientation -- today's
+    // own foldable code above only ever reacted to a horizontal one), for DualScreenGeometry.
+    private var currentDualScreenHinge: org.yuzu.yuzu_emu.duo.DualScreenHinge? = null
+
+    // Eden Duo Stage 2: the last computed Simulated layout (null outside Simulated), for the
+    // companion-pane touch routing below.
+    private var currentDualScreenLayout: org.yuzu.yuzu_emu.duo.DualScreenLayout? = null
+
     // Eden Duo: second screen and No Companion (DualScreenEmulationController).
     private val dualScreen = org.yuzu.yuzu_emu.duo.DualScreenEmulationController(
         this,
         { emulationActivity },
         { game?.programId },
         { game?.programId?.takeIf { !(game == args.game && !args.custom) } },
-        { emulationViewModel.emulationStarted.value }
+        { emulationViewModel.emulationStarted.value },
+        { updateDualScreenLayout() }
     )
 
     private lateinit var gpuModel: String
@@ -2085,14 +2098,108 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
         }
         emulationActivity?.buildPictureInPictureParams()
         updateOrientation()
+        updateDualScreenLayout()
+    }
+
+    /**
+     * Eden Duo Stage 2: recomputes DualScreenGeometry's layout from the current window size,
+     * [currentDualScreenHinge] and controller connection, and pushes the game/companion rects to
+     * the native renderer; disables the inline path instead when Simulated is not active or the
+     * companion is hidden by the user (CompanionToggle), in which case the game gets the full
+     * window exactly as if dual screen were off. Called on rotation/resize/fold change (via
+     * [updateScreenLayout], [updateFoldableLayout] and [surfaceChanged]) and when settings that
+     * affect it may have changed (DualScreenEmulationController.onResume/onStart, the companion
+     * toggle). [org.yuzu.yuzu_emu.duo.DualScreenEmulationController.isSimulatedActive] already
+     * accounts for the Stage 1 hidden developer switch winning over this entirely (it is applied
+     * natively; this call is harmless either way).
+     */
+    private fun updateDualScreenLayout() {
+        val b = _binding ?: return
+        if (!dualScreen.isSimulatedActive()) {
+            currentDualScreenLayout = null
+            NativeLibrary.setDualScreenInlineLayout(false, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f)
+            applyControlsBand(org.yuzu.yuzu_emu.duo.DualScreenRect.EMPTY)
+            return
+        }
+        val windowW = b.surfaceEmulation.width
+        val windowH = b.surfaceEmulation.height
+        if (windowW <= 0 || windowH <= 0) {
+            return // Not measured yet; the next trigger (surfaceChanged, a later layout pass) retries.
+        }
+        val layout = if (dualScreen.isCompanionHiddenByUser) {
+            org.yuzu.yuzu_emu.duo.DualScreenLayout(
+                org.yuzu.yuzu_emu.duo.DualScreenRect(0, 0, windowW, windowH),
+                org.yuzu.yuzu_emu.duo.DualScreenRect.EMPTY,
+                org.yuzu.yuzu_emu.duo.DualScreenRect.EMPTY
+            )
+        } else {
+            val window = org.yuzu.yuzu_emu.duo.DualScreenWindow(
+                windowW, windowH, resources.displayMetrics.densityDpi
+            )
+            val userLayout = org.yuzu.yuzu_emu.duo.DualScreenUserLayout(
+                choice = org.yuzu.yuzu_emu.duo.DualScreenLayoutChoice.entries.getOrElse(
+                    IntSetting.COMPANION_LAYOUT.getInt()
+                ) { org.yuzu.yuzu_emu.duo.DualScreenLayoutChoice.AUTOMATIC },
+                dividerPercent = IntSetting.DIVIDER_POSITION.getInt()
+            )
+            val gameAspect = org.yuzu.yuzu_emu.duo.DualScreenGeometry.aspectForRendererSetting(
+                IntSetting.RENDERER_ASPECT_RATIO.getInt()
+            )
+            org.yuzu.yuzu_emu.duo.DualScreenGeometry.compute(
+                window, currentDualScreenHinge, hasPhysicalControllerConnected, userLayout, gameAspect
+            )
+        }
+        currentDualScreenLayout = layout
+        val gameFrac = layout.gameRect.toFrac(windowW, windowH)
+        val companionFrac = layout.companionRect.toFrac(windowW, windowH)
+        NativeLibrary.setDualScreenInlineLayout(
+            true,
+            gameFrac[0], gameFrac[1], gameFrac[2], gameFrac[3],
+            companionFrac[0], companionFrac[1], companionFrac[2], companionFrac[3]
+        )
+        applyControlsBand(layout.controlsRect)
+    }
+
+    /**
+     * Resizes [FragmentEmulationBinding.emulationContainer]/`inputContainer` to [controlsRect]
+     * (the no-controller Automatic stacked case's third band), or back to full-window when
+     * [controlsRect] is empty -- the same container-resize [updateFoldableLayout] already does
+     * for the existing horizontal-hinge split, which this defers to entirely whenever
+     * [currentDualScreenHinge] says a real fold is separating (both own the same two containers;
+     * only one of them is ever the active reason at a time, see the class doc above).
+     */
+    private fun applyControlsBand(controlsRect: org.yuzu.yuzu_emu.duo.DualScreenRect) {
+        if (currentDualScreenHinge?.isSeparating == true) return
+        val b = _binding ?: return
+        if (controlsRect.isEmpty) {
+            if (!isInFoldableLayout) return // nothing this function set up needs undoing
+            b.emulationContainer.layoutParams.height = ViewGroup.LayoutParams.MATCH_PARENT
+            b.inputContainer.layoutParams.height = ViewGroup.LayoutParams.MATCH_PARENT
+            isInFoldableLayout = false
+            b.surfaceInputOverlay.layout = if (
+                resources.configuration.orientation == Configuration.ORIENTATION_PORTRAIT
+            ) {
+                OverlayLayout.Portrait
+            } else {
+                OverlayLayout.Landscape
+            }
+        } else {
+            b.emulationContainer.layoutParams.height = controlsRect.y
+            b.inputContainer.layoutParams.height = controlsRect.h
+            isInFoldableLayout = true
+            b.surfaceInputOverlay.layout = OverlayLayout.Foldable
+        }
+        b.emulationContainer.requestLayout()
+        b.inputContainer.requestLayout()
     }
 
     private fun updateFoldableLayout(
         emulationActivity: EmulationActivity,
         newLayoutInfo: WindowLayoutInfo
     ) {
+        val feature = newLayoutInfo.displayFeatures.find { it is FoldingFeature } as? FoldingFeature
         val isFolding =
-            (newLayoutInfo.displayFeatures.find { it is FoldingFeature } as? FoldingFeature)?.let {
+            feature?.let {
                 if (it.isSeparating) {
                     emulationActivity.requestedOrientation =
                         ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
@@ -2120,6 +2227,24 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
         binding.emulationContainer.requestLayout()
         binding.inputContainer.requestLayout()
         binding.inGameMenu.requestLayout()
+
+        // Eden Duo Stage 2: DualScreenGeometry's own hinge split (book posture, a vertical
+        // separating hinge) -- today's code above only ever reacted to a horizontal one.
+        currentDualScreenHinge = feature?.takeIf { it.isSeparating }?.let {
+            org.yuzu.yuzu_emu.duo.DualScreenHinge(
+                isSeparating = true,
+                orientation = if (it.orientation == FoldingFeature.Orientation.HORIZONTAL) {
+                    org.yuzu.yuzu_emu.duo.DualScreenHingeOrientation.HORIZONTAL
+                } else {
+                    org.yuzu.yuzu_emu.duo.DualScreenHingeOrientation.VERTICAL
+                },
+                boundsLeft = it.bounds.left,
+                boundsTop = it.bounds.top,
+                boundsRight = it.bounds.right,
+                boundsBottom = it.bounds.bottom
+            )
+        }
+        updateDualScreenLayout()
     }
 
     override fun surfaceCreated(holder: SurfaceHolder) {
@@ -2137,6 +2262,9 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
             emulationState.updateSurfaceReference(holder.surface)
         }
         updatePausedFrameVisibility()
+        // Eden Duo Stage 2: the window's real pixel size is only reliably known once the surface
+        // itself reports it -- updateScreenLayout can run earlier, before anything is measured.
+        updateDualScreenLayout()
     }
 
     /**
