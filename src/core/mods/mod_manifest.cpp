@@ -1904,6 +1904,12 @@ void ParseManifestJson(const nlohmann::json& json, Manifest& manifest) {
                         widget.text_map = std::move(map);
                     }
                     widget.wrap_width = static_cast<s32>(w.value("wrap_width", 0));
+                    // "wrap_width_alt" (runtime 25): the same field while canvas_alt is active
+                    // (ApplyCanvasVariant swaps it in alongside rect_alt, mod_redraw.cpp).
+                    // Absent or non-number leaves it unset -- unchanged from runtime <= 24.
+                    if (w.contains("wrap_width_alt") && w.at("wrap_width_alt").is_number()) {
+                        widget.wrap_width_alt = static_cast<s32>(w.at("wrap_width_alt").get<f64>());
+                    }
                     widget.max_lines = static_cast<s32>(w.value("max_lines", 0));
                     widget.line_gap = static_cast<s32>(w.value("line_gap", -1));
                     widget.icon_silhouette =

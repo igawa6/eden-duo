@@ -569,6 +569,13 @@ struct Widget {
     /// widget can reposition for a narrower pane without a second copy of the page and its
     /// actions / binds / nav_order.
     std::optional<std::array<s32, 4>> rect_alt;
+    /// "wrap_width_alt": this widget's `wrap_width` while the manifest's canvas_alt is the active
+    /// canvas (swapped alongside `rect_alt`, same ModRuntime::ApplyCanvasVariant, mod_redraw.cpp,
+    /// restored on the return switch); unset (the default) = the widget keeps its literal
+    /// `wrap_width` on both canvases, exactly as runtime <= 24. fit_text / line wrapping /
+    /// ellipsis / DrawTextBlock (mod_ui.cpp) all read `wrap_width` itself, so nothing downstream
+    /// needs its own canvas_alt awareness -- the swap alone is the whole effect, same as rect_alt.
+    std::optional<s32> wrap_width_alt;
 };
 
 /// A drag-to-scroll list region on a page (page "scrolls", or a widget's inline "scroll" object).

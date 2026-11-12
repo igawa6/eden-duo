@@ -4,10 +4,13 @@
 // "canvas_alt" manifest canvas and its per-widget "rect_alt" (SelectCanvasAspect,
 // mod_redraw.cpp), a page scroll region's own "rect_alt" (ScrollRegion::rect_alt, swapped
 // alongside the widgets' by the same ApplyCanvasVariant), the L3/R3 virtual button tokens
-// (ParseButton, mod_actions.cpp), and the "view_zoom_step" action (RunAction's
+// (ParseButton, mod_actions.cpp), the "view_zoom_step" action (RunAction's
 // ActionKind::ViewZoomStep, mod_actions.cpp; its anchor math, GlideViewZoomStep, in
 // mod_view_default.h): a generic +/- zoom step on a map or image pan_zoom widget, about the
-// view's own current centre, clamped to its zoom limits and (for an image) its pan_bounds.
+// view's own current centre, clamped to its zoom limits and (for an image) its pan_bounds; and a
+// widget's own "wrap_width_alt" (Widget::wrap_width_alt, mod_types_page.h), swapped alongside
+// rect_alt by the same ApplyCanvasVariant so fit_text / wrap / ellipsis / DrawTextBlock
+// (mod_ui.cpp) wrap against whichever canvas is active.
 
 #include <algorithm>
 #include <array>
@@ -772,6 +775,127 @@ TEST_CASE("DSMod view_zoom_step: an image's pan_bounds clamps the stepped pan, s
     // raw anchor math alone would have put it.
     REQUIRE(v.goal_pan_x >= 500.0f);
     REQUIRE(v.goal_pan_x <= 750.0f);
+}
+
+// --- "wrap_width_alt": a label's wrap_width swapped alongside rect_alt on a canvas_alt switch
+// (Widget::wrap_width_alt, mod_types_page.h; ModRuntime::ApplyCanvasVariant, mod_redraw.cpp)
+// -----------------------------------------------------------------------------------------------
+
+TEST_CASE("DSMod manifest: widget wrap_width_alt parses; absent or malformed leaves it unset",
+          "[dsmod][runtime25][wrap_width_alt]") {
+    Manifest m;
+    REQUIRE(ParseDualScreenManifest(nlohmann::json::parse(R"({"pages":[{"id":"p","widgets":[
+        {"type":"label","rect":[0,0,100,50],"wrap_width":48,"wrap_width_alt":320},
+        {"type":"label","rect":[0,0,100,50],"wrap_width":48}
+    ]}]})"),
+                                    m));
+    REQUIRE(m.pages[0].widgets.size() == 2);
+    REQUIRE(m.pages[0].widgets[0].wrap_width == 48);
+    REQUIRE(m.pages[0].widgets[0].wrap_width_alt.has_value());
+    REQUIRE(*m.pages[0].widgets[0].wrap_width_alt == 320);
+    REQUIRE_FALSE(m.pages[0].widgets[1].wrap_width_alt.has_value()); // absent: unset, as before
+
+    for (const char* bad : {
+             R"({"type":"label","rect":[0,0,10,10],"wrap_width_alt":"320"})", // a string
+             R"({"type":"label","rect":[0,0,10,10],"wrap_width_alt":null})",
+             R"({"type":"label","rect":[0,0,10,10],"wrap_width_alt":[1,2]})",
+             R"({"type":"label","rect":[0,0,10,10]})",
+         }) {
+        Manifest bm;
+        REQUIRE(ParseDualScreenManifest(
+            nlohmann::json::parse(std::string(R"({"pages":[{"id":"p","widgets":[)") + bad + "]}]}"),
+            bm));
+        REQUIRE(bm.pages[0].widgets.size() == 1);
+        REQUIRE_FALSE(bm.pages[0].widgets[0].wrap_width_alt.has_value());
+    }
+}
+
+TEST_CASE("DSMod canvas_alt: wrap_width_alt swap is self-inverse, alongside rect_alt -- the exact "
+          "per-widget op ApplyCanvasVariant performs (mod_redraw.cpp)",
+          "[dsmod][runtime25][wrap_width_alt]") {
+    Widget w;
+    w.rect = {0, 0, 1240, 1080};
+    w.rect_alt = std::array<s32, 4>{40, 0, 400, 1080};
+    w.wrap_width = 1100;
+    w.wrap_width_alt = 320;
+    const auto default_rect = w.rect;
+    const auto alt_rect = *w.rect_alt;
+    const auto default_wrap = w.wrap_width;
+    const auto alt_wrap = *w.wrap_width_alt;
+
+    std::swap(w.rect, *w.rect_alt); // switch to canvas_alt
+    std::swap(w.wrap_width, *w.wrap_width_alt);
+    REQUIRE(w.rect == alt_rect);
+    REQUIRE(w.wrap_width == alt_wrap);
+    REQUIRE(*w.rect_alt == default_rect);
+    REQUIRE(*w.wrap_width_alt == default_wrap);
+
+    std::swap(w.rect, *w.rect_alt); // switch back
+    std::swap(w.wrap_width, *w.wrap_width_alt);
+    REQUIRE(w.rect == default_rect);
+    REQUIRE(w.wrap_width == default_wrap);
+    REQUIRE(*w.rect_alt == alt_rect);
+    REQUIRE(*w.wrap_width_alt == alt_wrap);
+
+    // A widget with rect_alt but no wrap_width_alt: only the rect swaps, exactly as runtime <= 24
+    // -- its wrap_width is never touched on either canvas.
+    Widget plain;
+    plain.rect = {1, 2, 3, 4};
+    plain.rect_alt = std::array<s32, 4>{5, 6, 7, 8};
+    plain.wrap_width = 500;
+    REQUIRE_FALSE(plain.wrap_width_alt.has_value());
+    std::swap(plain.rect, *plain.rect_alt);
+    REQUIRE(plain.wrap_width == 500);
+}
+
+TEST_CASE("DSMod wrap_width_alt: fit_text / wrap / DrawTextBlock use whichever width the swap "
+          "left active -- no extra plumbing past Widget::wrap_width itself",
+          "[dsmod][runtime25][wrap_width_alt]") {
+    constexpr u32 White = 0xFFFFFFFFu;
+    const auto render = [](const Widget& widget) {
+        Page page;
+        page.id = "p";
+        page.widgets.push_back(widget);
+        Canvas canvas;
+        canvas.Resize(200, 60);
+        REQUIRE(RenderPage(canvas, Manifest{}, page, {}));
+        return canvas.Pixels();
+    };
+
+    Widget w;
+    w.type = WidgetType::Label;
+    w.text = "ABCDEF";
+    w.color = White;
+    w.text_scale = 8;
+    w.text_min_scale = 2; // the same floor runtime18's own fit_text fixture uses
+    w.max_lines = 1;
+    w.fit_text = true;
+    w.wrap_width = 48;       // landscape: narrow -- "ABCDEF" cannot fit above the floor, so
+    w.wrap_width_alt = 4000; // fit_text shrinks it all the way down (the validated runtime18
+                             // outcome for this exact text/width/floor, whatever the declared
+                             // scale). portrait: generous -- no shrink is ever needed.
+
+    const auto narrow = render(w);
+    Canvas narrow_expected;
+    narrow_expected.Resize(200, 60);
+    narrow_expected.Clear(Manifest{}.background);
+    narrow_expected.DrawTextBlock(0, 0, w.text, 2, White, 0, 48, 1, -1);
+    REQUIRE(std::equal(narrow.begin(), narrow.end(), narrow_expected.Pixels().begin()));
+
+    // The exact per-widget op ApplyCanvasVariant performs on a canvas switch: swap wrap_width <->
+    // wrap_width_alt (alongside rect_alt, not exercised here). RenderPage itself needs no
+    // canvas_alt awareness -- it only ever reads the live widget.wrap_width.
+    Widget alt = w;
+    std::swap(alt.wrap_width, *alt.wrap_width_alt);
+    const auto wide = render(alt);
+    Canvas wide_expected;
+    wide_expected.Resize(200, 60);
+    wide_expected.Clear(Manifest{}.background);
+    // 4000 px comfortably fits "ABCDEF" at the declared scale 8: fit_text's shrink loop never
+    // triggers, so it draws at the widget's own text_scale, unshrunk.
+    wide_expected.DrawTextBlock(0, 0, w.text, 8, White, 0, 4000, 1, -1);
+    REQUIRE(std::equal(wide.begin(), wide.end(), wide_expected.Pixels().begin()));
+    REQUIRE_FALSE(std::equal(narrow.begin(), narrow.end(), wide.begin())); // visibly different
 }
 
 TEST_CASE("DSMod runtime 25: version and ABI unaffected", "[dsmod][runtime25]") {

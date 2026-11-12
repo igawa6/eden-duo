@@ -607,6 +607,7 @@ std::string R(const Widget& o) {
     F(chart);
     if (o.pan_bounds) { F(pan_bounds); }
     if (o.rect_alt) { F(rect_alt); }
+    if (o.wrap_width_alt) { F(wrap_width_alt); } // runtime 25
     DUMP_END;
 }
 std::string R(const ScrollRegion& o) {
@@ -1285,7 +1286,7 @@ void CheckLayouts() {
     const Size sizes[] = {
         {"Manifest", sizeof(Manifest), 2488}, // runtime 25: canvas_alt_w/_h/_when
         {"Page", sizeof(Page), 160},
-        {"Widget", sizeof(Widget), 2360}, // runtime 25: rect_alt
+        {"Widget", sizeof(Widget), 2368}, // runtime 25: rect_alt, wrap_width_alt
         {"ChartSpec", sizeof(ChartSpec), 64},
         {"ViewDefaultBinds", sizeof(ViewDefaultBinds), 128},
         {"ScrollRegion", sizeof(ScrollRegion), 392}, // runtime 25: rect_alt

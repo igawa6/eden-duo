@@ -750,6 +750,12 @@ void ModRuntime::ApplyCanvasVariant(bool alt) {
             if (widget.rect_alt) {
                 std::swap(widget.rect, *widget.rect_alt);
             }
+            // "wrap_width_alt" (runtime 25): the same self-inverse swap as rect_alt, so a label's
+            // wrap width follows whichever field shape (rect vs. rect_alt) is active. A widget
+            // without wrap_width_alt is untouched, same as one without rect_alt.
+            if (widget.wrap_width_alt) {
+                std::swap(widget.wrap_width, *widget.wrap_width_alt);
+            }
         }
         // Scroll regions (Page::scrolls) get the same swap as widgets, same self-inverse op:
         // a region without rect_alt is untouched, so a portrait list's viewport can resize
