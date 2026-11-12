@@ -860,6 +860,13 @@ void ModRuntime::UpdateGestures(const StateSnapshot& snapshot,
         swipe_right_action.clear();
         swipe_up_action.clear();
         swipe_down_action.clear();
+        if (!gesture_target.empty()) {
+            // Runtime 25 (rt25 addition): the finger is gone (or this gesture was cancelled);
+            // @view_touch_x/y:gesture_target must go absent, not keep answering where it last
+            // was.
+            std::scoped_lock lk{view_mutex};
+            UpdateViewTouch(view_state, gesture_target, false, 0, 0);
+        }
         gesture_target.clear();
         gesture_moved = false;
         gesture_blocked = false;
@@ -873,6 +880,13 @@ void ModRuntime::UpdateGestures(const StateSnapshot& snapshot,
 
     if (!now.empty() && !gesture_target.empty()) {
         view_touched[gesture_target] = std::chrono::steady_clock::now();
+        // Runtime 25 (rt25 addition): @view_touch_x/y/down -- the live finger of this gesture,
+        // canvas px. The primary pointer (now.front()), consistent with the single-finger pan
+        // path above even with a second finger down (pinch); one tick behind for pages/modules,
+        // like @view_pan_x/y (PanZoomViewHostValue for a module's own tick; the publish loop in
+        // mod_runtime.cpp for pages). Cleared on lift/cancel just above, before gesture_target.
+        std::scoped_lock lk{view_mutex};
+        UpdateViewTouch(view_state, gesture_target, true, now.front().x, now.front().y);
     }
     live_fingers = std::move(now);
     tap_was_down = !live_fingers.empty();
@@ -1712,6 +1726,18 @@ void ModRuntime::PublishFlags(StateSnapshot& snapshot) {
     }
 }
 
+void UpdateViewTouch(ViewState& states, const std::string& target, bool down, s32 x, s32 y) {
+    if (target.empty()) {
+        return; // this gesture pans no widget: nothing to set or clear
+    }
+    auto& view = states[target];
+    view.touch_down = down;
+    if (down) {
+        view.touch_x = static_cast<float>(x);
+        view.touch_y = static_cast<float>(y);
+    }
+}
+
 std::optional<s64> FlagHostValueFrom(std::string_view name,
                                      const std::unordered_map<std::string, s64>& flags) {
     constexpr std::string_view Prefix = "@flag:";
@@ -1729,10 +1755,20 @@ std::optional<f64> PanZoomViewHostValueFrom(std::string_view name, const ViewSta
     constexpr std::string_view Zoom = "@view_zoom:";
     constexpr std::string_view PanX = "@view_pan_x:";
     constexpr std::string_view PanY = "@view_pan_y:";
-    const std::string_view prefix = name.starts_with(Zoom)   ? Zoom
-                                    : name.starts_with(PanX) ? PanX
-                                    : name.starts_with(PanY) ? PanY
-                                                             : std::string_view{};
+    // Runtime 25 (rt25 addition): the live finger of a pan_zoom gesture, canvas px, so a module
+    // (or page, see mod_runtime.cpp's snapshot publish) can draw an effect under the finger
+    // during a stroke. TouchX/TouchY answer nullopt while no finger is down (touch_down false);
+    // TouchDown always answers (1/0), so a module can tell "no finger" from "finger at 0,0".
+    constexpr std::string_view TouchX = "@view_touch_x:";
+    constexpr std::string_view TouchY = "@view_touch_y:";
+    constexpr std::string_view TouchDown = "@view_touch_down:";
+    const std::string_view prefix = name.starts_with(Zoom)        ? Zoom
+                                    : name.starts_with(PanX)       ? PanX
+                                    : name.starts_with(PanY)       ? PanY
+                                    : name.starts_with(TouchX)     ? TouchX
+                                    : name.starts_with(TouchY)     ? TouchY
+                                    : name.starts_with(TouchDown)  ? TouchDown
+                                                                   : std::string_view{};
     if (prefix.empty() || name.size() <= prefix.size()) {
         return std::nullopt;
     }
@@ -1740,6 +1776,15 @@ std::optional<f64> PanZoomViewHostValueFrom(std::string_view name, const ViewSta
     const auto it = states.find(key);
     if (it == states.end()) {
         return std::nullopt;
+    }
+    if (prefix == TouchDown) {
+        return it->second.touch_down ? 1.0 : 0.0;
+    }
+    if (prefix == TouchX || prefix == TouchY) {
+        if (!it->second.touch_down) {
+            return std::nullopt;
+        }
+        return prefix == TouchX ? it->second.touch_x : it->second.touch_y;
     }
     return prefix == Zoom ? it->second.zoom : prefix == PanX ? it->second.pan_x : it->second.pan_y;
 }

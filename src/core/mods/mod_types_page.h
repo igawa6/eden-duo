@@ -148,6 +148,14 @@ struct ViewTransform {
     float home_pan_y{0.0f};
     bool has_reset_value{false};
     double reset_value{0.0};
+    /// Runtime 25 (rt25 addition, mod_input.cpp UpdateGestures): the live finger of this
+    /// gesture, canvas px -- the same raw point the pan path above applies dx/dy from, not the
+    /// pan/zoom units. touch_down is true only while a finger is down on this widget's pan_zoom
+    /// gesture (cleared on lift/cancel); touch_x/touch_y are meaningless while it is false.
+    /// Backs "@view_touch_x/y:<id>" + "@view_touch_down:<id>" (PanZoomViewHostValueFrom below).
+    bool touch_down{false};
+    float touch_x{0.0f};
+    float touch_y{0.0f};
 };
 
 /// Runtime 15: the published values that place a pan_zoom widget's DEFAULT

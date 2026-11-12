@@ -354,11 +354,22 @@ struct PendingTap {
                                                        const MapDrawRecords& records,
                                                        size_t records_page, size_t current_page);
 
-/// The pure "@view_zoom:<id>" / "@view_pan_x:<id>" / "@view_pan_y:<id>" lookup over a pan_zoom
-/// widget's own ViewState map -- ModRuntime::PanZoomViewHostValue's own matching logic. Kept free
-/// of ModRuntime for the same reason as MapViewHostValueFrom above.
+/// The pure "@view_zoom:<id>" / "@view_pan_x:<id>" / "@view_pan_y:<id>" / "@view_touch_x:<id>" /
+/// "@view_touch_y:<id>" / "@view_touch_down:<id>" lookup over a pan_zoom widget's own ViewState
+/// map -- ModRuntime::PanZoomViewHostValue's own matching logic. Kept free of ModRuntime for the
+/// same reason as MapViewHostValueFrom above.
 [[nodiscard]] std::optional<f64> PanZoomViewHostValueFrom(std::string_view name,
                                                            const ViewState& states);
+
+/// Runtime 25 (rt25 addition): updates `states[target]`'s live finger behind
+/// "@view_touch_x/y:<id>" + "@view_touch_down:<id>" for one tick of UpdateGestures (mod_input.cpp).
+/// `down` is whether a finger is currently on this gesture; `x`/`y` (canvas px, ignored unless
+/// `down`) is its primary pointer -- UpdateGestures' own `now.front()`, the same point the
+/// single-finger pan path applies dx/dy from, used here for a second finger too (pinch),
+/// consistent with that path. `target` empty (this gesture pans nothing) is a no-op; `down` false
+/// clears whatever view `target` last touched, rather than leaving a stale position behind. Kept
+/// free of ModRuntime for the same reason as PanZoomViewHostValueFrom above.
+void UpdateViewTouch(ViewState& states, const std::string& target, bool down, s32 x, s32 y);
 
 /// The module get_i64 answer for "@flag:<name>": the flag's live value, or nullopt when `name`
 /// is not a flag key or the flag is unknown. PublishFlags runs after the module, so the tick's
@@ -1430,6 +1441,9 @@ private:
     /// get_f64 from sample() -- the same one-tick-behind contract as MapViewHostValue. The tick
     /// also publishes them for pages. nullopt: not such a key, or no view tracked for that id. The
     /// key match itself is PanZoomViewHostValueFrom above (mod_input.cpp).
+    /// Runtime 25 (rt25 addition): the same lookup also answers "@view_touch_x/y:<id>" (the
+    /// gesture's live finger, canvas px, nullopt while none is down) and "@view_touch_down:<id>"
+    /// (1/0, always answered), set by UpdateViewTouch each tick UpdateGestures runs.
     [[nodiscard]] std::optional<f64> PanZoomViewHostValue(std::string_view name) const;
     /// Derived points: evaluated after sampling, published into ints and floats.
     /// `volatile_only`: the second, post-interaction evaluation of a tick. Only derived values that

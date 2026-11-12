@@ -731,6 +731,15 @@ void ModRuntime::Tick() {
             snapshot.floats["@view_zoom:" + key] = view.zoom;
             snapshot.floats["@view_pan_x:" + key] = view.pan_x;
             snapshot.floats["@view_pan_y:" + key] = view.pan_y;
+            // Runtime 25 (rt25 addition): the gesture's live finger, same publication. Absent
+            // (no "@view_touch_x/y:" key) while no finger is down, like PanZoomViewHostValue;
+            // "@view_touch_down:" always answers so a page/module can tell "no finger" from
+            // "finger at 0,0".
+            snapshot.ints["@view_touch_down:" + key] = view.touch_down ? 1 : 0;
+            if (view.touch_down) {
+                snapshot.floats["@view_touch_x:" + key] = view.touch_x;
+                snapshot.floats["@view_touch_y:" + key] = view.touch_y;
+            }
         }
     }
 

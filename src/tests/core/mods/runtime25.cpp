@@ -10,7 +10,10 @@
 // view's own current centre, clamped to its zoom limits and (for an image) its pan_bounds; and a
 // widget's own "wrap_width_alt" (Widget::wrap_width_alt, mod_types_page.h), swapped alongside
 // rect_alt by the same ApplyCanvasVariant so fit_text / wrap / ellipsis / DrawTextBlock
-// (mod_ui.cpp) wrap against whichever canvas is active.
+// (mod_ui.cpp) wrap against whichever canvas is active; and (rt25 addition) a pan_zoom gesture's
+// live finger position -- "@view_touch_x/y:<id>" / "@view_touch_down:<id>" (UpdateViewTouch,
+// PanZoomViewHostValueFrom, mod_input.cpp), read-only, for a module to draw an effect under the
+// finger during a stroke.
 
 #include <algorithm>
 #include <array>
@@ -28,6 +31,7 @@
 #include "core/mods/mod_runtime.h"
 #include "core/mods/mod_view_default.h"
 #include "input_common/drivers/virtual_gamepad.h"
+#include "video_core/dsmod/aux_routing.h"
 
 using Catch::Approx;
 
@@ -896,6 +900,143 @@ TEST_CASE("DSMod wrap_width_alt: fit_text / wrap / DrawTextBlock use whichever w
     wide_expected.DrawTextBlock(0, 0, w.text, 8, White, 0, 4000, 1, -1);
     REQUIRE(std::equal(wide.begin(), wide.end(), wide_expected.Pixels().begin()));
     REQUIRE_FALSE(std::equal(narrow.begin(), narrow.end(), wide.begin())); // visibly different
+}
+
+// rt25 addition: @view_touch_x/y:<id> + @view_touch_down:<id> -- the live finger position of a
+// pan_zoom gesture. UpdateViewTouch (mod_input.cpp) is the pure write side: it stores/clears the
+// resolved sample UpdateGestures hands it each tick (`now.front()`'s canvas coordinate when a
+// finger is down, matching the single-finger pan path's own `now[0]`/`now.front()` convention a
+// few lines above it in UpdateGestures, already relied on there and by SwipeTracker/HoldTracker
+// even with extra fingers present) into the ViewState map; PanZoomViewHostValueFrom is the read
+// side, extended above to answer the three new keys. Kept free of ModRuntime, like
+// map_pan_zoom_host_value.cpp's own tests, for the same Core::System boundary (see that file's
+// header comment and mod_launch_gate.cpp's).
+
+TEST_CASE("DSMod view touch: PanZoomViewHostValueFrom answers nullopt for anything not a "
+          "view-touch key",
+          "[dsmod][runtime25][view_touch]") {
+    ViewState states;
+    states["pad"] = ViewTransform{};
+    for (const char* key : {"", "touch_x", "@flag:foo", "@view_touch:pad", "@view_touch_x",
+                            "@view_touch_xx:pad"}) {
+        REQUIRE_FALSE(PanZoomViewHostValueFrom(key, states).has_value());
+    }
+    // A bare prefix with nothing after the colon, for each of the three new keys.
+    REQUIRE_FALSE(PanZoomViewHostValueFrom("@view_touch_x:", states).has_value());
+    REQUIRE_FALSE(PanZoomViewHostValueFrom("@view_touch_y:", states).has_value());
+    REQUIRE_FALSE(PanZoomViewHostValueFrom("@view_touch_down:", states).has_value());
+}
+
+TEST_CASE("DSMod view touch: an untracked id is absent for touch_x/y/down too, even when another "
+          "id is tracked and touched",
+          "[dsmod][runtime25][view_touch]") {
+    ViewState states;
+    states["pad"] = ViewTransform{};
+    UpdateViewTouch(states, "pad", true, 5, 6);
+    for (const char* key : {"@view_touch_x:other", "@view_touch_y:other", "@view_touch_down:other"}) {
+        REQUIRE_FALSE(PanZoomViewHostValueFrom(key, states).has_value());
+    }
+    REQUIRE(PanZoomViewHostValueFrom("@view_touch_down:pad", states) == 1.0); // "pad" unaffected
+}
+
+TEST_CASE("DSMod view touch: a finger down records the primary pointer's canvas position; lift "
+          "or cancel clears it",
+          "[dsmod][runtime25][view_touch]") {
+    ViewState states;
+    states["pad"] = ViewTransform{}; // already tracked, as if a prior gesture panned/zoomed it
+    // No finger yet: @view_touch_x/y absent, @view_touch_down answers 0 (not absent -- it must
+    // tell "no finger" from "finger at 0,0").
+    REQUIRE_FALSE(PanZoomViewHostValueFrom("@view_touch_x:pad", states).has_value());
+    REQUIRE_FALSE(PanZoomViewHostValueFrom("@view_touch_y:pad", states).has_value());
+    REQUIRE(PanZoomViewHostValueFrom("@view_touch_down:pad", states) == 0.0);
+
+    // A finger lands at canvas (123, 456) -- UpdateGestures' own call, with `now.front()`'s
+    // already-letterbox-corrected canvas coordinate (see the Fit-letterboxed-panel case below).
+    UpdateViewTouch(states, "pad", true, 123, 456);
+    REQUIRE(PanZoomViewHostValueFrom("@view_touch_x:pad", states) == Catch::Approx(123.0));
+    REQUIRE(PanZoomViewHostValueFrom("@view_touch_y:pad", states) == Catch::Approx(456.0));
+    REQUIRE(PanZoomViewHostValueFrom("@view_touch_down:pad", states) == 1.0);
+    // get_i64's fall-through (mod_module_host.cpp): static_cast<s64>(std::llround(*view)).
+    REQUIRE(static_cast<s64>(std::llround(*PanZoomViewHostValueFrom("@view_touch_x:pad", states))) ==
+            123);
+
+    // Moves: the position tracks the latest tick, not the first.
+    UpdateViewTouch(states, "pad", true, 700, 800);
+    REQUIRE(PanZoomViewHostValueFrom("@view_touch_x:pad", states) == Catch::Approx(700.0));
+    REQUIRE(PanZoomViewHostValueFrom("@view_touch_y:pad", states) == Catch::Approx(800.0));
+
+    // Lift (UpdateGestures clears it before gesture_target.clear(), see mod_input.cpp): absent
+    // again, even though "pad" itself is still tracked (its zoom/pan untouched by any of this).
+    UpdateViewTouch(states, "pad", false, 0, 0);
+    REQUIRE_FALSE(PanZoomViewHostValueFrom("@view_touch_x:pad", states).has_value());
+    REQUIRE_FALSE(PanZoomViewHostValueFrom("@view_touch_y:pad", states).has_value());
+    REQUIRE(PanZoomViewHostValueFrom("@view_touch_down:pad", states) == 0.0);
+    REQUIRE(states.at("pad").zoom == Catch::Approx(1.0f));
+
+    // Cancel (a page transition, input_block, etc.): the same call UpdateGestures makes for a
+    // lift, so it behaves identically -- recorded again, then cleared.
+    UpdateViewTouch(states, "pad", true, 50, 60);
+    REQUIRE(PanZoomViewHostValueFrom("@view_touch_down:pad", states) == 1.0);
+    UpdateViewTouch(states, "pad", false, 0, 0);
+    REQUIRE(PanZoomViewHostValueFrom("@view_touch_down:pad", states) == 0.0);
+}
+
+TEST_CASE("DSMod view touch: no gesture target (nothing pannable under the finger) touches "
+          "nothing",
+          "[dsmod][runtime25][view_touch]") {
+    ViewState states;
+    states["pad"] = ViewTransform{};
+    UpdateViewTouch(states, "", true, 10, 20); // UpdateGestures' own call when gesture_target
+                                                // is empty: a drag, hold, scroll or blocked
+                                                // gesture, or nothing pannable at all
+    REQUIRE(states.size() == 1); // no "" entry created
+    REQUIRE(PanZoomViewHostValueFrom("@view_touch_down:pad", states) == 0.0); // "pad" untouched
+}
+
+TEST_CASE("DSMod view touch: a second finger (pinch) does not retarget which pointer drives the "
+          "position",
+          "[dsmod][runtime25][view_touch]") {
+    // UpdateGestures calls UpdateViewTouch with `now.front()` every tick regardless of finger
+    // count, the same primary-pointer choice the single-finger pan path above it already makes
+    // for `now[0]` (and SwipeTracker::Move / HoldTracker::Update already make, passing
+    // now.front() through even with a second finger down). This simulates one tick each of a
+    // 1-finger stroke, a 2-finger pinch (the primary pointer moves a little, a second finger is
+    // now also down but plays no part here), and back to 1 finger: the recorded position always
+    // follows the primary pointer's own canvas coordinate, uninterrupted by the finger count.
+    ViewState states;
+    states["map"] = ViewTransform{};
+    UpdateViewTouch(states, "map", true, 100, 100); // finger 1 lands
+    REQUIRE(PanZoomViewHostValueFrom("@view_touch_x:map", states) == Catch::Approx(100.0));
+    UpdateViewTouch(states, "map", true, 110, 105); // finger 1 moves; finger 2 now also down
+    REQUIRE(PanZoomViewHostValueFrom("@view_touch_x:map", states) == Catch::Approx(110.0));
+    REQUIRE(PanZoomViewHostValueFrom("@view_touch_y:map", states) == Catch::Approx(105.0));
+    UpdateViewTouch(states, "map", true, 120, 108); // finger 2 lifts; finger 1 keeps driving it
+    REQUIRE(PanZoomViewHostValueFrom("@view_touch_x:map", states) == Catch::Approx(120.0));
+    REQUIRE(PanZoomViewHostValueFrom("@view_touch_down:map", states) == 1.0);
+}
+
+TEST_CASE("DSMod view touch: records the canvas-space coordinate a Fit-letterboxed panel touch "
+          "converts to",
+          "[dsmod][runtime25][view_touch]") {
+    // The same conversion UpdateGestures applies before building `now` (mod_input.cpp's
+    // to_canvas_x/y lambdas, via TouchRect): panel px -> canvas px through the Fit rect
+    // (FitCompanion/PanelToCanvas, proven by aux_routing.cpp's "Companion touch mapping follows
+    // the Fit rect"). A 1920x1080 panel showing a 1240x1080 canvas Fit: 340 px bars either side.
+    using VideoCore::DSMod::CompanionRatio;
+    using VideoCore::DSMod::FitCompanion;
+    using VideoCore::DSMod::PanelToCanvas;
+    const auto fit = FitCompanion(1920, 1080, 1240, 1080, CompanionRatio::Fit);
+    REQUIRE_FALSE(fit.full);
+    const s32 canvas_x = PanelToCanvas(960, fit.x, fit.w, 1240); // panel centre
+    const s32 canvas_y = PanelToCanvas(540, fit.y, fit.h, 1080);
+    REQUIRE(canvas_x == 620);
+    REQUIRE(canvas_y == 540);
+
+    ViewState states;
+    states["stickpad_0"] = ViewTransform{};
+    UpdateViewTouch(states, "stickpad_0", true, canvas_x, canvas_y);
+    REQUIRE(PanZoomViewHostValueFrom("@view_touch_x:stickpad_0", states) == Catch::Approx(620.0));
+    REQUIRE(PanZoomViewHostValueFrom("@view_touch_y:stickpad_0", states) == Catch::Approx(540.0));
 }
 
 TEST_CASE("DSMod runtime 25: version and ABI unaffected", "[dsmod][runtime25]") {
