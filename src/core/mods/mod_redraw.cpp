@@ -751,6 +751,17 @@ void ModRuntime::ApplyCanvasVariant(bool alt) {
                 std::swap(widget.rect, *widget.rect_alt);
             }
         }
+        // Scroll regions (Page::scrolls) get the same swap as widgets, same self-inverse op:
+        // a region without rect_alt is untouched, so a portrait list's viewport can resize
+        // independently of its widgets' own rect_alt (or lack of one). Everything the region's
+        // rect drives (clip, scrollbar, hit-testing, content/max offset, scroll_follow, two-axis
+        // scroll) reads `rect` fresh from the page each snapshot, so swapping it here is enough --
+        // nothing downstream needs its own canvas_alt awareness.
+        for (ScrollRegion& region : page.scrolls) {
+            if (region.rect_alt) {
+                std::swap(region.rect, *region.rect_alt);
+            }
+        }
     }
     LOG_INFO(Core, "DSMod: canvas_alt {}", alt ? "on" : "off");
 }

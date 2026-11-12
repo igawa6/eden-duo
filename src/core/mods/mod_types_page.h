@@ -613,6 +613,17 @@ struct ScrollRegion {
     s32 content_h{0};
     std::string content_w_bind;
     std::string content_h_bind;
+    // --- runtime 25 ------------------------------------------------------------------------------
+    /// "rect_alt": this region's `rect` while the manifest's canvas_alt is the active canvas
+    /// (ModRuntime::ApplyCanvasVariant swaps it in for `rect`, mod_redraw.cpp, the same op it
+    /// already does per widget -- see Widget::rect_alt above); unset (the default) = the region
+    /// keeps `rect` on both canvases, same as runtime <= 24. Everything the region's rect drives
+    /// (clip, scrollbar track, hit-testing, content/max offset, scroll_follow, two-axis scroll)
+    /// reads `rect` fresh each snapshot, so nothing else needs to change for the swap to take:
+    /// a portrait list can get its own, narrower-but-taller viewport without duplicating the
+    /// whole page per canvas. `repeat_cols` / `repeat_dx` / `repeat_row_dy` are unaffected --
+    /// only the viewport moves, never the row/column pitch.
+    std::optional<std::array<s32, 4>> rect_alt;
 };
 
 /// A follow_bind change this soon after a finger was in the list is the list's own tap.

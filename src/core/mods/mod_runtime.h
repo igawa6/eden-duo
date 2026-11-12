@@ -210,12 +210,13 @@ namespace Core::Mods {
 ///          manifest names them); ABI 1 stays. Optional alternate canvas: manifest "canvas_alt":
 ///          {"w","h","when": "portrait" | "narrow"}, the runtime switching to whichever canvas'
 ///          aspect fits the pane better (SelectCanvasAspect), debounced ~150 ms so a resize
-///          burst switches once; a widget's "rect_alt" is its rect on that canvas
-///          (ApplyCanvasVariant swaps rect <-> rect_alt on a committed switch; module state and
-///          the current page are untouched). A package without "canvas_alt" is unaffected (Fit
-///          letterbox only, as before). Virtual button tokens "L3" / "R3" (aliases "StickL" /
-///          "StickR") reach VirtualButton::StickL / StickR (ParseButton); older runtimes do not
-///          recognise them.
+///          burst switches once; a widget's "rect_alt" is its rect on that canvas, and a page
+///          "scrolls" entry's "rect_alt" is likewise its viewport on that canvas
+///          (ApplyCanvasVariant swaps rect <-> rect_alt on a committed switch, for both; module
+///          state and the current page are untouched). A package without "canvas_alt" is
+///          unaffected (Fit letterbox only, as before). Virtual button tokens "L3" / "R3"
+///          (aliases "StickL" / "StickR") reach VirtualButton::StickL / StickR (ParseButton);
+///          older runtimes do not recognise them.
 inline constexpr u32 DualScreenRuntimeVersion = 25;
 
 /// Regions a redraw-worker job painted into its canvas but did not publish because it went stale
@@ -1481,9 +1482,10 @@ private:
     /// committed to it. Commits are applied immediately (ApplyCanvasVariant), so by the time
     /// this returns, every page's widgets already match the returned choice.
     CanvasChoice SelectCanvas(u32 panel_w, u32 panel_h); // mod_redraw.cpp
-    /// Swaps every page widget's `rect` with its `rect_alt` (self-inverse: called once per
-    /// committed edge, in either direction). Module state, current_page and everything else
-    /// about the package are untouched -- only widget geometry moves.
+    /// Swaps every page widget's `rect` with its `rect_alt`, and every page scroll region's
+    /// `rect` with its own `rect_alt` (self-inverse: called once per committed edge, in either
+    /// direction). Module state, current_page and everything else about the package are
+    /// untouched -- only widget and scroll-region geometry moves.
     void ApplyCanvasVariant(bool alt); // mod_redraw.cpp
     void UpdateHeldButtons();                      // mod_actions.cpp
     void PublishUi(const StateSnapshot& snapshot); // mod_redraw.cpp

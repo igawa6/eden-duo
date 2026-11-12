@@ -634,6 +634,7 @@ std::string R(const ScrollRegion& o) {
     if (o.content_h != 0) { F(content_h); }
     if (!o.content_w_bind.empty()) { F(content_w_bind); }
     if (!o.content_h_bind.empty()) { F(content_h_bind); }
+    if (o.rect_alt) { F(rect_alt); }
     DUMP_END;
 }
 std::string R(const ActionValue& o) {
@@ -1286,7 +1287,7 @@ void CheckLayouts() {
         {"Widget", sizeof(Widget), 2360}, // runtime 25: rect_alt
         {"ChartSpec", sizeof(ChartSpec), 64},
         {"ViewDefaultBinds", sizeof(ViewDefaultBinds), 128},
-        {"ScrollRegion", sizeof(ScrollRegion), 368},
+        {"ScrollRegion", sizeof(ScrollRegion), 392}, // runtime 25: rect_alt
         {"MapWidgetExtras", sizeof(MapWidgetExtras), 480},
         {"MapWidgetExtras::Group", sizeof(MapWidgetExtras::Group), 112},
         {"MapWidgetExtras::LabelStyle", sizeof(MapWidgetExtras::LabelStyle), 24},

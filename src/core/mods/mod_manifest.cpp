@@ -592,6 +592,17 @@ std::optional<ScrollRegion> ParseScrollRegion(const nlohmann::json& j) {
     r.content_h = static_cast<s32>(j.contains("content_h") ? ParseNumber(j.at("content_h")) : 0);
     r.content_w_bind = j.value("content_w_bind", std::string{});
     r.content_h_bind = j.value("content_h_bind", std::string{});
+    // "rect_alt" (runtime 25): this region's rect while canvas_alt is the active canvas
+    // (ModRuntime::ApplyCanvasVariant). Absent = keeps `rect` on both. Same parsing and same
+    // malformed handling as a widget's "rect_alt" above: anything but a 4-number array leaves it
+    // unset rather than erroring the whole region out.
+    if (j.contains("rect_alt") && j.at("rect_alt").is_array() && j.at("rect_alt").size() == 4) {
+        std::array<s32, 4> alt{};
+        for (size_t i = 0; i < 4; ++i) {
+            alt[i] = ParseCoordinate(j.at("rect_alt")[i]);
+        }
+        r.rect_alt = alt;
+    }
     if (r.rect[2] <= 0 || r.rect[3] <= 0) {
         LOG_WARNING(Core, "DSMod: scroll region '{}' has an empty rect", r.id);
     }
