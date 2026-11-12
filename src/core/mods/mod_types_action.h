@@ -25,10 +25,12 @@ enum class ActionKind {
     Call,      ///< call a guest function on the game's own thread
     Sequence,  ///< run a named chain of guest calls, each seeing the last one's result
     Flag,      ///< set or toggle a named runtime flag that gates enforce rules
-    ViewReset, ///< glide a pannable widget's view back to its default (zoom 1, no pan)
-    Module,    ///< send a semantic action to the installed native module
-    SlotWrite, ///< write several points of the first free element of an array
-    MapSelect, ///< set / clear a map marker selection
+    ViewReset,    ///< glide a pannable widget's view back to its default (zoom 1, no pan)
+    Module,       ///< send a semantic action to the installed native module
+    SlotWrite,    ///< write several points of the first free element of an array
+    MapSelect,    ///< set / clear a map marker selection
+    ViewZoomStep, ///< step a pannable widget's zoom by a factor, about its current centre
+                  ///< (runtime 25)
 };
 
 /// A value an action writes: an integer constant, a float constant, or a published / contextual
@@ -60,7 +62,12 @@ struct Action {
     s64 cycle{0};
     bool flag_has_int{false}; ///< Flag: `flag_int` is the value to set
     s64 flag_int{0};
-    std::string view; ///< ViewReset: the widget id whose view glides home
+    /// ViewReset: the widget id whose view glides home. ViewZoomStep: the widget id whose view
+    /// steps zoom (same key).
+    std::string view;
+    /// ViewZoomStep (runtime 25): the step's factor -- > 1 zooms in, < 1 zooms out, about the
+    /// view's current centre. <= 0 (or absent, the default) refuses the action.
+    f64 zoom_factor{0.0};
     std::string module_action;
     std::string point; ///< Write: target data point
     s64 value{0};      ///< Write: value

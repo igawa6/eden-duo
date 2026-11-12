@@ -3,8 +3,11 @@
 // Runtime 25: pane geometry host values (@screen.*, mod_host_values.h), the optional
 // "canvas_alt" manifest canvas and its per-widget "rect_alt" (SelectCanvasAspect,
 // mod_redraw.cpp), a page scroll region's own "rect_alt" (ScrollRegion::rect_alt, swapped
-// alongside the widgets' by the same ApplyCanvasVariant), and the L3/R3 virtual button tokens
-// (ParseButton, mod_actions.cpp).
+// alongside the widgets' by the same ApplyCanvasVariant), the L3/R3 virtual button tokens
+// (ParseButton, mod_actions.cpp), and the "view_zoom_step" action (RunAction's
+// ActionKind::ViewZoomStep, mod_actions.cpp; its anchor math, GlideViewZoomStep, in
+// mod_view_default.h): a generic +/- zoom step on a map or image pan_zoom widget, about the
+// view's own current centre, clamped to its zoom limits and (for an image) its pan_bounds.
 
 #include <algorithm>
 #include <array>
@@ -12,13 +15,18 @@
 #include <string>
 #include <utility>
 
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
 
 #include "core/mods/dsmod_module_abi.h"
 #include "core/mods/mod_host_values.h"
+#include "core/mods/mod_map_view_rect.h"
 #include "core/mods/mod_runtime.h"
+#include "core/mods/mod_view_default.h"
 #include "input_common/drivers/virtual_gamepad.h"
+
+using Catch::Approx;
 
 namespace Core::Mods {
 // ParseButton has external linkage (defined in mod_actions.cpp, declared for internal callers in
@@ -544,6 +552,226 @@ TEST_CASE("DSMod ParseButton: L3/R3 and the StickL/StickR aliases reach the virt
     REQUIRE(ok);
     ParseButton("L4", ok);
     REQUIRE_FALSE(ok); // still an unknown token
+}
+
+// --- "view_zoom_step": a generic map/image pan_zoom +/- step, anchored on the view's own centre
+// (ActionKind::ViewZoomStep / RunAction, mod_actions.cpp; GlideViewZoomStep, mod_view_default.h)
+// -----------------------------------------------------------------------------------------------
+
+namespace {
+/// A 1000 x 800 pan_zoom image widget, `bounds` as its pan_bounds (mirrors pan_bounds.cpp's own
+/// PanImage -- a separate copy, since that one has file-local linkage).
+Widget ZoomImage(std::optional<PanBounds> bounds = std::nullopt) {
+    Widget w;
+    w.type = WidgetType::Image;
+    w.id = "pic";
+    w.rect = {0, 0, 1000, 800};
+    w.src = "file:pic.png";
+    w.pan_zoom = true;
+    w.min_zoom = 1.0f;
+    w.max_zoom = 8.0f;
+    w.pan_bounds = bounds;
+    return w;
+}
+} // namespace
+
+TEST_CASE("DSMod manifest: view_zoom_step action parses view/factor; a missing or non-positive "
+          "factor leaves it refusable",
+          "[dsmod][runtime25][view_zoom_step]") {
+    Manifest m;
+    REQUIRE(ParseDualScreenManifest(nlohmann::json::parse(R"({
+        "pages":[{"id":"p","widgets":[]}],
+        "actions":{
+            "in":{"kind":"view_zoom_step","view":"map","factor":1.25},
+            "out":{"kind":"view_zoom_step","view":"map","factor":0.8}
+        }
+    })"),
+                                    m));
+    REQUIRE(m.actions.at("in").kind == ActionKind::ViewZoomStep);
+    REQUIRE(m.actions.at("in").view == "map");
+    REQUIRE(m.actions.at("in").zoom_factor == Approx(1.25));
+    REQUIRE(m.actions.at("out").zoom_factor == Approx(0.8));
+
+    // Absent, zero, negative or non-numeric "factor" all parse to the default 0.0 --
+    // ModRuntime::RunAction's own "!(action.zoom_factor > 0.0)" guard (mod_actions.cpp,
+    // ActionKind::ViewZoomStep) then refuses the action and logs it, exactly like any other
+    // invalid action (module declined, a write with no usable point, ...).
+    for (const char* bad : {
+             R"({"kind":"view_zoom_step","view":"map"})",
+             R"({"kind":"view_zoom_step","view":"map","factor":0})",
+             R"({"kind":"view_zoom_step","view":"map","factor":-1.5})",
+             R"({"kind":"view_zoom_step","view":"map","factor":"1.5"})",
+         }) {
+        Manifest bm;
+        const auto j = nlohmann::json::parse(
+            std::string(R"({"pages":[{"id":"p","widgets":[]}],"actions":{"a":)") + bad + "}}");
+        REQUIRE(ParseDualScreenManifest(j, bm));
+        REQUIRE(bm.actions.at("a").kind == ActionKind::ViewZoomStep);
+        REQUIRE_FALSE(bm.actions.at("a").zoom_factor > 0.0);
+    }
+}
+
+TEST_CASE("DSMod view_zoom_step: RunAction's other guard -- an unresolved or non-pan_zoom view "
+          "-- refuses the action (mod_actions.cpp ActionKind::ViewZoomStep)",
+          "[dsmod][runtime25][view_zoom_step]") {
+    // RunAction itself needs a live owning kernel/System to call (IsOwnerContext) -- the same
+    // boundary every other RunAction case sits outside of in this suite (ViewReset has no
+    // RunAction-level test either). What is tested here is the lookup its guard runs before
+    // touching a view: FindWidgetByKey's own by-id match on the current page (mod_input.cpp),
+    // then "w == nullptr || !w->pan_zoom".
+    Page page;
+    page.id = "p";
+    Widget map_widget = ZoomImage();
+    map_widget.id = "map";
+    page.widgets.push_back(map_widget);
+    Widget label; // present, but not a pan_zoom widget
+    label.type = WidgetType::Value;
+    label.id = "label";
+    label.rect = {0, 0, 10, 10};
+    page.widgets.push_back(label);
+
+    const auto find_by_key = [&](const std::string& key) -> const Widget* {
+        for (const auto& w : page.widgets) {
+            if (w.id == key) {
+                return &w;
+            }
+        }
+        return nullptr;
+    };
+    REQUIRE(find_by_key("map") != nullptr);
+    REQUIRE(find_by_key("map")->pan_zoom); // resolves to a real pan_zoom view: RunAction proceeds
+    REQUIRE(find_by_key("label") != nullptr);
+    REQUIRE_FALSE(find_by_key("label")->pan_zoom); // found, but not pan_zoom: refused
+    REQUIRE(find_by_key("nope") == nullptr);       // unknown id: refused
+}
+
+TEST_CASE("DSMod view_zoom_step: zooming in or out keeps the view's own current centre fixed",
+          "[dsmod][runtime25][view_zoom_step]") {
+    const Widget w = ZoomImage(); // 1000x800, min/max zoom 1..8, no pan_bounds
+    ViewTransform v;
+    v.zoom = 2.0f;
+    v.pan_x = 150.0f; // an arbitrary pan left by an earlier drag
+    v.pan_y = 80.0f;
+    const float ox = static_cast<float>(w.rect[2]) * 0.5f;
+    const float oy = static_cast<float>(w.rect[3]) * 0.5f;
+    const float cx_before = v.pan_x + ox / v.zoom; // the world point under the widget's centre
+    const float cy_before = v.pan_y + oy / v.zoom;
+
+    GlideViewZoomStep(v, w, 1.25f, w.min_zoom, w.max_zoom); // zoom in
+    REQUIRE(v.gliding);
+    REQUIRE(v.goal_zoom == Approx(2.5f));
+    REQUIRE(v.goal_pan_x + ox / v.goal_zoom == Approx(cx_before));
+    REQUIRE(v.goal_pan_y + oy / v.goal_zoom == Approx(cy_before));
+
+    // Land the glide (as GlideViews, mod_input.cpp, would over several ticks) and zoom back out:
+    // the same centre survives a second step too.
+    v.zoom = v.goal_zoom;
+    v.pan_x = v.goal_pan_x;
+    v.pan_y = v.goal_pan_y;
+    v.gliding = false;
+    GlideViewZoomStep(v, w, 0.8f, w.min_zoom, w.max_zoom); // zoom out
+    REQUIRE(v.goal_zoom == Approx(2.0f));
+    REQUIRE(v.goal_pan_x + ox / v.goal_zoom == Approx(cx_before));
+    REQUIRE(v.goal_pan_y + oy / v.goal_zoom == Approx(cy_before));
+}
+
+TEST_CASE("DSMod view_zoom_step: clamps to the widget's own zoom limits, same as a pinch",
+          "[dsmod][runtime25][view_zoom_step]") {
+    Widget w = ZoomImage();
+    w.min_zoom = 1.0f;
+    w.max_zoom = 4.0f;
+    ViewTransform v;
+    v.zoom = 3.5f;
+    v.pan_x = 50.0f;
+    v.pan_y = 20.0f;
+    GlideViewZoomStep(v, w, 2.0f, w.min_zoom, w.max_zoom); // 7.0 asked for: clamps to 4.0
+    REQUIRE(v.goal_zoom == Approx(4.0f));
+    // The pan is the anchor math's own answer for the CLAMPED zoom, not the unclamped target.
+    const float ox = static_cast<float>(w.rect[2]) * 0.5f;
+    const float oy = static_cast<float>(w.rect[3]) * 0.5f;
+    const float anchor_x = v.pan_x + ox / 3.5f;
+    const float anchor_y = v.pan_y + oy / 3.5f;
+    REQUIRE(v.goal_pan_x == Approx(anchor_x - ox / 4.0f));
+    REQUIRE(v.goal_pan_y == Approx(anchor_y - oy / 4.0f));
+
+    // Zooming out past min_zoom clamps there too.
+    v.zoom = 1.2f;
+    v.pan_x = 0.0f;
+    v.pan_y = 0.0f;
+    v.gliding = false;
+    GlideViewZoomStep(v, w, 0.1f, w.min_zoom, w.max_zoom); // 0.12 asked for: clamps to 1.0
+    REQUIRE(v.goal_zoom == Approx(1.0f));
+}
+
+TEST_CASE("DSMod view_zoom_step: a map step becomes a custom view, holding StepBaseGlide's "
+          "follow still (mod_map_view_rect.h), and never zooms out past the whole-area floor",
+          "[dsmod][runtime25][view_zoom_step][view_rect]") {
+    Widget map_w;
+    map_w.type = WidgetType::Map;
+    map_w.id = "m";
+    map_w.rect = {0, 0, 400, 300};
+    map_w.pan_zoom = true;
+    map_w.min_zoom = 1.0f;
+    map_w.max_zoom = 8.0f;
+
+    ViewTransform v; // at rest, at home: zoom 1, pan 0 (the rect fit)
+    REQUIRE_FALSE(MapViewCustom(v.zoom, v.pan_x, v.pan_y, v.gliding));
+
+    // The rect's own area floor: the pinch (and this step) may zoom out to it, no further
+    // (RectMinZoom -- the same floor ZoomLimits publishes as "<id>#zmin", mod_input.cpp).
+    const float zoom_min = RectMinZoom(/*area_ppw=*/0.4f, /*base_ppw=*/2.0f, map_w.min_zoom);
+    REQUIRE(zoom_min == Approx(0.2f));
+
+    GlideViewZoomStep(v, map_w, 1.25f, zoom_min, map_w.max_zoom); // a zoom-in button press
+    REQUIRE(v.goal_zoom == Approx(1.25f));
+    v.zoom = v.goal_zoom; // land it, as GlideViews would
+    v.pan_x = v.goal_pan_x;
+    v.pan_y = v.goal_pan_y;
+    v.gliding = false;
+    // The view is now away from its rect-fit home: StepBaseGlide's caller
+    // (mod_ui_map_widget.cpp) reads exactly this to hold the shown base rect still instead of
+    // gliding it under the player while the user's own step is in effect.
+    REQUIRE(MapViewCustom(v.zoom, v.pan_x, v.pan_y, v.gliding));
+    MapBaseView shown{0.0f, 0.0f, 2.0f};
+    const MapBaseView target{100.0f, 50.0f, 3.0f}; // the player entered another room
+    REQUIRE_FALSE(StepBaseGlide(shown, target, /*hold=*/true));
+    REQUIRE(shown.ppw == Approx(2.0f)); // held exactly where the zoom step left it: no drift
+
+    // Stepping out repeatedly never shows less than the whole area.
+    for (int i = 0; i < 5; ++i) {
+        GlideViewZoomStep(v, map_w, 0.5f, zoom_min, map_w.max_zoom);
+        v.zoom = v.goal_zoom;
+        v.pan_x = v.goal_pan_x;
+        v.pan_y = v.goal_pan_y;
+        v.gliding = false;
+    }
+    REQUIRE(v.zoom == Approx(zoom_min));
+}
+
+TEST_CASE("DSMod view_zoom_step: an image's pan_bounds clamps the stepped pan, same as a pinch",
+          "[dsmod][runtime25][view_zoom_step][pan_bounds]") {
+    // 1000x800 image, bounds u 0.5..1.0 (the right half) -- the same shape as pan_bounds.cpp's
+    // "DrawImage keeps the window inside the bounds" fixture.
+    const Widget w = ZoomImage(PanBounds{0.5f, 0.0f, 1.0f, 1.0f});
+    ViewTransform v;
+    v.zoom = 2.0f; // a 500 px window: exactly the bounded half, origin pinned at 500
+    v.pan_x = 500.0f;
+    v.pan_y = 0.0f;
+    GlideViewZoomStep(v, w, 0.5f, w.min_zoom, w.max_zoom); // zoom out to 1: the whole picture
+    REQUIRE(v.goal_zoom == Approx(1.0f));
+    // A window as wide as the whole picture has one place to be, bounds or not.
+    REQUIRE(v.goal_pan_x == Approx(0.0f));
+    v.zoom = v.goal_zoom;
+    v.pan_x = v.goal_pan_x;
+    v.pan_y = v.goal_pan_y;
+    v.gliding = false;
+
+    GlideViewZoomStep(v, w, 4.0f, w.min_zoom, w.max_zoom); // zoom back in, past the bounded window
+    REQUIRE(v.goal_zoom == Approx(4.0f));
+    // A 250 px window at zoom 4, kept inside the bounded half [500, 750] rather than wherever the
+    // raw anchor math alone would have put it.
+    REQUIRE(v.goal_pan_x >= 500.0f);
+    REQUIRE(v.goal_pan_x <= 750.0f);
 }
 
 TEST_CASE("DSMod runtime 25: version and ABI unaffected", "[dsmod][runtime25]") {

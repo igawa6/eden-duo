@@ -126,6 +126,36 @@ inline void GlideViewHome(ViewTransform& v) {
     v.goal_pan_y = v.home_pan_y;
 }
 
+/// Starts a glide that zooms `v` by `factor` about its OWN current centre (runtime 25,
+/// view_zoom_step): the same anchor math the live pinch applies (mod_input.cpp UpdateGestures),
+/// but anchored at the widget's centre instead of wherever the two fingers met, so whatever is
+/// centred in the view now stays centred. `factor` > 1 zooms in, < 1 zooms out; the caller
+/// (RunAction, mod_actions.cpp) has already refused a non-positive one, so this always produces a
+/// usable result. The new zoom is clamped to [min_zoom, max_zoom] (ZoomLimits, mod_input.cpp,
+/// already folds in a map's own further-out pinch floor); the new pan is then clamped to `w`'s
+/// pan_bounds when it has any (ClampViewPan) -- the same two clamps a live pinch is subject to, so
+/// a button press behaves exactly like a pinch of that size centred on the view.
+inline void GlideViewZoomStep(ViewTransform& v, const Widget& w, float factor, float min_zoom,
+                              float max_zoom) {
+    const float lo = std::max(min_zoom, 0.01f);
+    const float hi = std::max(lo, max_zoom);
+    const float before = v.zoom;
+    const float after = std::clamp(before * factor, lo, hi);
+    const float ox = static_cast<float>(w.rect[2]) * 0.5f;
+    const float oy = static_cast<float>(w.rect[3]) * 0.5f;
+    const float anchor_x = v.pan_x + ox / before;
+    const float anchor_y = v.pan_y + oy / before;
+    float goal_x = anchor_x - ox / after;
+    float goal_y = anchor_y - oy / after;
+    if (w.pan_bounds) {
+        ClampViewPan(w, after, goal_x, goal_y);
+    }
+    v.gliding = true;
+    v.goal_zoom = after;
+    v.goal_pan_x = goal_x;
+    v.goal_pan_y = goal_y;
+}
+
 /// One tick of the bound default for a view: `home` = this tick's default (nullopt = none:
 /// zoom 1, no pan), `reset` = the view_reset_bind value (nullopt = unbound / missing), `held` =
 /// a finger is on the view. Returns true when the view changed.

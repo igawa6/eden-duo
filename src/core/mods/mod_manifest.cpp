@@ -2363,6 +2363,16 @@ void ParseManifestJson(const nlohmann::json& json, Manifest& manifest) {
             } else if (kind == "view_reset") {
                 action.kind = ActionKind::ViewReset;
                 action.view = a.value("view", std::string{});
+            } else if (kind == "view_zoom_step") {
+                // Runtime 25: a generic map/image pan_zoom "+/-" step, clamped to the widget's own
+                // zoom limits and centred on the view's current centre (mod_view_default.h's
+                // GlideViewZoomStep, RunAction). A package using it should declare
+                // "min_runtime": 25, same as every other runtime-25-only feature.
+                action.kind = ActionKind::ViewZoomStep;
+                action.view = a.value("view", std::string{});
+                if (a.contains("factor") && a.at("factor").is_number()) {
+                    action.zoom_factor = a.at("factor").get<f64>();
+                }
             }
             if (action.kind != ActionKind::None) {
                 manifest.actions.emplace(name, std::move(action));

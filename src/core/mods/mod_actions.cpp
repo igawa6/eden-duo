@@ -758,6 +758,41 @@ ModRuntime::ActionResult ModRuntime::RunAction(const Action& action, const State
                  action.view, view.zoom, view.pan_x, view.pan_y);
         break;
     }
+    case ActionKind::ViewZoomStep: {
+        // Runtime 25: a generic +/- zoom step on a map or image pan_zoom widget, centred on
+        // whatever the view is showing now -- a button's answer to the pinch, not a touch.
+        if (!(action.zoom_factor > 0.0)) {
+            const std::string line = std::format(
+                "DSMod: action '{}' refused: view_zoom_step factor {:.3g} must be positive",
+                action.name, action.zoom_factor);
+            LOG_INFO(Core, "{}", line);
+            trace(line);
+            return ActionResult::Refused;
+        }
+        const Widget* const w = FindWidgetByKey(action.view);
+        if (w == nullptr || !w->pan_zoom) {
+            const std::string line = std::format(
+                "DSMod: action '{}' refused: view_zoom_step view '{}' is not a pan_zoom widget "
+                "on the current page",
+                action.name, action.view);
+            LOG_INFO(Core, "{}", line);
+            trace(line);
+            return ActionResult::Refused;
+        }
+        std::scoped_lock lk{view_mutex};
+        auto& view = view_state[action.view];
+        const auto limits = ZoomLimits(action.view); // folds in a map's own further-out floor
+        // Same anchor math as the live pinch (mod_input.cpp UpdateGestures), anchored at the
+        // widget's own centre instead of where two fingers met, and clamped the same way
+        // (zoom limits, then pan_bounds) -- mod_view_default.h.
+        GlideViewZoomStep(view, *w, static_cast<float>(action.zoom_factor), limits.first,
+                          limits.second);
+        LOG_INFO(Core,
+                 "DSMod: view '{}' stepping zoom x{:.3g}, {:.2f} -> {:.2f}, pan -> ({:.0f},{:.0f})",
+                 action.view, action.zoom_factor, view.zoom, view.goal_zoom, view.goal_pan_x,
+                 view.goal_pan_y);
+        break;
+    }
     case ActionKind::Flag: {
         if (action.flag.empty()) {
             return ActionResult::Skipped;

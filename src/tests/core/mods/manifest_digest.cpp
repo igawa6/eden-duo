@@ -661,6 +661,7 @@ std::string R(const Action& o) {
     F(flag_has_int);
     F(flag_int);
     F(view);
+    F(zoom_factor); // runtime 25: ViewZoomStep
     F(module_action);
     F(point);
     F(value);
@@ -1293,7 +1294,7 @@ void CheckLayouts() {
         {"MapWidgetExtras::LabelStyle", sizeof(MapWidgetExtras::LabelStyle), 24},
         {"MapWidgetExtras::Overlay", sizeof(MapWidgetExtras::Overlay), 200},
         {"WidgetAnim", sizeof(WidgetAnim), 136},
-        {"Action", sizeof(Action), 816},
+        {"Action", sizeof(Action), 824}, // runtime 25: zoom_factor
         {"ActionValue", sizeof(ActionValue), 56},
         {"DataPoint", sizeof(DataPoint), 368},
         {"ChainHop", sizeof(ChainHop), 88},
