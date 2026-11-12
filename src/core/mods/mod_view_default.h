@@ -186,4 +186,27 @@ inline bool ApplyViewDefault(ViewTransform& v, const std::optional<ViewHome>& ho
     return true;
 }
 
+/// Runtime 25 canvas_alt: a pan_zoom Image widget's own rect just changed size (ApplyCanvasVariant,
+/// mod_redraw.cpp) without the picture itself changing. `pan_x`/`pan_y` are in "widget px at zoom
+/// 1" (ClampPanAxis, mod_view_default.h's own file comment) -- proportional to the rect's size
+/// along each axis -- so the SAME fractional window origin needs the pan rescaled by how much that
+/// axis grew or shrank; `zoom` (a fraction of the picture, independent of the widget's pixel size)
+/// never needs to change. Called with the rect BEFORE and AFTER the swap; a 0 on either side (no
+/// previous rect yet, or the widget is momentarily sizeless), or an unchanged size, leaves the view
+/// untouched -- nothing to scale from, or nothing to scale to.
+inline void ReanchorViewPan(ViewTransform& v, s32 old_w, s32 old_h, s32 new_w, s32 new_h) {
+    if (old_w <= 0 || old_h <= 0 || new_w <= 0 || new_h <= 0 ||
+        (old_w == new_w && old_h == new_h)) {
+        return;
+    }
+    const float kx = static_cast<float>(new_w) / static_cast<float>(old_w);
+    const float ky = static_cast<float>(new_h) / static_cast<float>(old_h);
+    v.pan_x *= kx;
+    v.pan_y *= ky;
+    v.goal_pan_x *= kx;
+    v.goal_pan_y *= ky;
+    v.home_pan_x *= kx;
+    v.home_pan_y *= ky;
+}
+
 } // namespace Core::Mods
