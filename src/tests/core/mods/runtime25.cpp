@@ -1039,6 +1039,208 @@ TEST_CASE("DSMod view touch: records the canvas-space coordinate a Fit-letterbox
     REQUIRE(PanZoomViewHostValueFrom("@view_touch_y:stickpad_0", states) == Catch::Approx(540.0));
 }
 
+// --- Bugfix (the Sandrock portrait pilot, item30b): a canvas_alt switch while a page stays open
+// must not leave its pre-switch geometry on screen (ModRuntime::ApplyCanvasVariant, mod_redraw.cpp
+// -- bug 1) and a bound Map's base view / pan must track the ACTIVE rect, not the one it was last
+// fitted to (GeometryMapDraw::FrameView, mod_ui_map_widget.cpp; ReanchorBasePan,
+// mod_map_view_rect.h; ReanchorViewPan, mod_view_default.h -- bug 2).
+// -----------------------------------------------------------------------------------------------
+
+TEST_CASE("DSMod canvas_alt bugfix: a page switched mid-session to its alternate canvas computes "
+          "the exact same widget/scroll/hit-test geometry as the same page authored for that "
+          "canvas from the start -- nothing left over from the canvas shape it was drawn in before",
+          "[dsmod][runtime25][canvas_alt][bugfix]") {
+    // ModRuntime::ApplyCanvasVariant now re-baselines the same private per-tick caches a page
+    // re-entry already does (widget_sig_page, canvas_page, dispatch_page, group_defs_page,
+    // ui_signature_valid), so the open page re-lays out on its very next publish instead of only
+    // once it is left and reopened -- that part needs a live ModRuntime (a System) to exercise and
+    // sits outside this suite's boundary, same as mod_launch_gate.cpp's and
+    // map_pan_zoom_host_value.cpp's own header comments. What IS provable here, free of
+    // ModRuntime: the data layer those caches get rebuilt FROM (ExpandWidgets, HitTest/
+    // HitTestIndex, MeasureScroll, ScrollBarThumb) reads only the LIVE widget/region rect every
+    // time, never anything left over from a prior canvas shape -- so once the caches are told to
+    // rebuild (the fix), there is nothing in the data layer left to rebuild wrong.
+    constexpr s32 RowPitch = 24;
+    const auto build = [](bool author_for_portrait) {
+        Page page;
+        page.id = "map_page";
+        ScrollRegion region;
+        region.id = "legend";
+        if (author_for_portrait) {
+            region.rect = {0, 1400, 1080, 96};
+        } else {
+            region.rect = {0, 1000, 1240, 80};
+            region.rect_alt = std::array<s32, 4>{0, 1400, 1080, 96};
+        }
+        page.scrolls.push_back(region);
+
+        Widget row;
+        row.type = WidgetType::Rect;
+        row.scroll = "legend";
+        row.repeat = 6;
+        row.repeat_dy = RowPitch;
+        row.on_tap = "legend.tap";
+        row.payload = "{i}";
+        if (author_for_portrait) {
+            row.rect = {10, 1400, 1060, RowPitch - 2};
+        } else {
+            row.rect = {10, 1000, 1220, RowPitch - 2};
+            row.rect_alt = std::array<s32, 4>{10, 1400, 1060, RowPitch - 2};
+        }
+        page.widgets.push_back(row);
+
+        if (!author_for_portrait) {
+            // The exact op ApplyCanvasVariant performs per widget/scroll region (mod_redraw.cpp):
+            // commit a mid-session switch to canvas_alt.
+            for (Widget& w : page.widgets) {
+                if (w.rect_alt) {
+                    std::swap(w.rect, *w.rect_alt);
+                }
+            }
+            for (ScrollRegion& r : page.scrolls) {
+                if (r.rect_alt) {
+                    std::swap(r.rect, *r.rect_alt);
+                }
+            }
+        }
+        return page;
+    };
+
+    const Page fresh = build(true);
+    const Page switched = build(false);
+    StateSnapshot snapshot;
+    snapshot.ints[ScrollOffsetKey("legend")] = 0;
+
+    const auto fresh_expanded = ExpandWidgets(fresh, snapshot);
+    const auto switched_expanded = ExpandWidgets(switched, snapshot);
+    REQUIRE(fresh_expanded.size() == switched_expanded.size());
+    for (size_t i = 0; i < fresh_expanded.size(); ++i) {
+        REQUIRE(fresh_expanded[i].rect == switched_expanded[i].rect);
+        REQUIRE(fresh_expanded[i].scroll_clip == switched_expanded[i].scroll_clip);
+    }
+
+    // A tap on the (now-portrait) third legend row hits the same expanded element either way.
+    const auto& target = switched_expanded[2];
+    const s32 tap_x = target.rect[0] + target.rect[2] / 2;
+    const s32 tap_y = target.rect[1] + target.rect[3] / 2;
+    REQUIRE(HitTest(fresh, snapshot, tap_x, tap_y) == "legend.tap");
+    REQUIRE(HitTest(switched, snapshot, tap_x, tap_y) == "legend.tap");
+    // Outside the portrait row's narrower width: the landscape row's old 1220 px width (which
+    // would have reached this point) is gone, not merely overdrawn.
+    REQUIRE(HitTest(switched, snapshot, 1200, tap_y).empty());
+
+    const auto measure_fresh = MeasureScroll(fresh, fresh.scrolls[0], snapshot);
+    const auto measure_switched = MeasureScroll(switched, switched.scrolls[0], snapshot);
+    REQUIRE(measure_fresh.row_h == measure_switched.row_h);
+    REQUIRE(measure_fresh.max_offset == measure_switched.max_offset);
+    REQUIRE(ScrollBarThumb(fresh.scrolls[0], measure_fresh, 0) ==
+            ScrollBarThumb(switched.scrolls[0], measure_switched, 0));
+}
+
+TEST_CASE("DSMod map view_rect bugfix: a bound rect's fit on the ACTIVE canvas is never the stale "
+          "axis's ppw rescaled by the other rect's own height ratio (the Sandrock evidence's "
+          "0.7545 = 1.1807 x 956/1496)",
+          "[dsmod][runtime25][view_rect][bugfix]") {
+    // The companion's own rect/rect_alt (RUNTIME-CHANGE-REQUEST-item30b): landscape 1240x956,
+    // portrait 1080x1496. A bound world rect sized so FitWorldRect's landscape fit is exactly the
+    // evidence's own 1.1807 ppw (aspect-matched to the landscape rect, so both axes tie).
+    constexpr float LandscapePpw = 1.1807f;
+    const std::array<float, 4> bound{0.0f, 0.0f, 1240.0f / LandscapePpw, 956.0f / LandscapePpw};
+    const MapBaseView landscape = FitWorldRect(bound, 1240, 956);
+    REQUIRE(landscape.ppw == Approx(LandscapePpw).margin(0.0005f));
+
+    // The ACTIVE rect's own fit -- what the fix's `shown = target;` always uses on a resize.
+    const MapBaseView portrait = FitWorldRect(bound, 1080, 1496);
+    const float expected_portrait_ppw =
+        std::min(1080.0f / (bound[2] - bound[0]), 1496.0f / (bound[3] - bound[1]));
+    REQUIRE(portrait.ppw == Approx(expected_portrait_ppw));
+
+    // The host's pre-fix bug: a frozen landscape ppw rescaled by the portrait/landscape HEIGHT
+    // ratio alone, with no fresh FitWorldRect against the active rect at all.
+    const float buggy_ppw = LandscapePpw * 956.0f / 1496.0f;
+    REQUIRE(buggy_ppw == Approx(0.7545f).margin(0.001f)); // matches the evidence exactly
+    REQUIRE(portrait.ppw != Approx(buggy_ppw).margin(0.01f));
+}
+
+TEST_CASE("DSMod map view_rect bugfix: ReanchorBasePan keeps the same world point centred when "
+          "the base view's own fit changes under it, and switching back restores the original pan",
+          "[dsmod][runtime25][view_rect][bugfix]") {
+    // A bound rect 2000x1200 world units: landscape 1240x956 is width-constrained, portrait
+    // 1080x1496 is height-constrained -- a real axis flip, not just a magnitude change.
+    const std::array<float, 4> bound{0.0f, 0.0f, 2000.0f, 1200.0f};
+    const MapBaseView landscape_home = FitWorldRect(bound, 1240, 956);
+    const MapBaseView portrait_home = FitWorldRect(bound, 1080, 1496);
+    REQUIRE(landscape_home.ppw != Approx(portrait_home.ppw)); // the whole point of this fixture
+    REQUIRE(landscape_home.cx == Approx(portrait_home.cx));   // FitWorldRect's centre never
+    REQUIRE(landscape_home.cy == Approx(portrait_home.cy));   // depends on rw/rh -- only ppw does
+
+    // The user panned/zoomed in landscape: 2x zoom, panned off the bound rect's own centre.
+    const float zoom = 2.0f;
+    const float pan_x = 180.0f;
+    const float pan_y = -60.0f;
+    // The effective world point this reproduces under the OLD (landscape) geometry -- the same
+    // formula GeometryMapDraw::FrameView applies (mod_ui_map_widget.cpp), replicated here since it
+    // is private to that render pass.
+    const float old_halfw = 1240.0f * 0.5f, old_halfh = 956.0f * 0.5f;
+    const float ecx =
+        landscape_home.cx + (pan_x + old_halfw / zoom - old_halfw) / landscape_home.ppw;
+    const float ecy =
+        landscape_home.cy - (pan_y + old_halfh / zoom - old_halfh) / landscape_home.ppw;
+
+    const auto reanchor = ReanchorBasePan(landscape_home, 1240, 956, pan_x, pan_y, zoom,
+                                         portrait_home, 1080, 1496);
+    // Plugging the reanchored pan back into the SAME formula, now under the portrait geometry,
+    // reproduces the identical world point -- a zoom step right after the switch is centred where
+    // the player actually was, not wherever the stale base/pan pairing would have put it.
+    const float new_halfw = 1080.0f * 0.5f, new_halfh = 1496.0f * 0.5f;
+    const float new_ecx =
+        portrait_home.cx + (reanchor.pan_x + new_halfw / zoom - new_halfw) / portrait_home.ppw;
+    const float new_ecy =
+        portrait_home.cy - (reanchor.pan_y + new_halfh / zoom - new_halfh) / portrait_home.ppw;
+    REQUIRE(new_ecx == Approx(ecx));
+    REQUIRE(new_ecy == Approx(ecy));
+
+    // Switching back (portrait -> landscape), reanchoring again from the just-reanchored pan,
+    // restores the ORIGINAL landscape pan exactly -- "landscape return restores" the evidence's
+    // own phrase for it.
+    const auto back = ReanchorBasePan(portrait_home, 1080, 1496, reanchor.pan_x, reanchor.pan_y,
+                                     zoom, landscape_home, 1240, 956);
+    REQUIRE(back.pan_x == Approx(pan_x).margin(0.01));
+    REQUIRE(back.pan_y == Approx(pan_y).margin(0.01));
+}
+
+TEST_CASE("DSMod view_default bugfix: ReanchorViewPan rescales a pan_zoom Image widget's stored "
+          "pan so the same fractional window stays shown after its own rect resizes (canvas_alt)",
+          "[dsmod][runtime25][view_touch][bugfix]") {
+    ViewTransform v;
+    v.zoom = 2.0f;
+    v.pan_x = 150.0f; // 150 / 500 = 30% into a 500 px wide landscape rect at zoom 1
+    v.pan_y = 80.0f;  // 80 / 400 = 20% into a 400 px tall one
+    v.home_pan_x = 10.0f;
+    v.goal_pan_x = 150.0f;
+    ReanchorViewPan(v, /*old_w=*/500, /*old_h=*/400, /*new_w=*/300, /*new_h=*/600);
+    // The identical fraction of the NEW rect's own size: DrawImage (mod_ui.cpp) divides pan by
+    // the widget's rect span every frame, with no cross-frame caching of its own -- so keeping
+    // the fraction is exactly what keeps the same part of the picture shown.
+    REQUIRE(v.pan_x == Approx(90.0f));  // 150 * 300/500
+    REQUIRE(v.pan_y == Approx(120.0f)); // 80 * 600/400
+    REQUIRE(v.goal_pan_x == Approx(90.0f));
+    REQUIRE(v.home_pan_x == Approx(6.0f)); // 10 * 300/500
+    REQUIRE(v.zoom == Approx(2.0f));       // dimensionless (a fraction of the picture): untouched
+
+    // No previous rect yet (first size ever seen), or an unchanged size: left alone.
+    ViewTransform untouched = v;
+    ReanchorViewPan(untouched, 0, 0, 300, 600);
+    REQUIRE(untouched.pan_x == Approx(v.pan_x));
+    ReanchorViewPan(untouched, 300, 600, 300, 600);
+    REQUIRE(untouched.pan_x == Approx(v.pan_x));
+
+    // Switching back restores the original pan exactly.
+    ReanchorViewPan(v, 300, 600, 500, 400);
+    REQUIRE(v.pan_x == Approx(150.0f));
+    REQUIRE(v.pan_y == Approx(80.0f));
+}
+
 TEST_CASE("DSMod runtime 25: version and ABI unaffected", "[dsmod][runtime25]") {
     REQUIRE(DualScreenRuntimeVersion >= 25);
     // No module ABI change: ABI stays 1 (rt24 extension 6's hash is a fixed macro this stage
