@@ -43,6 +43,7 @@
 #include "core/core.h"
 #include "core/mods/mod_font_pages.h"
 #include "core/mods/mod_runtime.h"
+#include "core/mods/mod_view_default.h"
 #include "core/mods/mod_runtime_shared.h"
 #include "video_core/dsmod/aux_routing.h"
 #include "video_core/gpu.h"
@@ -749,6 +750,26 @@ void ModRuntime::ApplyCanvasVariant(bool alt) {
         for (Widget& widget : page.widgets) {
             if (widget.rect_alt) {
                 std::swap(widget.rect, *widget.rect_alt);
+                // Runtime 25 bugfix: a pan_zoom Image widget's OWN view (its pan/zoom on top of
+                // its picture, view_state keyed by widget id) is expressed in "widget px at zoom
+                // 1" -- proportional to this rect's own size -- so a size change here needs the
+                // same fractional window origin rescaled, or whatever was centred drifts the
+                // instant the next frame divides the same pan by the new rect's size instead of
+                // the old one (DrawImage, mod_ui.cpp). The Map widget's own base view has its own
+                // (world-space, bound-rect-aware) equivalent, handled separately where it is
+                // computed, with the data this needs (GeometryMapDraw::FrameView,
+                // mod_ui_map_widget.cpp) -- applying this rect-ratio rescale to it too would double
+                // up with that and corrupt it, so Map is excluded here.
+                if (widget.pan_zoom && widget.type != WidgetType::Map && !widget.id.empty()) {
+                    // *widget.rect_alt now holds the OLD rect (the swap above put the new one in
+                    // widget.rect and moved what used to be there into rect_alt) -- both sides of
+                    // the swap are read here, nothing captured beforehand.
+                    std::scoped_lock lk{view_mutex};
+                    if (const auto it = view_state.find(widget.id); it != view_state.end()) {
+                        ReanchorViewPan(it->second, (*widget.rect_alt)[2], (*widget.rect_alt)[3],
+                                       widget.rect[2], widget.rect[3]);
+                    }
+                }
             }
             // "wrap_width_alt" (runtime 25): the same self-inverse swap as rect_alt, so a label's
             // wrap width follows whichever field shape (rect vs. rect_alt) is active. A widget
@@ -769,6 +790,27 @@ void ModRuntime::ApplyCanvasVariant(bool alt) {
             }
         }
     }
+    // Bugfix (runtime 25, the Sandrock portrait pilot): every widget/scroll-region rect on every
+    // page just moved under whatever page is currently open, not just the one a future page
+    // action switches to -- yet nothing above touches a single one of the caches a PAGE SWITCH
+    // (or a resize) already invalidates (DrivePageTransition's "switched again without a
+    // transition, or resized" branch, mod_pages.cpp), because current_page itself never changed.
+    // Left alone, the open page kept drawing with its pre-switch nav layout, dirty-rect baselines
+    // and expanded repeat rows until it was left and reopened. Reusing that exact reset here makes
+    // the active page re-lay out on its very next publish instead. Module state, current_page,
+    // nav/scroll selection and scroll offsets are untouched -- these are only the caches a page
+    // re-entry would rebuild anyway; scroll offsets stay where they are and are already clamped to
+    // the active rect's own max wherever they are read (MeasureScroll), same as any other tick.
+    ui_signature_valid = false;   // force a full redraw when we next draw widgets
+    widget_sig_page = ~size_t{0}; // re-baseline dirty-rect tracking -- also rebuilds repeat_state
+                                  // (mod_redraw.cpp's own "page_changed" branch, BuildRenderExtras)
+    canvas_page = ~size_t{0};     // the synchronous canvas's own continuity baseline
+    dispatch_page = ~size_t{0};   // the redraw worker's own continuity baseline, mirrored
+    group_defs_page = ~size_t{0}; // widget-group animation boxes were built from the old rects
+    // Defense in depth, matching the resize/page-switch branch exactly: a worker job already in
+    // flight for the pre-switch geometry must not be allowed to publish over what gets shown next.
+    redraw_dispatch_generation.fetch_add(1, std::memory_order_relaxed);
+    redraw_authority_generation.fetch_add(1, std::memory_order_relaxed);
     LOG_INFO(Core, "DSMod: canvas_alt {}", alt ? "on" : "off");
 }
 
