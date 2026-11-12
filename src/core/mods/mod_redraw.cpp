@@ -807,6 +807,20 @@ void ModRuntime::ApplyCanvasVariant(bool alt) {
     canvas_page = ~size_t{0};     // the synchronous canvas's own continuity baseline
     dispatch_page = ~size_t{0};   // the redraw worker's own continuity baseline, mirrored
     group_defs_page = ~size_t{0}; // widget-group animation boxes were built from the old rects
+    // Bugfix (live re-verify, item30c): the dispatch worker never actually draws the manifest's
+    // own `Page` object above -- it draws `*job.page_copy`, an IMMUTABLE COPY (`shared_page`,
+    // mod_runtime.h) made ONCE when `shared_page_index != current_page` and otherwise reused
+    // forever, exactly so a steady page is not re-copied every tick (its own comment: "the page
+    // never changes until a reload"). That premise just broke: the page's WIDGETS changed in
+    // place above (the swap), but current_page did not, so the stale pre-switch copy -- still
+    // holding the OLD rects -- kept being handed to the worker and drawn every tick after this
+    // one, which is exactly why the nav bar/rows stayed at their landscape position/height and
+    // the right edge kept clipping until the page was left and reopened (current_page changing
+    // there is what finally invalidated this same index). The four resets just above (and
+    // ReloadManifest's own `shared_page.reset()`) never touched it. Invalidating the index here
+    // makes the dispatch block's own check (`!shared_page || shared_page_index != page_index`)
+    // rebuild `shared_page` from the live, now-correctly-swapped `page` on the very next dispatch.
+    shared_page_index = ~size_t{0};
     // Defense in depth, matching the resize/page-switch branch exactly: a worker job already in
     // flight for the pre-switch geometry must not be allowed to publish over what gets shown next.
     redraw_dispatch_generation.fetch_add(1, std::memory_order_relaxed);

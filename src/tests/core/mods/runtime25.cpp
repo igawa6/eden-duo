@@ -1137,6 +1137,92 @@ TEST_CASE("DSMod canvas_alt bugfix: a page switched mid-session to its alternate
             ScrollBarThumb(switched.scrolls[0], measure_switched, 0));
 }
 
+TEST_CASE("DSMod canvas_alt bugfix: the redraw worker's cached Page copy (shared_page / "
+          "shared_page_index, mod_runtime.h) must be invalidated on a same-page canvas switch, or "
+          "it keeps handing the worker the pre-switch rects (item30c live re-verify)",
+          "[dsmod][runtime25][canvas_alt][bugfix]") {
+    // The live re-verify on CLI 25-c11739ad1abb (= commit 1f1746fe00) found bug 1 only half
+    // fixed: a same-page switch updated scroll limits/selection (the widget_sig_page/canvas_page/
+    // dispatch_page/group_defs_page/ui_signature_valid reset from the first bugfix commit) but
+    // the DRAWN nav bar and rows stayed at their landscape rect -- fixed only by leaving and
+    // reopening the page. Root cause: ModRuntime::PublishUi's dispatch block hands the worker
+    // `*job.page_copy`, which is `shared_page` -- an IMMUTABLE COPY of the page, rebuilt only
+    // when `shared_page_index != current_page` (mod_redraw.cpp's own "the page never changes
+    // until a reload" comment). A canvas_alt switch mutates the LIVE page's widgets in place
+    // without current_page changing, so that premise silently broke: the worker kept drawing the
+    // stale pre-switch copy indefinitely. None of the four sentinel resets above it touch this
+    // cache; only `shared_page_index = ~size_t{0}` (this test's own fix) does.
+    //
+    // ModRuntime cannot be constructed here (needs a System -- this file's other canvas_alt
+    // bugfix test and mod_launch_gate.cpp's own boundary comment), so this reproduces the EXACT
+    // caching rule from mod_redraw.cpp's dispatch block against a plain Page, which is all the
+    // defect actually needed; ExpandWidgets (free, exported) then stands in for "what the worker
+    // draws" at the point job.page_copy's widgets would be expanded.
+    struct PageCache {
+        std::shared_ptr<const Page> copy;
+        size_t index{~size_t{0}};
+        const Page& Get(const Page& live, size_t page_index) {
+            if (!copy || index != page_index) {
+                copy = std::make_shared<const Page>(live);
+                index = page_index;
+            }
+            return *copy;
+        }
+    };
+
+    Page page;
+    page.id = "social";
+    Widget nav;
+    nav.id = "nav_bar";
+    nav.rect = {0, 956, 1240, 124};                        // landscape
+    nav.rect_alt = std::array<s32, 4>{0, 1496, 1080, 124}; // portrait
+    Widget row;
+    row.type = WidgetType::Rect;
+    row.id = "row";
+    row.repeat = 3;
+    row.repeat_dy = 40;
+    row.rect = {0, 100, 1200, 36};
+    row.rect_alt = std::array<s32, 4>{0, 1500, 1040, 36};
+    page.widgets = {nav, row};
+
+    PageCache cache;
+    constexpr size_t PageIndex = 2; // "Social page 2" -- the companion's own item30c evidence
+    const StateSnapshot snapshot;
+
+    // First ask: builds the cache from the (still landscape) live page -- same as a page's first
+    // entry.
+    REQUIRE(cache.Get(page, PageIndex).widgets[0].rect == std::array<s32, 4>{0, 956, 1240, 124});
+
+    // The exact per-widget op ApplyCanvasVariant performs on a same-page canvas switch
+    // (current_page/PageIndex itself never changes): swap rect <-> rect_alt on the LIVE page.
+    for (Widget& w : page.widgets) {
+        if (w.rect_alt) {
+            std::swap(w.rect, *w.rect_alt);
+        }
+    }
+    REQUIRE(page.widgets[0].rect == std::array<s32, 4>{0, 1496, 1080, 124}); // the live page is
+                                                                              // already correct
+
+    // The bug (1f1746fe00): asking for the SAME page index hands back the stale pre-switch copy
+    // -- the nav bar's drawn rect, and a repeated row's, are still the landscape ones.
+    const auto& still_cached = cache.Get(page, PageIndex);
+    REQUIRE(still_cached.widgets[0].rect == std::array<s32, 4>{0, 956, 1240, 124}); // stale
+    const auto stale_expanded = ExpandWidgets(still_cached, snapshot);
+    REQUIRE(stale_expanded.size() == 1 + 3); // nav + 3 repeated rows
+    REQUIRE(stale_expanded[0].rect == std::array<s32, 4>{0, 956, 1240, 124}); // nav bar, stale
+    REQUIRE(stale_expanded[1].rect[1] == 100);                               // row 0, stale
+
+    // The fix: ApplyCanvasVariant also invalidates the cache's own index, the same `~size_t{0}`
+    // sentinel widget_sig_page/canvas_page/dispatch_page/group_defs_page already use -- so the
+    // very next ask for this SAME page index rebuilds the copy from the live, now-swapped page.
+    cache.index = ~size_t{0};
+    const auto& refreshed = cache.Get(page, PageIndex);
+    REQUIRE(refreshed.widgets[0].rect == std::array<s32, 4>{0, 1496, 1080, 124}); // nav, correct
+    const auto fixed_expanded = ExpandWidgets(refreshed, snapshot);
+    REQUIRE(fixed_expanded[0].rect == std::array<s32, 4>{0, 1496, 1080, 124}); // nav bar, correct
+    REQUIRE(fixed_expanded[1].rect[1] == 1500);                               // row 0, correct
+}
+
 TEST_CASE("DSMod map view_rect bugfix: a bound rect's fit on the ACTIVE canvas is never the stale "
           "axis's ppw rescaled by the other rect's own height ratio (the Sandrock evidence's "
           "0.7545 = 1.1807 x 956/1496)",
