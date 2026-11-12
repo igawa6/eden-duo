@@ -97,4 +97,40 @@ inline bool StepBaseGlide(MapBaseView& shown, const MapBaseView& target, bool ho
            std::fabs(pan_y) > 0.5f;
 }
 
+/// Runtime 25 canvas_alt: the Map widget's own rect just changed size (ApplyCanvasVariant,
+/// mod_redraw.cpp) without the bound world rect moving -- a host display change, not a "new area"
+/// StepBaseGlide's ease exists for. The base view's ppw always snaps to the new fit at once
+/// (FitWorldRect's own centre does not depend on rw/rh, only its ppw does), but the user's own pan
+/// on top of it (GeometryMapDraw::FrameView's "widget.pan_zoom" block) is expressed in the OLD
+/// rect's half-size and the OLD base ppw, so simply snapping the base would shift whatever world
+/// point was centred. This solves for the pan that keeps it there: the same anchor algebra as
+/// GlideViewZoomStep, run backwards (zoom `z` held fixed, pan solved from it instead of the other
+/// way around). `old_base`/`old_rw`/`old_rh`: the base view and rect as they were just before the
+/// switch (FrameView's own cached "last-drawn" values); `new_base`/`new_rw`/`new_rh`: the fresh
+/// FitWorldRect fit and the now-active rect. `old_base.ppw` must be > 0 (checked by the caller,
+/// which already has it from a prior frame's successful fit).
+struct ReanchoredPan {
+    float pan_x{};
+    float pan_y{};
+};
+[[nodiscard]] inline ReanchoredPan ReanchorBasePan(const MapBaseView& old_base, s32 old_rw,
+                                                   s32 old_rh, float old_pan_x, float old_pan_y,
+                                                   float zoom, const MapBaseView& new_base,
+                                                   s32 new_rw, s32 new_rh) {
+    const float z = std::max(zoom, 0.01f);
+    const float old_halfw = static_cast<float>(old_rw) * 0.5f;
+    const float old_halfh = static_cast<float>(old_rh) * 0.5f;
+    // The world point the OLD geometry actually had centred (GeometryMapDraw::FrameView's own
+    // "cx += ...", "cy -= ..." pan application, mirrored here to recover it).
+    const float ecx = old_base.cx + (old_pan_x + old_halfw / z - old_halfw) / old_base.ppw;
+    const float ecy = old_base.cy - (old_pan_y + old_halfh / z - old_halfh) / old_base.ppw;
+    const float new_halfw = static_cast<float>(new_rw) * 0.5f;
+    const float new_halfh = static_cast<float>(new_rh) * 0.5f;
+    // Solved from the same formula for the NEW pan that reproduces (ecx, ecy) under the new base.
+    return ReanchoredPan{
+        (ecx - new_base.cx) * new_base.ppw - new_halfw / z + new_halfw,
+        (new_base.cy - ecy) * new_base.ppw - new_halfh / z + new_halfh,
+    };
+}
+
 } // namespace Core::Mods

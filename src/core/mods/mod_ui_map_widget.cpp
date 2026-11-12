@@ -467,6 +467,7 @@ bool GeometryMapDraw::FrameView() {
         const bool user_view =
             widget.pan_zoom && MapViewCustom(view.zoom, view.pan_x, view.pan_y, view.gliding);
         std::optional<MapBaseView> shown;
+        std::optional<std::array<float, 2>> last_dim;
         std::unique_lock<std::mutex> rect_lk;
         if (follow_state != nullptr && follow_state_mutex != nullptr) {
             rect_lk = std::unique_lock<std::mutex>{*follow_state_mutex};
@@ -477,10 +478,38 @@ bool GeometryMapDraw::FrameView() {
             if (c != follow_state->end() && z != follow_state->end()) {
                 shown = MapBaseView{c->second[0], c->second[1], z->second[0]};
             }
+            // Runtime 25 bugfix: the widget's own rect size the last time `shown` was cached --
+            // lets a canvas_alt switch (ApplyCanvasVariant swapping widget.rect under this same,
+            // still-open page) be told apart from an ordinary tick where only the bound rect
+            // itself moved (a new room: StepBaseGlide's ease is correct there).
+            if (const auto d = follow_state->find(fkey + "#rect_dim"); d != follow_state->end()) {
+                last_dim = d->second;
+            }
         }
         if (r.has_value()) {
             const MapBaseView target = FitWorldRect(*r, rw, rh);
+            const bool rect_resized =
+                shown.has_value() && last_dim.has_value() && shown->ppw > 0.0f &&
+                (std::fabs((*last_dim)[0] - static_cast<float>(rw)) > 0.5f ||
+                 std::fabs((*last_dim)[1] - static_cast<float>(rh)) > 0.5f);
             if (!shown.has_value()) {
+                shown = target;
+            } else if (rect_resized) {
+                // The rect this base view was fitted to is no longer the active one: FitWorldRect
+                // already gives the exact right fit for the NEW one (`target`, computed with the
+                // current rw/rh above) -- snap to it at once rather than easing over several
+                // frames, a pure geometry change having nothing to do with a "new area" glide.
+                // While the user has their own pan/zoom on top (or a reset is still easing home,
+                // same test as `user_view`), that pan was computed against the OLD rect/ppw, so
+                // snapping the base alone would shift whatever world point was centred -- stage a
+                // reanchored pan instead (ApplyViewCorrections, mod_input.cpp, consumes "<vkey>#pan"
+                // into the live view_state right after this draw).
+                if (user_view && follow_state != nullptr) {
+                    const auto reanchor = ReanchorBasePan(
+                        *shown, static_cast<s32>((*last_dim)[0]), static_cast<s32>((*last_dim)[1]),
+                        view.pan_x, view.pan_y, view.zoom, target, rw, rh);
+                    (*follow_state)[vkey + "#pan"] = {reanchor.pan_x, reanchor.pan_y};
+                }
                 shown = target;
             } else if (StepBaseGlide(*shown, target, user_view)) {
                 settling = true;
@@ -498,6 +527,8 @@ bool GeometryMapDraw::FrameView() {
             if (shown.has_value()) {
                 (*follow_state)[fkey + "#rect_c"] = {shown->cx, shown->cy};
                 (*follow_state)[fkey + "#rect_z"] = {shown->ppw, 0.0f};
+                (*follow_state)[fkey + "#rect_dim"] = {static_cast<float>(rw),
+                                                       static_cast<float>(rh)};
             }
             (*follow_state)[vkey + "#zmin"] = {zoom_min, 0.0f};
         }
