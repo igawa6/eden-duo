@@ -259,9 +259,14 @@ struct MapWidgetExtras {
         std::string src_detail_bind;    ///< optional higher-detail image for the same world box
         /// Runtime 24: a text point naming an image whose alpha, stretched (bilinear) over the
         /// overlay's box, multiplies the overlay's alpha -- a dynamic mask such as a fog of war a
-        /// module reads back off the GPU. While the named mask is still loading the overlay is
-        /// not drawn; an empty / missing point draws it unmasked. Unturned views only (a turned
-        /// view, view_rotate_bind, skips a masked overlay).
+        /// module reads back off the GPU. The very first mask this overlay ever names is not
+        /// drawn while it is still loading (never shown unmasked by accident); once one has
+        /// loaded, naming a replacement that is still decoding keeps drawing with the mask last
+        /// actually used instead of blanking for a frame (DrawOverlays' own image_fallback slot --
+        /// the same last-known-good mechanism Image widgets use, mod_ui_map_widget.cpp), and the
+        /// same holds for this overlay's own src/src_bind picture. An empty / missing mask point
+        /// draws the overlay unmasked. Unturned views only (a turned view, view_rotate_bind, skips
+        /// a masked overlay).
         std::string mask_bind;
         float detail_threshold{210.0f}; ///< projected edge length above which detail is requested
         float x0{}, y0{}, x1{}, y1{};

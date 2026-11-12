@@ -639,7 +639,10 @@ struct FogMap {
         page.id = "p";
         page.widgets.push_back(w);
     }
-    Canvas Draw(const StateSnapshot& s) const {
+    /// `fallback` null (every existing call site): today's behaviour, unchanged. Non-null: the
+    /// same `ImageFallbackState` reused across draws exercises DrawOverlays' own last-known-good
+    /// slots (mod_ui_map_widget.cpp), one per overlay index + "src"/"mask".
+    Canvas Draw(const StateSnapshot& s, ImageFallbackState* fallback = nullptr) const {
         Canvas canvas;
         canvas.Resize(100, 100);
         ViewState views;
@@ -648,13 +651,67 @@ struct FogMap {
                        const auto it = pics.find(key);
                        return it != pics.end() ? it->second : nullptr;
                    },
-                   views);
+                   views, nullptr, {}, {}, nullptr, nullptr, {}, nullptr, nullptr, nullptr,
+                   nullptr, fallback);
         return canvas;
     }
 };
 u32 Px(const Canvas& c, s32 x, s32 y) {
     return c.Pixels()[static_cast<size_t>(y) * c.Width() + static_cast<size_t>(x)];
 }
+
+/// Area "g": world (0,0)-(100,100), blue base; widget 100x100 at the origin; one unmasked overlay
+/// whose own picture is named by the text point "ov.src" -- DrawOverlays' "src" fallback slot,
+/// not the "mask" one FogMap exercises.
+struct PicOverlayMap {
+    Manifest manifest;
+    Page page;
+    std::map<std::string, std::shared_ptr<const Core::Mods::Image>> pics{
+        {"img.blue", Pic(std::vector<u32>(64, Blue), 8, 8)},
+        {"img.green", Pic(std::vector<u32>(64, Green), 8, 8)},
+    };
+    PicOverlayMap() {
+        manifest.background = 0xFF000000u;
+        MapArea area;
+        area.min_x = 0.0f;
+        area.max_x = 100.0f;
+        area.min_y = 0.0f;
+        area.max_y = 100.0f;
+        area.image = "img.blue";
+        manifest.map_areas.emplace("g", area);
+        Widget w;
+        w.type = WidgetType::Map;
+        w.id = "m";
+        w.area = "g";
+        w.rect = {0, 0, 100, 100};
+        w.pan_zoom = true;
+        w.area_label = false;
+        auto extras = std::make_shared<MapWidgetExtras>();
+        MapWidgetExtras::Overlay ov;
+        ov.src_bind = "ov.src";
+        ov.x0 = 0.0f;
+        ov.y0 = 0.0f;
+        ov.x1 = 100.0f;
+        ov.y1 = 100.0f;
+        extras->overlays.push_back(ov);
+        w.map_extras = extras;
+        page.id = "p";
+        page.widgets.push_back(w);
+    }
+    Canvas Draw(const StateSnapshot& s, ImageFallbackState* fallback = nullptr) const {
+        Canvas canvas;
+        canvas.Resize(100, 100);
+        ViewState views;
+        RenderPage(canvas, manifest, page, s,
+                   [this](const std::string& key) -> std::shared_ptr<const Core::Mods::Image> {
+                       const auto it = pics.find(key);
+                       return it != pics.end() ? it->second : nullptr;
+                   },
+                   views, nullptr, {}, {}, nullptr, nullptr, {}, nullptr, nullptr, nullptr,
+                   nullptr, fallback);
+        return canvas;
+    }
+};
 } // namespace
 
 TEST_CASE("DSMod map overlay mask_bind: a bound alpha mask cuts the overlay",
@@ -697,4 +754,75 @@ TEST_CASE("DSMod map overlay mask_bind: manifest key", "[dsmod][runtime24][mask_
     REQUIRE(mx->overlays.size() == 2);
     REQUIRE(mx->overlays[0].mask_bind == "fog.mask");
     REQUIRE(mx->overlays[1].mask_bind.empty());
+}
+
+TEST_CASE("DSMod map overlay mask_bind: a replacement mask still decoding keeps the previous one",
+          "[dsmod][runtime24][mask_bind]") {
+    const FogMap map;
+    ImageFallbackState fallback; // reused across draws, like the one ModRuntime owns
+    StateSnapshot s;
+    s.texts["fog.mask"] = "module:fog#1";
+    auto c = map.Draw(s, &fallback);
+    REQUIRE(Px(c, 5, 50) == Green);
+    REQUIRE(Px(c, 95, 50) == Blue);
+    // The published key swaps to a replacement mask that has not landed yet (a cache miss, same
+    // as "module:fog#2" above): with a held mask already in this overlay's slot, keep drawing
+    // with it instead of blanking the overlay for a frame.
+    s.texts["fog.mask"] = "module:fog#2";
+    c = map.Draw(s, &fallback);
+    REQUIRE(Px(c, 5, 50) == Green);
+    REQUIRE(Px(c, 95, 50) == Blue);
+}
+
+TEST_CASE("DSMod map overlay mask_bind: the very first mask missing stays off even with "
+          "image_fallback",
+          "[dsmod][runtime24][mask_bind]") {
+    const FogMap map;
+    ImageFallbackState fallback; // never populated for this slot: nothing held yet
+    StateSnapshot s;
+    s.texts["fog.mask"] = "module:fog#2"; // never resolves in this fixture's pics
+    auto c = map.Draw(s, &fallback);
+    REQUIRE(Px(c, 5, 50) == Blue);
+    REQUIRE(Px(c, 95, 50) == Blue);
+}
+
+TEST_CASE("DSMod map overlay mask_bind: a null image_fallback behaves exactly as before",
+          "[dsmod][runtime24][mask_bind]") {
+    const FogMap map;
+    StateSnapshot s;
+    s.texts["fog.mask"] = "module:fog#1";
+    REQUIRE(Px(map.Draw(s), 5, 50) == Green);
+    // No fallback object at all (the default argument, every caller before this fix): a
+    // replacement mask that is still decoding blanks the overlay, same as the very first test
+    // in this file.
+    s.texts["fog.mask"] = "module:fog#2";
+    const auto c = map.Draw(s);
+    REQUIRE(Px(c, 5, 50) == Blue);
+    REQUIRE(Px(c, 95, 50) == Blue);
+}
+
+TEST_CASE("DSMod map overlay src_bind: a replacement picture still decoding keeps the previous "
+          "one",
+          "[dsmod][runtime24][mask_bind]") {
+    const PicOverlayMap map;
+    ImageFallbackState fallback;
+    StateSnapshot s;
+    s.texts["ov.src"] = "img.green";
+    REQUIRE(Px(map.Draw(s, &fallback), 50, 50) == Green);
+    // A fresh key the module just minted for a new picture, still decoding (a cache miss): the
+    // overlay keeps showing what this slot actually drew last, instead of blanking for a frame.
+    s.texts["ov.src"] = "img.green.v2";
+    REQUIRE(Px(map.Draw(s, &fallback), 50, 50) == Green);
+    // Without a fallback object, the same cache miss blanks the overlay for that frame.
+    REQUIRE(Px(map.Draw(s), 50, 50) == Blue);
+}
+
+TEST_CASE("DSMod map overlay src_bind: the very first picture missing stays off even with "
+          "image_fallback",
+          "[dsmod][runtime24][mask_bind]") {
+    const PicOverlayMap map;
+    ImageFallbackState fallback; // never populated: nothing held yet for this slot
+    StateSnapshot s;
+    s.texts["ov.src"] = "img.unknown"; // never resolves in this fixture's pics
+    REQUIRE(Px(map.Draw(s, &fallback), 50, 50) == Blue);
 }

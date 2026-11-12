@@ -88,8 +88,11 @@ struct WidgetDrawContext {
     s32 rh;
     s64 value;   ///< the `bind` value (0 when unbound)
     s64 maximum; ///< the `max_bind` value, else `max_const`
-    /// Image widget draw continuity (last-known-good fallback, cross-fade); null = both off, the
-    /// same as before `ImageFallbackState` existed. DrawImage is its only reader/writer.
+    /// Draw continuity backed by last-known-good fallback entries, one shared map of slots keyed
+    /// by whatever each reader/writer needs: DrawImage (its own cross-fade too; one slot per
+    /// widget instance + src_bind) and DrawMap's GeometryMapDraw::DrawOverlays (one slot per
+    /// overlay index + "src"/"mask", no cross-fade) both read and write it. Null = every one of
+    /// this off, the same as before `ImageFallbackState` existed.
     ImageFallbackState* image_fallback;
 };
 

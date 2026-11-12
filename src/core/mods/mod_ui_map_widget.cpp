@@ -204,7 +204,7 @@ public:
           follow_state_mutex{ctx.follow_state_mutex},
           manifest_markers_mutex{ctx.manifest_markers_mutex}, settling{ctx.settling},
           widget{ctx.widget}, widget_index{ctx.widget_index}, view{ctx.view}, x{ctx.x}, y{ctx.y},
-          rw{ctx.rw}, rh{ctx.rh}, area{area_}, geo{geo_} {}
+          rw{ctx.rw}, rh{ctx.rh}, image_fallback{ctx.image_fallback}, area{area_}, geo{geo_} {}
 
     void Draw();
     /// FrameView alone (ProbeMapView): the view this draw would use, into the record fields.
@@ -282,6 +282,12 @@ private:
     s32& y;
     const s32 rw;
     const s32 rh;
+    /// Runtime 24 (last-known-good for overlays): DrawOverlays' own fallback slots, keyed per
+    /// overlay index + which bind the slot is for ("src"/"mask") -- the same ImageFallbackState
+    /// DrawImage uses, just a different family of keys in its one shared map. Null for every
+    /// caller that predates this (tests, the debug page): DrawOverlays then behaves exactly as
+    /// before (a cache miss has nothing held to fall back to, so it draws nothing).
+    ImageFallbackState* const image_fallback;
     const std::string& area;
     const MapAreaIterator geo;
 
@@ -839,12 +845,21 @@ static float MarkerDegrees(const Widget& widget, const StateSnapshot& snapshot) 
 
 // Runtime 14: map "overlays" -- pictures placed in world space over the base picture and under
 // the markers (into the canvas, which the GPU path composites over the map quad), panning and
-// zooming with the map. An image still loading draws nothing yet.
+// zooming with the map. An image still loading draws the last one this overlay slot actually
+// drew (image_fallback, below) instead of nothing; an overlay that has never drawn anything yet
+// stays off, same as always.
 void GeometryMapDraw::DrawOverlays() {
     if (map_extras == nullptr || !images) {
         return;
     }
-    for (const auto& ov : map_extras->overlays) {
+    // Stable per-widget key (the same convention as ProbeView's view_key / DrawImage's own
+    // fallback key): overlay index is appended below, since map_extras->overlays never reorders
+    // at runtime, so (widget_key, overlay index, "src"/"mask") stays a stable slot identity
+    // across frames for exactly as long as this Map widget instance keeps drawing that overlay.
+    const std::string widget_key =
+        widget.id.empty() ? page.id + "#" + std::to_string(widget_index) : widget.id;
+    for (size_t ov_index = 0; ov_index < map_extras->overlays.size(); ++ov_index) {
+        const auto& ov = map_extras->overlays[ov_index];
         if (!ov.show.Empty() && !GateOpen(ov.show, snapshot)) {
             continue;
         }
@@ -891,17 +906,45 @@ void GeometryMapDraw::DrawOverlays() {
         }
         if (!pic)
             pic = images(*key); // keep the overview while detail loads
+        if (image_fallback != nullptr) {
+            // A replacement picture (a fresh src/src_detail key) still decoding: show this
+            // overlay slot's last actually-drawn picture instead of blanking for a frame. The
+            // very first load has nothing held yet (slot.image is null), so it stays off below,
+            // exactly as before this fallback existed.
+            std::scoped_lock lock{image_fallback->mutex};
+            ImageFallbackEntry& slot =
+                image_fallback->entries[widget_key + "#ov" + std::to_string(ov_index) + "#src"];
+            if (pic != nullptr && pic->Valid()) {
+                slot.image = pic;
+            } else {
+                pic = slot.image;
+            }
+        }
         add_content(pic.get());
         if (pic == nullptr || !pic->Valid()) {
             continue;
         }
         const u32 a = static_cast<u32>(std::lround(ov.opacity * 255.0f));
-        // Runtime 24: a bound alpha mask. A named mask that is not loaded yet draws nothing (the
-        // overlay is never shown unmasked by accident); an empty point means no mask.
+        // Runtime 24: a bound alpha mask. A replacement mask (a fresh mask_bind key) still
+        // decoding draws this overlay with the mask it last actually used (image_fallback,
+        // below) instead of blanking for a frame; the very first mask for this slot has nothing
+        // held yet, so it stays off exactly as before -- never shown unmasked by accident. An
+        // empty point means no mask at all (unaffected by any of this).
         if (!ov.mask_bind.empty()) {
             const auto m = snapshot.texts.find(ov.mask_bind);
             if (m != snapshot.texts.end() && !m->second.empty()) {
-                const auto mask = images(m->second);
+                std::shared_ptr<const Image> mask = images(m->second);
+                if (image_fallback != nullptr) {
+                    std::scoped_lock lock{image_fallback->mutex};
+                    ImageFallbackEntry& slot =
+                        image_fallback
+                            ->entries[widget_key + "#ov" + std::to_string(ov_index) + "#mask"];
+                    if (mask != nullptr && mask->Valid()) {
+                        slot.image = mask;
+                    } else {
+                        mask = slot.image;
+                    }
+                }
                 add_content(mask.get());
                 if (turn == 0.0f && mask != nullptr && mask->Valid()) {
                     blit_masked(*pic, *mask, l, t, r - l, b - t, a);

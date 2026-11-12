@@ -77,15 +77,19 @@ struct ImageFallbackEntry {
     std::chrono::steady_clock::time_point fade_start{};
     std::string fade_bind_value;
 };
-/// Every Image widget instance's `ImageFallbackEntry`, by DrawImage's own stable key (page id +
-/// widget id/index, the same convention the pan_zoom view lookup in RenderPage uses, plus
-/// src_bind). One instance lives on the ModRuntime (`image_fallback_state`); RenderPage only
-/// borrows a pointer to it, like `follow_state`. Its own mutex, not `asset_cache_mutex`: a
-/// fallback hit never touches `image_cache`, and the only writer/reader is DrawImage, on
-/// whichever thread runs it (the redraw worker, or the tick thread's synchronous carve-outs for a
-/// page transition / EDEN_DSMOD_SYNC_REDRAW -- the same two callers every other per-widget
-/// RenderPage state already has to allow for). Cleared wholesale by ShutdownGameModule, so
-/// nothing leaks across a title change or a package reload.
+/// One `ImageFallbackEntry` per fallback slot, in one shared map keyed by whichever reader/writer
+/// owns that slot: DrawImage's own stable key (page id + widget id/index, the same convention the
+/// pan_zoom view lookup in RenderPage uses, plus src_bind) for an Image widget instance, or
+/// GeometryMapDraw::DrawOverlays' key (the Map widget's own page id + widget id/index, plus an
+/// overlay index and "src"/"mask") for a Map widget's overlay picture / replacement mask
+/// (mod_ui_map_widget.cpp) -- no cross-fade there, just the held image. One instance lives on the
+/// ModRuntime (`image_fallback_state`); RenderPage only borrows a pointer to it, like
+/// `follow_state`. Its own mutex, not `asset_cache_mutex`: a fallback hit never touches
+/// `image_cache`, and its writers/readers (DrawImage, DrawOverlays) only ever run one at a time
+/// for a given RenderPage call, on whichever thread runs it (the redraw worker, or the tick
+/// thread's synchronous carve-outs for a page transition / EDEN_DSMOD_SYNC_REDRAW -- the same two
+/// callers every other per-widget RenderPage state already has to allow for). Cleared wholesale
+/// by ShutdownGameModule, so nothing leaks across a title change or a package reload.
 struct ImageFallbackState {
     std::unordered_map<std::string, ImageFallbackEntry> entries;
     std::mutex mutex;
