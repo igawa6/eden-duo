@@ -20,6 +20,8 @@ import org.yuzu.yuzu_emu.NativeLibrary
 import org.yuzu.yuzu_emu.R
 import org.yuzu.yuzu_emu.databinding.FragmentEmulationBinding
 import org.yuzu.yuzu_emu.features.settings.model.IntSetting
+import org.yuzu.yuzu_emu.features.settings.utils.SettingsFile
+import org.yuzu.yuzu_emu.model.Game
 import org.yuzu.yuzu_emu.features.settings.model.Settings.EmulationOrientation
 import org.yuzu.yuzu_emu.features.settings.model.Settings.EmulationVerticalAlignment
 import org.yuzu.yuzu_emu.overlay.model.OverlayLayout
@@ -50,7 +52,12 @@ class DualScreenFragmentHost(
     private val resumeEmulationFromUi: () -> Unit,
     private val clearPausedFrame: () -> Unit,
     private val stopEmulation: () -> Unit,
-    private val setEmulationStopping: () -> Unit
+    private val setEmulationStopping: () -> Unit,
+    // The running game when it uses its own per-game settings file (EmulationFragment's
+    // shouldUseCustom), else null. While a game runs that file is NOT kept loaded
+    // (NativeConfig.isPerGameConfigLoaded() is false), so the layout editor's Done has to load
+    // it briefly to save Layout = Custom where the settings screen and the next launch read it.
+    private val perGameConfigGame: () -> Game? = { null }
 ) : DualScreenFragmentHooks {
     // Eden Duo Stage 2: the last seen separating FoldingFeature (either orientation), for
     // DualScreenGeometry; Stage 4: true while emulation is paused for the eject dialog --
@@ -341,8 +348,11 @@ class DualScreenFragmentHost(
         layoutEditorBackCallback = null
         if (save) {
             val context = fragment.context
-            val perGame = NativeConfig.isPerGameConfigLoaded()
-            val gameId = if (perGame) dualScreen().currentSecondScreenTitle() else null
+            // Same rule as QuickSettings.saveSettings: a game with its own settings file keeps
+            // its own Layout, so Custom must land in that file (beta.5 Thor QA: Done wrote the
+            // global value while Sandrock's per-game Layout = Stacked kept winning).
+            val customGame = perGameConfigGame()
+            val gameId = if (customGame != null) dualScreen().currentSecondScreenTitle() else null
             if (context != null) {
                 DualScreenCustomLayoutStore.save(
                     context, editorView.window.isLandscape, gameId,
@@ -352,9 +362,20 @@ class DualScreenFragmentHost(
                     )
                 )
             }
-            IntSetting.COMPANION_LAYOUT.global = !perGame
-            IntSetting.COMPANION_LAYOUT.setInt(DualScreenLayoutChoice.CUSTOM.ordinal)
-            if (perGame) NativeConfig.savePerGameConfig() else NativeConfig.saveGlobalConfig()
+            if (customGame != null && !NativeConfig.isPerGameConfigLoaded()) {
+                // EmulationFragment.withPerGameConfig's pattern: load, change, save, unload.
+                SettingsFile.loadCustomConfig(customGame)
+                IntSetting.COMPANION_LAYOUT.setInt(DualScreenLayoutChoice.CUSTOM.ordinal)
+                NativeConfig.savePerGameConfig()
+                NativeConfig.unloadPerGameConfig()
+            } else if (customGame != null) {
+                IntSetting.COMPANION_LAYOUT.setInt(DualScreenLayoutChoice.CUSTOM.ordinal)
+                NativeConfig.savePerGameConfig()
+            } else {
+                IntSetting.COMPANION_LAYOUT.global = true
+                IntSetting.COMPANION_LAYOUT.setInt(DualScreenLayoutChoice.CUSTOM.ordinal)
+                NativeConfig.saveGlobalConfig()
+            }
         }
         b?.overlayContainer?.removeView(editorView)
         layoutEditorToolbar?.let { b?.overlayContainer?.removeView(it) }

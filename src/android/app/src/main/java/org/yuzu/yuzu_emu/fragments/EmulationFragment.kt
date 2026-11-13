@@ -149,7 +149,8 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
         ::resumeEmulationFromUi,
         ::clearPausedFrame,
         { emulationState.stop() },
-        { emulationViewModel.setIsEmulationStopping(true) }
+        { emulationViewModel.setIsEmulationStopping(true) },
+        { game?.takeIf { shouldUseCustom } }
     )
 
     // Eden Duo: second screen and No Companion (DualScreenEmulationController).

@@ -37,6 +37,11 @@ object DualScreenModeSetting {
     const val KEY = "dual_screen_mode"
     private const val UNSET = -1
 
+    /** Mode decides which Dual screen rows exist (Simulated/Physical groups), so a change must
+     *  rebuild the settings list right away (beta.5 Thor QA: the Layout row stayed missing). */
+    fun affectsSettingsList(setting: org.yuzu.yuzu_emu.features.settings.model.AbstractSetting): Boolean =
+        setting.key == KEY
+
     private val prefs get() = SecondScreenPerGame.prefs(YuzuApplication.appContext)
 
     /** The saved global value, or null when the user made no explicit choice. */

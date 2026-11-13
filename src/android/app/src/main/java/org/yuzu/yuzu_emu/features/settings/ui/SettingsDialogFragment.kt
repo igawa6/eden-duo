@@ -423,6 +423,9 @@ class SettingsDialogFragment : DialogFragment(), DialogInterface.OnClickListener
                 val scSetting = settingsViewModel.clickedItem as IntSingleChoiceSetting
                 val value = scSetting.getValueAt(which)
                 scSetting.setSelectedValue(value)
+                if (org.yuzu.yuzu_emu.duo.DualScreenModeSetting.affectsSettingsList(scSetting.setting)) {
+                    settingsViewModel.setShouldReloadSettingsList(true) // Eden Duo
+                }
             }
 
             is SliderSetting -> {
