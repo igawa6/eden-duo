@@ -424,7 +424,9 @@ class SettingsDialogFragment : DialogFragment(), DialogInterface.OnClickListener
                 val value = scSetting.getValueAt(which)
                 scSetting.setSelectedValue(value)
                 if (org.yuzu.yuzu_emu.duo.DualScreenModeSetting.affectsSettingsList(scSetting.setting)) {
-                    settingsViewModel.setShouldReloadSettingsList(true) // Eden Duo
+                    // Eden Duo: full rebind -- the diff matches header rows by their (empty) key,
+                    // so a plain reload kept the old "Physical"/"Simulated" header text.
+                    settingsViewModel.setReloadListAndNotifyDataset(true)
                 }
             }
 
