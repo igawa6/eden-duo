@@ -90,19 +90,13 @@ public:
         }
     }
 
-    /// Eden Duo Stage 1: the game's rect in main-window pixels this frame, or nullopt when inline
-    /// is not in effect (the caller should then leave its own default layout alone).
-    [[nodiscard]] std::optional<VideoCore::DSMod::CompanionRect> GetInlineGameRect() const {
-        return inline_game_rect;
-    }
-
     /// Eden Duo Stage 1: true while the game is drawing into its own rect of the window (not the
     /// whole thing) rather than upstream's normal full-window layout -- RendererVulkan::Composite
     /// skips LSFG frame generation while this holds (a generated frame would warp the companion
     /// quad WindowAdaptPass drew alongside the game, and frame_gen has no notion of it).
     [[nodiscard]] bool IsInlineActive() const { return inline_game_rect.has_value(); }
 
-    /// Eden Duo Stage 1: `window_layout`'s screen rect, fitted into GetInlineGameRect() the same
+    /// Eden Duo Stage 1: `window_layout`'s screen rect, fitted into this frame's game rect the same
     /// way upstream's own DefaultFrameLayout fits it into the whole window (honouring
     /// Settings::values.aspect_ratio, including Stretch) and placed at the game rect's own
     /// position -- or `window_layout` unchanged when inline is not in effect.
@@ -263,7 +257,7 @@ private:
     u32 aux_inline_w{};
     u32 aux_inline_h{};
 
-    /// This frame's companion quad (GetInlineCompanionQuad) and game rect (GetInlineGameRect),
+    /// This frame's companion quad (GetInlineCompanionQuad) and game rect (FitInlineGameLayout),
     /// written by RenderInline/RenderInlineModUi(Gpu) during Route(), read right after by
     /// RendererVulkan::Composite on the same (GPU) thread.
     CompanionQuad inline_companion;
