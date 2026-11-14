@@ -49,9 +49,6 @@ class DualScreenLayoutEditorView(context: Context, attrs: AttributeSet?) : View(
             invalidate()
         }
 
-    /** Fired after every gesture-driven change, so the host's toolbar/Done always sees the latest rects. */
-    var onChanged: (() -> Unit)? = null
-
     private var minGameW = 1
     private var minCompanionW = 1
     private var minCompanionH = 1
@@ -95,7 +92,7 @@ class DualScreenLayoutEditorView(context: Context, attrs: AttributeSet?) : View(
 
             override fun onScale(detector: ScaleGestureDetector): Boolean {
                 val pane = activePane ?: return false
-                applyAndPropagate(pane, resizeFromPinch(pane, detector.scaleFactor))
+                applyConstrained(pane, resizeFromPinch(pane, detector.scaleFactor))
                 return true
             }
 
@@ -150,9 +147,8 @@ class DualScreenLayoutEditorView(context: Context, attrs: AttributeSet?) : View(
             candidate, boxFor(pane), otherRect(pane), rectFor(pane), if (snap) window else null
         )
 
-    private fun applyAndPropagate(pane: Pane, candidate: DualScreenRect) {
+    private fun applyConstrained(pane: Pane, candidate: DualScreenRect) {
         setRect(pane, constrain(pane, candidate))
-        onChanged?.invoke()
     }
 
     // ---- toolbar actions (called by the host) ----
@@ -161,14 +157,12 @@ class DualScreenLayoutEditorView(context: Context, attrs: AttributeSet?) : View(
         val (newGame, newCompanion) = DualScreenLayoutEditor.swap(window, gameRect, companionRect, gameAspect, companionAspect)
         gameRect = newGame
         companionRect = newCompanion
-        onChanged?.invoke()
     }
 
     /** Seeds both rects from a fresh Automatic computation (the toolbar's own "Reset"). */
     fun reset(automatic: DualScreenLayout) {
         gameRect = automatic.gameRect
         companionRect = automatic.companionRect
-        onChanged?.invoke()
     }
 
     // ---- hit testing ----
@@ -203,12 +197,14 @@ class DualScreenLayoutEditorView(context: Context, attrs: AttributeSet?) : View(
 
     // ---- touch ----
 
+    // Every touch is consumed while editing, hit or miss, so none falls through to the game's
+    // input overlay underneath.
     override fun onTouchEvent(event: MotionEvent): Boolean {
         scaleDetector.onTouchEvent(event)
         if (scaleDetector.isInProgress) return true
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
-                val hit = hitTest(event.x.toInt(), event.y.toInt()) ?: return false
+                val hit = hitTest(event.x.toInt(), event.y.toInt()) ?: return true
                 activePane = hit.first
                 activeHandle = hit.second
                 dragStartRect = rectFor(hit.first)
@@ -219,9 +215,9 @@ class DualScreenLayoutEditorView(context: Context, attrs: AttributeSet?) : View(
             }
 
             MotionEvent.ACTION_MOVE -> {
-                val pane = activePane ?: return false
+                val pane = activePane ?: return true
                 val idx = event.findPointerIndex(activePointerId)
-                if (idx < 0) return false
+                if (idx < 0) return true
                 val dx = (event.getX(idx) - dragStartX).toInt()
                 val dy = (event.getY(idx) - dragStartY).toInt()
                 val handle = activeHandle
@@ -234,7 +230,6 @@ class DualScreenLayoutEditorView(context: Context, attrs: AttributeSet?) : View(
                 }
                 // Snapping only applies to a move; a resize honours the finger exactly.
                 setRect(pane, constrain(pane, candidate, snap = handle == null))
-                onChanged?.invoke()
                 return true
             }
 
@@ -249,7 +244,7 @@ class DualScreenLayoutEditorView(context: Context, attrs: AttributeSet?) : View(
                 return true
             }
         }
-        return super.onTouchEvent(event)
+        return true
     }
 
     // ---- drawing ----
