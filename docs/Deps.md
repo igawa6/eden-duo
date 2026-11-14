@@ -11,6 +11,7 @@ To build Eden, you MUST have a C++ compiler. Clang 19+ and GCC 16+ are supported
 - On macOS, you must use [Homebrew](https://brew.sh)'s Clang (`brew install llvm`).
   - The default Apple Clang (`xcode-select --install`) is currently incompatible.
   - This is because Apple Clang does not currently support C++20 modules (specifically, it lacks `clang-scan-deps`). It's currently unknown when/if it will ever support modules, so for now stick to Homebrew.
+  - Intel Macs are not supported.
 
 The following additional tools are also required:
 
@@ -34,7 +35,7 @@ If you are on desktop and plan to use the Qt frontend, you *must* install Qt >=6
 - For help setting up Qt Creator, run `./install.sh -h qtcreator`
 
 - If you're using clang-cl and want to still use MSVC
-  - Check the option to add "C++ clang compiler for Windows" on Visual Studio installer and uncheck "x64/x86 build tool for MSVC" while selecting "C++ desktop developement tools" and change Visual Studio to 2026, from 2022.
+  - Check the option to add "C++ clang compiler for Windows" on Visual Studio installer and uncheck "x64/x86 build tool for MSVC" while selecting "C++ desktop development tools" and change Visual Studio to 2026, from 2022.
   - For Qt Creator, ensure the generator is set to Ninja, and your selected kit uses clang-cl.
   - Finally, to use clang-cl: `cmake -S . -B build -G Ninja -T ClangCL`
 
@@ -235,8 +236,6 @@ Install dependencies from **[Homebrew](https://brew.sh/)**
 ```sh
 brew install autoconf automake boost ffmpeg glslang hidapi libtool libusb lz4 ninja openssl pkg-config qt@6 sdl3 speexdsp zlib zstd cmake Catch2 molten-vk vulkan-loader spirv-tools
 ```
-
-If you are compiling on Intel Mac, or are using a Rosetta Homebrew installation, you must replace all references of `/opt/homebrew` with `/usr/local`.
 
 To run with MoltenVK, install additional dependencies:
 
