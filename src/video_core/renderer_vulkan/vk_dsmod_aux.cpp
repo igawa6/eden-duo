@@ -845,6 +845,12 @@ std::optional<VideoCore::DSMod::CompanionRect> DSModAuxPresenter::RenderInline(
 void DSModAuxPresenter::EnsureAuxCompositeResources(VkFormat color_format) {
     if (aux_c_init) {
         if (!aux_c_render_pass || aux_c_format != color_format) {
+            // A format change (inline -> an attached aux swapchain) replaces the pass and
+            // pipelines the last recorded composite draw still names, and aux_inline_framebuffer
+            // was made for the old pass: retire that draw first, then let
+            // EnsureInlineCompositeImage build a fresh framebuffer for the new pass.
+            scheduler.Wait(aux_c_draw_tick);
+            aux_inline_framebuffer = {};
             aux_c_render_pass = CreateWrappedRenderPass(device, color_format,
                                                         VK_IMAGE_LAYOUT_UNDEFINED);
             aux_c_pipeline = CreateWrappedCoverageBlendingPipeline(
@@ -1267,7 +1273,7 @@ bool DSModAuxPresenter::RenderAuxModUiGpu() {
 // own size (letterboxing against the companion pane happens once more, in WindowAdaptPass).
 // aux_c_render_pass must already be built for this image's fixed format (EnsureAuxCompositeResources).
 void DSModAuxPresenter::EnsureInlineCompositeImage(u32 w, u32 h) {
-    if (aux_inline_image && aux_inline_w == w && aux_inline_h == h) {
+    if (aux_inline_image && aux_inline_framebuffer && aux_inline_w == w && aux_inline_h == h) {
         return;
     }
     // The previous image may still be read by WindowAdaptPass's companion quad (the last frame
