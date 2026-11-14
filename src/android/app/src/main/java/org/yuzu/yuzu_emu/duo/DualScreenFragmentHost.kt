@@ -556,13 +556,14 @@ class DualScreenFragmentHost(
     }
 
     /** Eden Duo Stage 2 item 9: the one-time notice the first time a companion appears in Simulated. */
-    private fun showFirstRunNotice() {
-        if (!fragment.isAdded) return
+    private fun showFirstRunNotice(): Boolean {
+        if (!fragment.isAdded) return false
         MaterialAlertDialogBuilder(fragment.requireContext())
             .setTitle(R.string.dual_screen_first_run_title)
             .setMessage(R.string.dual_screen_first_run_message)
             .setPositiveButton(android.R.string.ok, null)
             .show()
+        return true
     }
 
     /**

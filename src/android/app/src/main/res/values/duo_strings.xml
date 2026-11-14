@@ -23,7 +23,7 @@
     <string name="dual_screen_mode_restart_later">Keep playing</string>
     <!-- Eden Duo Stage 2: first-run notice -->
     <string name="dual_screen_first_run_title">Second screen companion</string>
-    <string name="dual_screen_first_run_message">This game has a second-screen companion. Since no second screen was detected, it is shown on this screen instead (Simulated mode). Change this in Settings -> Graphics -> Dual screen -> Mode -- Off turns the companion off entirely.</string>
+    <string name="dual_screen_first_run_message">This game has a second-screen companion. It is shown on this screen, next to the game (Simulated mode). Change this in Settings -> Graphics -> Dual screen -> Mode -- Physical uses a connected second screen instead, and Off turns the companion off entirely.</string>
     <!-- Eden Duo Stage 4: eject (pause and ask) -->
     <string name="dual_screen_eject_title">Second screen disconnected</string>
     <string name="dual_screen_eject_message">The screen the companion (or the game) was using is gone. Choose how to continue -- emulation stays paused until you do.</string>

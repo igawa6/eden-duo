@@ -33,8 +33,9 @@ interface DualScreenFragmentHooks {
     /** Mode just changed across Off in the in-game settings, which only takes effect at the next launch. */
     fun onModeChangedAcrossOff() {}
 
-    /** A companion just appeared in Simulated mode for the first time ever (see [DualScreenFirstRunNotice]). */
-    fun onFirstSimulatedCompanion() {}
+    /** A companion just appeared in Simulated mode for the first time ever (see [DualScreenFirstRunNotice]);
+     *  true when the notice is actually showing. */
+    fun onFirstSimulatedCompanion(): Boolean = false
 
     /** True while [pointerId] already belongs to the Simulated companion pane (RESEARCH.md I2). */
     fun companionPaneOwns(pointerId: Int): Boolean = false
@@ -289,8 +290,8 @@ class DualScreenEmulationController(
         if (NoCompanion.hasPackage(id) != true) return
         val context = fragment.context ?: return
         if (!DualScreenFirstRunNotice.shouldShow(context)) return
-        DualScreenFirstRunNotice.markShown(context)
-        hooks.onFirstSimulatedCompanion()
+        // Marked only once it really showed, so a notice the fragment could not show is not lost.
+        if (hooks.onFirstSimulatedCompanion()) DualScreenFirstRunNotice.markShown(context)
     }
 
     /** A multi-program title switched program. */
