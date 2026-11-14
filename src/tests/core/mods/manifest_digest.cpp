@@ -561,6 +561,7 @@ std::string R(const Widget& o) {
     F(empty_rect);
     F(src_fade_ms);
     F(src_fade_bind);
+    F(src_hold);
     F(payload);
     F(select_group);
     F(draggable);
@@ -1286,7 +1287,7 @@ void CheckLayouts() {
     const Size sizes[] = {
         {"Manifest", sizeof(Manifest), 2488}, // runtime 25: canvas_alt_w/_h/_when
         {"Page", sizeof(Page), 160},
-        {"Widget", sizeof(Widget), 2368}, // runtime 25: rect_alt, wrap_width_alt
+        {"Widget", sizeof(Widget), 2376}, // runtime 25: rect_alt, wrap_width_alt, src_hold
         {"ChartSpec", sizeof(ChartSpec), 64},
         {"ViewDefaultBinds", sizeof(ViewDefaultBinds), 128},
         {"ScrollRegion", sizeof(ScrollRegion), 392}, // runtime 25: rect_alt

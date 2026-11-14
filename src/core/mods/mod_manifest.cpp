@@ -1691,6 +1691,10 @@ void ParseManifestJson(const nlohmann::json& json, Manifest& manifest) {
                     widget.src_fade_ms =
                         static_cast<s32>(std::clamp(w.value("src_fade_ms", 0), 0, 1000));
                     widget.src_fade_bind = w.value("src_fade_bind", std::string{});
+                    // "src_hold" (runtime 25): false = no last-known-good hold / cross-fade.
+                    if (w.contains("src_hold") && w.at("src_hold").is_boolean()) {
+                        widget.src_hold = w.at("src_hold").get<bool>();
+                    }
                     if (w.contains("rect") && w.at("rect").is_array() && w.at("rect").size() == 4) {
                         for (size_t i = 0; i < 4; ++i) {
                             widget.rect[i] = ParseCoordinate(w.at("rect")[i]);

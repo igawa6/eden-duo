@@ -225,10 +225,11 @@ void DrawImage(const WidgetDrawContext& ctx) {
     // yet this one". Without this, every such key draws one blank frame on the already-cleared
     // canvas (RenderPage) before the decode lands, flickering at whatever rate the module mints
     // keys. `ctx.image_fallback` is null for every caller that predates this feature (tests,
-    // RenderDebugPage): behaviour is then exactly what it was before.
+    // RenderDebugPage): behaviour is then exactly what it was before. "src_hold": false (runtime
+    // 25) opts a widget out entirely: pending/failed draws nothing, never the previous picture.
     std::shared_ptr<const Image> fade_from_image;
     float fade_t = 1.0f;
-    if (ctx.image_fallback != nullptr) {
+    if (ctx.image_fallback != nullptr && widget.src_hold) {
         // Stable per-instance key: ExpandWidgets' own "id, else page + index" convention (see the
         // pan_zoom view lookup in RenderPage), plus src_bind so two differently-bound Image
         // widgets that happen to share an id never collide.

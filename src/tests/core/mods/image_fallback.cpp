@@ -194,3 +194,56 @@ TEST_CASE("DSMod image fallback: src_fade_ms/src_fade_bind parse, clamp and expa
     REQUIRE(expanded[0].src_fade_bind == "scene_0");
     REQUIRE(expanded[1].src_fade_bind == "scene_1");
 }
+
+TEST_CASE("DSMod image fallback: src_hold false draws nothing for a pending or failed key",
+          "[dsmod][image_fallback]") {
+    // An identity-changing widget (a list row bound to a different item each time): holding the
+    // previous picture at the new item's slot would show the wrong item, so it opts out.
+    Widget w = ImageWidget();
+    w.src_hold = false;
+    w.src_fade_ms = 200; // ignored with src_hold false: no fade state is kept either
+    ImageFallbackState fallback;
+    StateSnapshot s;
+    s.texts["pic"] = "module:g:item/1";
+    Canvas first = Draw(w, Provide({{"module:g:item/1", Solid(Blue)}}), s, fallback);
+    REQUIRE(PixelAt(first, 5, 5) == Blue);
+    // The row now shows item 2, not decoded yet (or failed): blank, never item 1's picture.
+    s.texts["pic"] = "module:g:item/2";
+    Canvas pending = Draw(w, Provide({{"module:g:item/1", Solid(Blue)}}), s, fallback);
+    REQUIRE(PixelAt(pending, 5, 5) == Black);
+    // Item 2 lands: drawn at once, with no cross-fade from item 1.
+    bool animating = false;
+    Canvas landed = Draw(w, Provide({{"module:g:item/1", Solid(Blue)}, {"module:g:item/2", Solid(Red)}}),
+                         s, fallback, &animating);
+    REQUIRE(PixelAt(landed, 5, 5) == Red);
+    REQUIRE_FALSE(fallback.fade_in_flight.load());
+    // The same sequence with the default (src_hold true) still holds, unchanged.
+    Widget held = ImageWidget();
+    ImageFallbackState fallback2;
+    StateSnapshot s2;
+    s2.texts["pic"] = "module:g:item/1";
+    (void)Draw(held, Provide({{"module:g:item/1", Solid(Blue)}}), s2, fallback2);
+    s2.texts["pic"] = "module:g:item/2";
+    Canvas held_pending = Draw(held, Provide({{"module:g:item/1", Solid(Blue)}}), s2, fallback2);
+    REQUIRE(PixelAt(held_pending, 5, 5) == Blue);
+}
+
+TEST_CASE("DSMod image fallback: src_hold parses (default true) and survives \"{i}\" expansion",
+          "[dsmod][image_fallback]") {
+    const auto json = nlohmann::json::parse(R"({"format":1,"pages":[{"id":"p","widgets":[
+        {"type":"image","rect":[0,0,10,10],"src_bind":"row_{i}","src_hold":false,"repeat":2},
+        {"type":"image","rect":[0,0,10,10],"src":"b","src_hold":true},
+        {"type":"image","rect":[0,0,10,10],"src":"c","src_hold":"no"},
+        {"type":"image","rect":[0,0,10,10],"src":"d"}]}]})");
+    Manifest m;
+    REQUIRE(ParseDualScreenManifest(json, m));
+    const auto& ws = m.pages[0].widgets;
+    REQUIRE(ws.size() == 4);
+    REQUIRE_FALSE(ws[0].src_hold);
+    REQUIRE(ws[1].src_hold);
+    REQUIRE(ws[2].src_hold); // not a boolean: ignored, keeps the default
+    REQUIRE(ws[3].src_hold);
+    const auto expanded = ExpandWidgets(m.pages[0], StateSnapshot{});
+    REQUIRE_FALSE(expanded[0].src_hold);
+    REQUIRE_FALSE(expanded[1].src_hold);
+}

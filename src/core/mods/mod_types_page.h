@@ -477,6 +477,11 @@ struct Widget {
     /// deliberate scene change while a picture that merely keeps the same logical content under a
     /// fresh key (a live-rendered frame) swaps instantly, as if nothing special happened.
     std::string src_fade_bind;
+    /// Image (runtime 25): false = no last-known-good hold and no cross-fade for this widget --
+    /// a `src`/`src_bind` picture that is still decoding or failed draws nothing instead of the
+    /// previous picture. For identity-changing widgets (a list row bound to a different item each
+    /// time), where holding the old picture would show the wrong item. true (default) = as before.
+    bool src_hold{true};
     // --- tap-select / drag-and-drop ---------------------------------------------------------
     /// The value this widget carries ("{i}" expanded): an integer (dec or 0x hex), or "$point"
     /// to carry a published int read at the moment it is used.
