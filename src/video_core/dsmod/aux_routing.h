@@ -30,6 +30,7 @@
 #include "common/common_types.h"
 #include "common/dsmod_dev_tools.h"
 #include "common/logging.h"
+#include "core/frontend/framebuffer_layout.h"
 
 namespace VideoCore::DSMod {
 
@@ -355,6 +356,23 @@ inline CompanionRect FracToPixelRect(u32 window_w, u32 window_h, FracRect frac) 
     const u32 w = std::min(window_w - x, static_cast<u32>(std::lround(fw * window_w)));
     const u32 h = std::min(window_h - y, static_cast<u32>(std::lround(fh * window_h)));
     return CompanionRect{x, y, w, h, x == 0 && y == 0 && w == window_w && h == window_h};
+}
+
+/// Where the game's picture actually lands inside its inline rect `game` (window pixels): `game`
+/// fitted the way upstream's Layout::DefaultFrameLayout fits a whole window (honouring
+/// Settings::values.aspect_ratio, Stretch included) and placed at `game`'s own position. The
+/// renderer draws the game into it (DSModAuxPresenter::FitInlineGameLayout) and the Android
+/// window maps game touches through it (EmuWindow_Android), so the two always agree -- a touch
+/// lands where the picture is, not stretched across its letterbox bars.
+inline CompanionRect InlineGamePictureRect(const CompanionRect& game) {
+    if (game.w == 0 || game.h == 0) {
+        return game;
+    }
+    const auto screen = Layout::DefaultFrameLayout(game.w, game.h).screen;
+    const u32 w = screen.GetWidth();
+    const u32 h = screen.GetHeight();
+    return CompanionRect{game.x + screen.left, game.y + screen.top, w, h,
+                         game.full && w == game.w && h == game.h};
 }
 
 /// The game and companion rects a window of `window_w` x `window_h` resolves to, at this instant.

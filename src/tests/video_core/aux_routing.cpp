@@ -5,7 +5,9 @@
 #include <array>
 #include <cmath>
 #include <thread>
+#include <tuple>
 #include <catch2/catch_test_macros.hpp>
+#include "common/settings.h"
 #include "video_core/dsmod/aux_routing.h"
 
 namespace {
@@ -774,4 +776,37 @@ TEST_CASE("Inline layout: a live layout change is never read half-applied", "[ds
     writer.join();
     REQUIRE(reads > 0);
     REQUIRE(mixed == 0);
+}
+
+TEST_CASE("Inline layout: game touches map through the picture the renderer draws", "[dsmod]") {
+    using VideoCore::DSMod::CompanionRect;
+    using VideoCore::DSMod::InlineGamePictureRect;
+    using VideoCore::DSMod::MapWindowPointToRect;
+    const auto saved = Settings::values.aspect_ratio.GetValue();
+    Settings::values.aspect_ratio.SetValue(Settings::AspectRatio::R16_9);
+    // A portrait game pane (Custom layout): 16:9 letterboxes it top and bottom.
+    const CompanionRect game{100, 0, 600, 1000, false};
+    const auto picture = InlineGamePictureRect(game);
+    REQUIRE((picture.x == 100 && picture.y == 331 && picture.w == 600 && picture.h == 338));
+    REQUIRE_FALSE(picture.full);
+    // Exactly the rect DefaultFrameLayout fits the pane to, moved to the pane's own position
+    // (what DSModAuxPresenter::FitInlineGameLayout draws into).
+    const auto screen = Layout::DefaultFrameLayout(game.w, game.h).screen;
+    REQUIRE((picture.x == game.x + screen.left && picture.y == game.y + screen.top &&
+             picture.w == screen.GetWidth() && picture.h == screen.GetHeight()));
+    // The picture's corners are the game's corners; the bars clamp to its edge.
+    auto [tx, ty] = MapWindowPointToRect(100, 331, picture);
+    REQUIRE((tx == 0.0f && ty == 0.0f));
+    std::tie(tx, ty) = MapWindowPointToRect(400, 500, picture);
+    REQUIRE(std::abs(tx - 0.5f) < 0.01f);
+    REQUIRE(std::abs(ty - 0.5f) < 0.01f);
+    std::tie(tx, ty) = MapWindowPointToRect(400, 10, picture);
+    REQUIRE(ty == 0.0f);
+    // Stretch fills the pane: the picture is the pane itself.
+    Settings::values.aspect_ratio.SetValue(Settings::AspectRatio::Stretch);
+    const auto stretched = InlineGamePictureRect(game);
+    REQUIRE((stretched.x == 100 && stretched.y == 0 && stretched.w == 600 && stretched.h == 1000));
+    // An empty pane stays empty (DefaultFrameLayout is never asked about it).
+    REQUIRE(InlineGamePictureRect(CompanionRect{0, 0, 0, 0, false}).w == 0);
+    Settings::values.aspect_ratio.SetValue(saved);
 }

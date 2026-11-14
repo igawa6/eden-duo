@@ -32,10 +32,11 @@ namespace {
 // full-window (EmulationFragment forces it, Stage 1 CHECK 3) so the native renderer alone
 // decides the game/companion split within one swapchain image -- so the game's own touch area
 // is narrower than the window without the window (or its framebuffer_layout, which
-// MapToTouchScreen below reads) ever knowing it. Returns the game's current rect in window
-// pixels when inline is active and it is narrower than the whole window, else nullopt (nothing
-// to remap: nullopt also covers "not powered on yet" and "GPU not created yet", both of which
-// make calling GPU() unsafe).
+// MapToTouchScreen below reads) ever knowing it. Returns where the game's picture sits in window
+// pixels (its rect, aspect-fitted exactly as the renderer draws it) when inline is active and the
+// game rect is narrower than the whole window, else nullopt (nothing to remap: nullopt also
+// covers "not powered on yet" and "GPU not created yet", both of which make calling GPU()
+// unsafe).
 std::optional<VideoCore::DSMod::CompanionRect> InlineGameRectIfNarrower(u32 window_w,
                                                                         u32 window_h) {
     auto& session = EmulationSession::GetInstance();
@@ -50,7 +51,7 @@ std::optional<VideoCore::DSMod::CompanionRect> InlineGameRectIfNarrower(u32 wind
     if (rects.game.full || rects.game.w == 0 || rects.game.h == 0) {
         return std::nullopt;
     }
-    return rects.game;
+    return VideoCore::DSMod::InlineGamePictureRect(rects.game);
 }
 } // namespace
 

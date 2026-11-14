@@ -342,9 +342,10 @@ Layout::FramebufferLayout DSModAuxPresenter::FitInlineGameLayout(
         // Letterbox bars (when the rect's own shape doesn't match the chosen aspect ratio) show
         // the window's usual background colour -- the full-frame clear at the top of
         // WindowAdaptPass::Draw already covers the whole window, game rect included, before any
-        // layer is drawn.
-        const auto fitted = Layout::DefaultFrameLayout(inline_game_rect->w, inline_game_rect->h).screen;
-        layout.screen = fitted.TranslateX(inline_game_rect->x).TranslateY(inline_game_rect->y);
+        // layer is drawn. The same helper maps the game's touches on Android.
+        const auto picture = VideoCore::DSMod::InlineGamePictureRect(*inline_game_rect);
+        layout.screen = Common::Rectangle<u32>{picture.x, picture.y, picture.x + picture.w,
+                                               picture.y + picture.h};
     }
     return layout;
 }
