@@ -570,6 +570,19 @@ public:
         };
     }
 
+    /// Stage 1: Simulated stopped applying (the switch went off) while no real aux window is
+    /// attached, so the companion has no screen any more: report none again -- as before the
+    /// first inline frame -- and release any touch still held against the pane that is gone.
+    /// The renderer calls this once, on that transition (DSModAuxPresenter::Route); an aux window
+    /// attaching publishes its own presence and size.
+    void ClearInlinePanel() {
+        present.store(false, std::memory_order_relaxed);
+        width.store(0, std::memory_order_relaxed);
+        height.store(0, std::memory_order_relaxed);
+        panel_is_inline.store(false, std::memory_order_relaxed);
+        SetTouch({});
+    }
+
     AuxDisplayInfo GetDisplayInfo() const {
         return AuxDisplayInfo{
             .present = present.load() ? 1u : 0u,

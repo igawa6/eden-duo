@@ -386,8 +386,15 @@ std::span<const Tegra::FramebufferConfig> DSModAuxPresenter::Route(
     inline_game_rect.reset();
     if (aux_window == nullptr && gpu.DSModAux().inline_enabled.load(std::memory_order_acquire)) {
         inline_game_rect = RenderInline(main_window_layout);
+        inline_was_active = true;
     } else {
         inline_companion = CompanionQuad{};
+        if (aux_window == nullptr && inline_was_active) {
+            // Simulated was just switched off with no second screen to fall back to: RenderInline
+            // published the pane as one, so take that back.
+            gpu.DSModAux().ClearInlinePanel();
+        }
+        inline_was_active = false;
     }
 
     if (aux_window != nullptr && gpu.DSModAux().gpu_composite.load() &&

@@ -712,3 +712,29 @@ TEST_CASE("Inline layout: desktop --aux-inline rect round-trips through SetInlin
     aux.SetInlineLayout(false, FracRect{}, FracRect{});
     REQUIRE_FALSE(aux.inline_enabled.load());
 }
+
+TEST_CASE("Inline layout: switching Simulated off takes the inline panel back", "[dsmod]") {
+    AuxRouting aux;
+    // What DSModAuxPresenter::RenderInline publishes for a live pane.
+    aux.width.store(500);
+    aux.height.store(1080);
+    aux.panel_is_inline.store(true);
+    aux.present.store(true);
+    std::array<AuxTouchPoint, 1> held{{{3, 40, 50, 1, 0}}};
+    aux.SetTouch(held);
+    std::array<AuxTouchPoint, AuxRouting::MaxTouch> out{};
+    REQUIRE(aux.GetTouch(out) == 1); // the press was seen
+
+    aux.ClearInlinePanel();
+    REQUIRE_FALSE(aux.present.load());
+    REQUIRE(aux.width.load() == 0);
+    REQUIRE(aux.height.load() == 0);
+    REQUIRE_FALSE(aux.panel_is_inline.load());
+    const auto info = aux.GetDisplayInfo();
+    REQUIRE(info.present == 0);
+    // The finger still held against the gone pane is released, not left pressed.
+    REQUIRE(aux.GetTouch(out) == 1);
+    REQUIRE(out[0].finger_id == 3);
+    REQUIRE((out[0].attributes & 2u) != 0);
+    REQUIRE(aux.GetTouch(out) == 0);
+}

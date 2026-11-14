@@ -269,6 +269,7 @@ private:
     CompanionQuad inline_companion;
     std::optional<VideoCore::DSMod::CompanionRect> inline_game_rect;
     u64 inline_sample_tick{}; ///< last frame that sampled inline_companion (NoteInlineSampled)
+    bool inline_was_active{}; ///< last Route() ran RenderInline (it published the pane as aux)
 };
 
 } // namespace Vulkan
