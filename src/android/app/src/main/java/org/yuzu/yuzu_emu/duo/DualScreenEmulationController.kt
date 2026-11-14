@@ -37,7 +37,7 @@ interface DualScreenFragmentHooks {
      *  true when the notice is actually showing. */
     fun onFirstSimulatedCompanion(): Boolean = false
 
-    /** True while [pointerId] already belongs to the Simulated companion pane (RESEARCH.md I2). */
+    /** True while [pointerId] already belongs to the Simulated companion pane. */
     fun companionPaneOwns(pointerId: Int): Boolean = false
 
     /** The display hosting the companion or the game was just removed: shows the eject dialog;
@@ -110,8 +110,7 @@ class DualScreenEmulationController(
     // Eden Duo Stage 2: the resolved Mode as this game session last applied it (null before boot).
     private var modeApplied: DualScreenMode? = null
     // Eden Duo Stage 4: forced for the rest of this game session by the eject dialog's
-    // "Continue on this screen" choice -- never persisted (RESEARCH.md decision 3: "Requested
-    // mode stays saved as is"); resolvedMode() returns it ahead of the normal resolver. Cleared
+    // "Continue on this screen" choice -- never persisted; resolvedMode() returns it ahead of the normal resolver. Cleared
     // by nothing short of a fresh game session (a new DualScreenEmulationController).
     private var sessionModeOverride: DualScreenMode? = null
     // Eden Duo Stage 4: true while the eject dialog's "Wait for reconnect" choice is in effect --
@@ -146,7 +145,7 @@ class DualScreenEmulationController(
         override fun onDisplayRemoved(displayId: Int) {
             AuxPresentation.forgetQuarantine(displayId)
             auxDisplayStates.remove(displayId)
-            // Eden Duo Stage 4 (RESEARCH.md §0 decision 3): a display hosting the companion or
+            // Eden Duo Stage 4: a display hosting the companion or
             // the game going away is an eject -- pause and ask, never auto-resume. Never for an
             // unrelated display (item 3: STATE_OFF never reaches onDisplayRemoved at all, so a
             // lid closing or a TV going to standby is not handled here either way).
@@ -359,9 +358,9 @@ class DualScreenEmulationController(
     }
 
     /**
-     * Eden Duo Stage 4 (RESEARCH.md E4 / §0 item 2): a display was added or turned back on --
-     * the same live mode-switch [reapplyMode] already does for a settings change, triggered by a
-     * display event instead, with the owner's "display added mid-game" rule layered on top:
+     * Eden Duo Stage 4: a display was added or turned back on -- the same live mode-switch
+     * [reapplyMode] already does for a settings change, triggered by a display event instead,
+     * with the "display added mid-game" rule layered on top:
      * promotes live to Physical when the resolver says so, or shows a one-time hint when an
      * explicit Simulated choice is the reason Mode stays put. A session eject override
      * ([sessionModeOverride]) wins outright and skips this entirely -- "Continue on this screen"
@@ -412,7 +411,7 @@ class DualScreenEmulationController(
 
     /**
      * Eden Duo Stage 4: "Continue game only" -- the same mechanism as the user's own companion
-     * toggle, so `aux.present` goes false and HUD-hiding companions restore (RESEARCH.md C1).
+     * toggle, so `aux.present` goes false and HUD-hiding companions restore.
      */
     fun ejectChoiceContinueGameOnly() {
         ejectPending = false

@@ -31,14 +31,14 @@ enum class DualScreenMode(val value: Int) {
  * file: Mode must be known before the game window opens, same reason those two are there and not
  * in the native per-game config). `null` (no stored value, -1) at the global level means the
  * user made no explicit choice yet; [DualScreenModeResolver] then picks one. Once the user picks
- * any mode -- global or per-title -- the choice is explicit and kept (owner decision 4).
+ * any mode -- global or per-title -- the choice is explicit and kept.
  */
 object DualScreenModeSetting {
     const val KEY = "dual_screen_mode"
     internal const val UNSET = -1
 
     /** Mode decides which Dual screen rows exist (Simulated/Physical groups), so a change must
-     *  rebuild the settings list right away (beta.5 Thor QA: the Layout row stayed missing). */
+     *  rebuild the settings list right away (otherwise the Layout row stays missing). */
     fun affectsSettingsList(setting: org.yuzu.yuzu_emu.features.settings.model.AbstractSetting): Boolean =
         setting.key == KEY
 
@@ -133,10 +133,10 @@ object DualScreenModeSetting {
  * is saved (global + per-title, absent = inherit, see [DualScreenModeSetting]); the active mode
  * is never saved, resolved again at every launch.
  *
- * Binding owner rules (RESEARCH.md §0 decisions 2 and 4):
+ * Rules:
  *  - Physical is offered only when a second screen is detected: a requested Physical with none
  *    resolves to Simulated instead (the same "no display -> fall back" shape as the physical
- *    aux path's own E1 recommendation), never to Off.
+ *    aux path's own), never to Off.
  *  - With no explicit choice (requested null), Physical wins when a second screen is detected,
  *    else Simulated.
  *  - An explicit choice, once made, is kept -- Off always stays Off; an explicit Simulated

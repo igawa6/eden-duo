@@ -40,22 +40,21 @@ fun DualScreenNormRect.denormalize(window: DualScreenWindow): DualScreenRect = D
 )
 
 /**
- * Eden Duo 1.4.0: pure geometry for the freeform "Edit dual screen layout" editor (owner request
- * 2026-11-11, supersedes the Divider position slider -- see LAYOUT-EDITOR-SPEC.md). Every
- * function here is Android-free, Kotlin-only, and shares [DualScreenRect]/[DualScreenAspect]/
+ * Eden Duo 1.4.0: pure geometry for the freeform "Edit dual screen layout" editor (it
+ * supersedes the Divider position slider). Every function here is Android-free, Kotlin-only, and shares [DualScreenRect]/[DualScreenAspect]/
  * [DualScreenWindow] with [DualScreenGeometry] so its CUSTOM layout branch and this editor speak
  * one vocabulary; the UI ([DualScreenLayoutEditorView]/[DualScreenFragmentHost]) is a thin
  * touch-event wrapper that calls into these one gesture at a time and nothing else.
  *
  * Shared invariant every function here keeps or restores: both rects stay inside whatever box
  * they are given (the window for the game, a narrower safe-drawing box for the companion) and
- * never overlap each other. A gesture that would break either rule is *clamped*, not rejected
- * (LAYOUT-EDITOR-SPEC.md item 2): [clampToBox] then [resolveOverlap], applied in that order after
- * every move or resize, is what the UI calls to keep the invariant true on every touch event.
+ * never overlap each other. A gesture that would break either rule is *clamped*, not rejected:
+ * [constrain] (clamp, snap, then separate) is what the UI calls after every move or resize to
+ * keep the invariant true on every touch event.
  */
 object DualScreenLayoutEditor {
     /**
-     * Spec: "companion short edge >= 160 dp". Lower than Automatic's own collapse floor
+     * The companion's short edge never goes below 160 dp. Lower than Automatic's own collapse floor
      * ([DualScreenGeometry.MIN_PANE_SHORT_EDGE_DP], 200 dp) on purpose: that floor exists to stop
      * an *unsupervised* shrink-to-fit from landing somewhere unreadable, while this one is a live
      * drag the user is watching -- it only needs to stop the rect shrinking to a size with no
@@ -64,13 +63,13 @@ object DualScreenLayoutEditor {
     const val MIN_COMPANION_SHORT_EDGE_DP = 160f
 
     /**
-     * Spec: "game >= 25% of window width". A fraction rather than a dp floor, since the game
+     * The game is never narrower than 25% of the window width. A fraction rather than a dp floor, since the game
      * pane's usable minimum scales with the window (half a tiny phone window is already small;
      * half a tablet window is still plenty), unlike the companion's text/icons.
      */
     const val MIN_GAME_WIDTH_FRACTION = 0.25f
 
-    /** Spec: "~8 dp" snap threshold. */
+    /** Snap threshold, ~8 dp. */
     const val SNAP_THRESHOLD_DP = 8f
 
     fun dpToPx(dp: Float, window: DualScreenWindow): Float =
@@ -230,8 +229,8 @@ object DualScreenLayoutEditor {
 
     /**
      * [moving], pushed (translated only, never resized) just far enough along whichever axis
-     * needs the smaller shift to stop overlapping [other] -- "stop at the other rect's edge"
-     * (spec item 2), not a rejection. Returns [moving] unchanged when they do not overlap.
+     * needs the smaller shift to stop overlapping [other] -- it stops at the other rect's edge,
+     * not a rejection. Returns [moving] unchanged when they do not overlap.
      */
     fun resolveOverlap(moving: DualScreenRect, other: DualScreenRect): DualScreenRect {
         if (moving.isEmpty || other.isEmpty) return moving
@@ -283,7 +282,7 @@ object DualScreenLayoutEditor {
 
     /**
      * Snaps a just-moved [rect] against [window]'s edges/centre and [other]'s edges/equal-gap
-     * centring (spec item 2), independently on each axis, within [SNAP_THRESHOLD_DP].
+     * centring, independently on each axis, within [SNAP_THRESHOLD_DP].
      */
     fun snap(rect: DualScreenRect, window: DualScreenWindow, other: DualScreenRect): DualScreenRect {
         val thresholdPx = dpToPx(SNAP_THRESHOLD_DP, window).roundToInt().coerceAtLeast(1)
@@ -296,7 +295,7 @@ object DualScreenLayoutEditor {
 
     /**
      * Exchanges the two panes' positions, each re-fit to its own locked aspect inside the box the
-     * *other* pane used to occupy (spec: "exchange positions, re-fit each to its aspect"), then
+     * *other* pane used to occupy, then
      * clamped to [window] and separated if the re-fit happened to overlap.
      */
     fun swap(
@@ -323,7 +322,7 @@ object DualScreenLayoutEditor {
     // ---- re-fit a stored (fractional) layout onto a (possibly different) window ----
 
     /**
-     * Applying a stored Custom layout to a window (spec item 3): keep the saved fractions, re-fit
+     * Applying a stored Custom layout to a window: keep the saved fractions, re-fit
      * each rect to its own locked aspect inside its fractional box ([DualScreenGeometry
      * .fitWithinBox] -- the largest aspect-shaped rect, no bars, centred in that box), clamp both
      * to the window and re-run the no-overlap pass. Used both by [DualScreenGeometry.compute]'s

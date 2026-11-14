@@ -5,9 +5,8 @@ package org.yuzu.yuzu_emu.duo
 
 /**
  * Eden Duo Stage 4: the Android-free eject / reconnect / display-added decision (unit tested).
- * RESEARCH.md §4.3, owner decision 3 ("pause and ask" on eject) and decision 4 (the existing
- * [DualScreenModeResolver]: Physical wins when a second screen is detected, an explicit choice
- * is kept). Everything here is a pure function of state [DualScreenEmulationController] already
+ * "Pause and ask" on eject, and the existing [DualScreenModeResolver] rules (Physical wins
+ * when a second screen is detected, an explicit choice is kept). Everything here is a pure function of state [DualScreenEmulationController] already
  * tracks or is told by a display event; the Android side -- which display id plays which role,
  * pausing emulation, showing the dialog -- stays there.
  */
@@ -34,7 +33,7 @@ object DisplayHotplugRules {
     }
 
     /**
-     * True when losing [kind] is an eject the owner wants paused and asked about, rather than
+     * True when losing [kind] is an eject to pause and ask about, rather than
      * ignored. Never for an unrelated display. The companion's own display only matters while
      * Physical was actually the mode showing it -- Simulated's companion pane has no display of
      * its own to lose, and Off has no companion at all (in practice a caller only ever has a
@@ -48,7 +47,7 @@ object DisplayHotplugRules {
         RemovedDisplayKind.COMPANION -> modeBeforeEvent == DualScreenMode.PHYSICAL
     }
 
-    /** The three choices on the "Second screen disconnected" dialog (RESEARCH.md §0 decision 3). */
+    /** The three choices on the "Second screen disconnected" dialog. */
     enum class EjectChoice { CONTINUE_SIMULATED, CONTINUE_GAME_ONLY, WAIT_FOR_RECONNECT }
 
     /**
@@ -64,7 +63,7 @@ object DisplayHotplugRules {
         EjectChoice.CONTINUE_GAME_ONLY, EjectChoice.WAIT_FOR_RECONNECT -> null
     }
 
-    /** Outcomes of a display appearing/turning on mid-game (RESEARCH.md E4, owner decision 4). */
+    /** Outcomes of a display appearing/turning on mid-game. */
     enum class DisplayAddedOutcome { SWITCH_TO_PHYSICAL, SHOW_SIMULATED_HINT, NONE }
 
     /**

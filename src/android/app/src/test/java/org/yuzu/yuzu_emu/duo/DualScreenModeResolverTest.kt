@@ -29,7 +29,7 @@ class DualScreenModeResolverTest {
 
     @Test
     fun noExplicitChoiceIgnoresCompanionAvailability() {
-        // Owner decision 4's default rule makes no exception for a companion-less title.
+        // The default rule makes no exception for a companion-less title.
         assertEquals(
             DualScreenMode.PHYSICAL,
             DualScreenModeResolver.resolveActive(
@@ -74,7 +74,7 @@ class DualScreenModeResolverTest {
 
     @Test
     fun requestedSimulatedStaysSimulatedEvenWithASecondScreen() {
-        // An explicit choice is kept (owner decision 4): Physical being available does not pull
+        // An explicit choice is kept: Physical being available does not pull
         // an explicit Simulated choice back to Physical.
         assertEquals(
             DualScreenMode.SIMULATED,

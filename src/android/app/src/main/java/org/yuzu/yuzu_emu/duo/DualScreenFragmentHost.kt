@@ -68,12 +68,11 @@ class DualScreenFragmentHost(
     private var currentLayout: DualScreenLayout? = null
     private var pausedForDisplayEject = false
 
-    // Eden Duo 1.4.0: the freeform layout editor (LAYOUT-EDITOR-SPEC.md). Both non-null exactly
-    // while editing; orientationLockedForEditor mirrors EmulationFragment's own
+    // Eden Duo 1.4.0: the freeform layout editor. Both non-null exactly while editing;
+    // orientationLockedForEditor mirrors EmulationFragment's own
     // startConfiguringControls/stopConfiguringControls pattern for the controls editor.
-    // layoutEditorBackCallback: Back while editing must act as Cancel (steward review,
-    // beta.4) -- registered only while editing and removed the moment it ends either way, so
-    // it never outlives the session or shadows the drawer-toggle callback EmulationFragment
+    // layoutEditorBackCallback: Back while editing must act as Cancel -- registered only while
+    // editing and removed the moment it ends either way, so it never outlives the session or shadows the drawer-toggle callback EmulationFragment
     // itself already registers once at setup.
     private var layoutEditorView: DualScreenLayoutEditorView? = null
     private var layoutEditorToolbar: View? = null
@@ -218,7 +217,7 @@ class DualScreenFragmentHost(
         if (windowW <= 0 || windowH <= 0) {
             return // Not measured yet; the next trigger (surfaceChanged, a later layout pass) retries.
         }
-        // Eden Duo Stage 4 item 3 (RESEARCH.md R5): PiP shows the game only -- the companion pane
+        // Eden Duo Stage 4 item 3: PiP shows the game only -- the companion pane
         // is hidden through this same full-window path, not paused, exactly like the user's own
         // toggle. Physical is unaffected (it lives on its own display, untouched by PiP).
         val pip = fragment.activity?.isInPictureInPictureMode == true
@@ -300,7 +299,7 @@ class DualScreenFragmentHost(
      */
     private fun customLayoutTitle(): String? = perGameConfigGame()?.programId
 
-    // ---- 1.4.0: the freeform layout editor (LAYOUT-EDITOR-SPEC.md) ----
+    // ---- 1.4.0: the freeform layout editor ----
 
     /** True while the "Edit dual screen layout" editor is open over the game. */
     val isEditingLayout: Boolean get() = layoutEditorView != null
@@ -357,7 +356,7 @@ class DualScreenFragmentHost(
         layoutEditorView = editorView
         layoutEditorToolbar = toolbar
         binding()?.inGameMenu?.menu?.findItem(R.id.menu_edit_dual_screen_layout)?.isVisible = false
-        // Steward review (beta.4): back must act as Cancel, never fall through to the drawer
+        // Back must act as Cancel, never fall through to the drawer
         // toggle or exit the game -- the same OnBackPressedCallback shape
         // EmulationFragment.setupOverlayGamelessEditMode already uses for its own edit mode.
         // Kept in a field (not fire-and-forget like that one call site) so stopEditingLayout can
@@ -483,8 +482,7 @@ class DualScreenFragmentHost(
     }
 
     /**
-     * The companion pane's safe-drawing box (spec item 2: "safe-drawing insets for the
-     * companion"), approximated from the system bars + display cutout of the current root window
+     * The companion pane's safe-drawing box, approximated from the system bars + display cutout of the current root window
      * insets; the full window when insets are not available yet (same fallback behaviour as
      * showing no inset at all).
      */
@@ -535,8 +533,8 @@ class DualScreenFragmentHost(
     /**
      * Eden Duo Stage 2 item 8 / Stage 4 item 5: Mode just crossed to or from Off, which only
      * applies at the next launch. "Exit to game list" reuses EmulationFragment's existing
-     * menu_exit path verbatim rather than attempting to relaunch the game itself -- see
-     * STAGE4-IMPLEMENTATION.md for why a same-game relaunch was not wired up.
+     * menu_exit path verbatim rather than attempting to relaunch the game itself: no safe
+     * same-game relaunch exists yet.
      */
     private fun showModeRestartPrompt() {
         if (!fragment.isAdded || binding() == null) return

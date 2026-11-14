@@ -28,8 +28,8 @@ data class DualScreenHinge(
     val boundsBottom: Int
 )
 
-/** 1.4.0: CUSTOM added -- the freeform layout editor's result (LAYOUT-EDITOR-SPEC.md), which
- *  replaces the Divider position slider for Stacked/Side by side (now a fixed ~60% split, see
+/** 1.4.0: CUSTOM added -- the freeform layout editor's result, which replaces the Divider
+ *  position slider for Stacked/Side by side (now a fixed ~60% split, see
  *  [DualScreenGeometry.compute]) rather than reusing their own divider-budget machinery. */
 enum class DualScreenLayoutChoice { AUTOMATIC, STACKED, SIDE_BY_SIDE, CUSTOM }
 
@@ -90,8 +90,7 @@ data class DualScreenAspect(val w: Int, val h: Int)
  * Eden Duo Stage 2: the Simulated layout engine (unit tested with a device table). Pure Kotlin,
  * no Android dependency.
  *
- * Owner decision (revises this stage's original spec, which had no aspect-lock and a plain
- * Fit-or-collapse rule): both panes are **aspect-locked**, like a DS/3DS emulator's two screens.
+ * Both panes are **aspect-locked**, like a DS/3DS emulator's two screens.
  * The game pane's aspect is [gameAspect] -- Eden's own `aspect_ratio` setting (16:9/4:3/21:9/
  * 16:10), or `null` for Stretch, meaning the game pane is not aspect-locked and simply takes
  * whatever box it is given (see [aspectForRendererSetting]). The companion pane's aspect is
@@ -106,7 +105,7 @@ data class DualScreenAspect(val w: Int, val h: Int)
  * its own budgeted box -- Fit is kept in the native draw/touch path as that safety net, not as a
  * normal-use outcome.
  *
- * Rules (RESEARCH.md §4.1/§4.2/§4.4, simplified to this stage's exact spec):
+ * Rules:
  *  - An explicit choice (not Automatic) ignores any hinge.
  *  - Automatic: a vertical separating hinge (book posture) splits game/companion at the hinge --
  *    the hinge's own position is a physical constraint, not an aspect choice, so this one case
@@ -115,8 +114,8 @@ data class DualScreenAspect(val w: Int, val h: Int)
  *    companion not carved out (still reachable through the toggle). Otherwise landscape is side
  *    by side, portrait is stacked, both aspect-locked and maximised as above.
  *  - Stacked without a controller is three bands (game / companion / controls): both panes at
- *    their natural (full window width, un-shrunk) aspect height, the remainder to controls --
- *    RESEARCH.md I1's own phone illustration. With a controller, stacked is the aspect-locked
+ *    their natural (full window width, un-shrunk) aspect height, the remainder to controls.
+ *    With a controller, stacked is the aspect-locked
  *    two-band maximise, just vertical instead of horizontal.
  *  - 1.4.0: CUSTOM reads [DualScreenUserLayout.customLayout] (the freeform editor's saved
  *    fractions) and re-fits it to the current window ([DualScreenLayoutEditor
@@ -127,7 +126,7 @@ data class DualScreenAspect(val w: Int, val h: Int)
  *    collapses: the game absorbs its space, companion stays reachable through the toggle. With
  *    both panes aspect-locked the reported rect already has no internal bars, so its own short
  *    edge is the relevant one directly (no separate Fit step needed here). An explicit Stacked,
- *    Side by side or Custom choice (Beta 3 owner decision, extended to Custom in 1.4.0) is exempt
+ *    Side by side or Custom choice (Custom since 1.4.0) is exempt
  *    from this one floor -- the user picked that layout on purpose, so it stays visible at
  *    whatever the divider (or the editor) gave it -- but still
  *    collapses under [MIN_WINDOW_SHORT_EDGE_DP] (the window itself is too small to use at all).
@@ -144,8 +143,8 @@ object DualScreenGeometry {
     private val DEFAULT_GAME_ASPECT = DualScreenAspect(16, 9)
 
     /**
-     * RESEARCH.md §4.1 F4 / §4.2 R4, lowered in Stage 4 (owner decision 5: landscape default is
-     * side by side) -- 320 dp collapsed the common case the owner wants visible: a 16:9 game
+     * Lowered in Stage 4, where the landscape default became side by side -- 320 dp collapsed
+     * the common case that must stay visible: a 16:9 game
      * beside the 8:7 companion canvas needs 3160 px of full-height width, so on a phone
      * (2400x1080) or the Thor's own top screen (1920x1080) Automatic shrinks both panes to fit
      * and the companion's short edge lands at ~312 dp / ~262 dp respectively (see
@@ -182,10 +181,10 @@ object DualScreenGeometry {
         gameAspect: DualScreenAspect?
     ): DualScreenLayout {
         val divider = userLayout.dividerPercent.coerceIn(1, 99) / 100f
-        // Owner decision (Beta 3): the companion-size floor (MIN_PANE_SHORT_EDGE_DP) is an
+        // The companion-size floor (MIN_PANE_SHORT_EDGE_DP) is an
         // Automatic-only safety net against a shrink-to-fit maximise landing too small to read.
         // An explicit choice (Stacked/Side by side) already budgets its own band by the user's
-        // own divider -- collapsing it anyway (as every branch did through Beta 2) defeats the
+        // own divider -- collapsing it anyway (as every branch once did) defeats the
         // explicit choice outright on any window whose budgeted companion band happens to be
         // narrow, e.g. the Thor's own 1920x1080 top screen at the 60% default divider. Only the
         // tiny-window floor (MIN_WINDOW_SHORT_EDGE_DP) still applies -- an explicit layout on a
@@ -413,7 +412,7 @@ object DualScreenGeometry {
         }
         if (!applyPaneFloor) {
             // Explicit Stacked/Side by side: the user already picked this split on purpose --
-            // only the window-itself floor above applies (Beta 3 owner decision).
+            // only the window-itself floor above applies.
             return layout
         }
         val density = if (window.densityDpi <= 0) 1f else window.densityDpi / 160f

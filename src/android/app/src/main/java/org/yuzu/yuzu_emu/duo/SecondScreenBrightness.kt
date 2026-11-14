@@ -30,7 +30,7 @@ object SecondScreenBrightness {
     /** AYN's dual-screen assistant, which applies its own second-screen slider to the panel. */
     const val AYN_ASSISTANT = "com.odin.dualscreen.assistant"
 
-    /// The second-screen level some AYN firmware keeps in Settings.System (the owner's Thor);
+    /// The second-screen level some AYN firmware keeps in Settings.System (some AYN Thor units);
     /// newer Thor firmware (batch 7) drives the panel through per-display brightness instead and
     /// has no such key, which is why the assistant and the maker are checked as well.
     private const val DUAL_SCREEN_LEVEL = "dual_screen_brightness_level"

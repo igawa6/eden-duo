@@ -14,7 +14,7 @@ class SecondScreenBrightnessTest {
     private val plainPhone =
         Device(null, aynAssistant = false, manufacturer = "AYANEO", brand = "AYANEO")
 
-    // The owner's Thor: its firmware keeps the second-screen level in Settings.System (#8).
+    // Some AYN Thor units: their firmware keeps the second-screen level in Settings.System (#8).
     private val thorWithLevel =
         Device(128, aynAssistant = true, manufacturer = "AYN", brand = "AYN")
 

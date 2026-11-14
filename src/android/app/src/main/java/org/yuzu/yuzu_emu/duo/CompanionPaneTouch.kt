@@ -14,7 +14,7 @@ import org.yuzu.yuzu_emu.features.input.NativeInput
  * identically once routed: `AuxRouting::width`/`height` is the companion pane's own pixel size
  * while Simulated is active (`vk_dsmod_aux.cpp` `RenderInline`), not a real aux window's.
  *
- * A pointer stays with whichever pane it went down in (RESEARCH.md I2): once claimed here on its
+ * A pointer stays with whichever pane it went down in: once claimed here on its
  * own DOWN, it is tracked until released, even past the pane's edge, up to the point it actually
  * leaves the pane -- which this class treats as a lift, clamping is left to the native side for
  * whatever briefly lands exactly on the edge. [InputOverlay] excludes an owned pointer from its
@@ -69,7 +69,7 @@ class CompanionPaneTouch(private val paneRect: () -> DualScreenRect?) {
             return
         }
         if (action == MotionEvent.ACTION_MOVE) {
-            // A moving owned pointer that leaves the pane is treated as a lift (RESEARCH.md I2).
+            // A moving owned pointer that leaves the pane is treated as a lift.
             val leaving = ownedIds.filterNot { id ->
                 val i = event.findPointerIndex(id)
                 i >= 0 && pane.contains(event.getX(i).toInt(), event.getY(i).toInt())

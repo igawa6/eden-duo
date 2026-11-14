@@ -120,7 +120,7 @@ object CompanionToggle {
      * Feeds the game screen's touches to a [CompanionGestureRecognizer] and keeps a gesture in
      * progress away from the emulated touchscreen. [onToggle] runs when the gesture completes.
      *
-     * [isOwned] (Eden Duo Stage 4, RESEARCH.md I2): true while a pointer already belongs to the
+     * [isOwned] (Eden Duo Stage 4): true while a pointer already belongs to the
      * Simulated companion pane ([CompanionPaneTouch.isOwned], fed in by EmulationFragment) --
      * such a pointer never reaches the recognizer, landing or otherwise, so a gesture whose
      * fingers are deliberately split across both panes (e.g. 2+2) cannot complete the toggle by

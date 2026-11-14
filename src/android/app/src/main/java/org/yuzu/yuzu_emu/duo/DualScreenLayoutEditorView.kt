@@ -14,8 +14,8 @@ import android.view.View
 import org.yuzu.yuzu_emu.R
 
 /**
- * Eden Duo 1.4.0: the freeform "Edit dual screen layout" editor's drawing/touch surface
- * (LAYOUT-EDITOR-SPEC.md), added over the running game by [DualScreenFragmentHost] exactly like
+ * Eden Duo 1.4.0: the freeform "Edit dual screen layout" editor's drawing/touch surface, added
+ * over the running game by [DualScreenFragmentHost] exactly like
  * [org.yuzu.yuzu_emu.overlay.InputOverlay]'s own edit mode is added over it -- a thin wrapper
  * around [DualScreenLayoutEditor]'s pure functions: every touch event here is translated into one
  * call to a pure function and nothing else is computed in this class. The live game/companion

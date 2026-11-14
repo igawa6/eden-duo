@@ -14,7 +14,7 @@ import org.junit.Test
  * are chosen per device family, documented at each test, to make the numbers exactly
  * hand-verifiable; they do not need to match one specific real unit's reported dpi.
  *
- * Stage 4 (owner decision 5, landscape default is side by side): a 16:9 game beside the
+ * Stage 4 (landscape default is side by side): a 16:9 game beside the
  * project's 8:7 companion, side by side at full height, needs 3160 px of width (1920 + 1240) for
  * every landscape window in this table except the tablet. On a phone (2400 px wide) or the
  * Thor's own top screen (1920 px wide), shrinking both to fit used to collapse the companion
@@ -49,7 +49,7 @@ class DualScreenGeometryTest {
         // by 2400/3160 = 60/79 to fit): game 1458x820, companion 942x820. Window short edge
         // (1080 px = 411.4 dp) clears the 360 dp window floor; companion short edge (820 px =
         // 312.4 dp) clears the 200 dp per-pane floor (Stage 4 lowers it from 320) -- both panes
-        // stay visible, matching the owner's side-by-side-by-default decision.
+        // stay visible, matching the side-by-side-by-default rule.
         val window = DualScreenWindow(widthPx = 2400, heightPx = 1080, densityDpi = 420)
         val layout = DualScreenGeometry.compute(window, null, false, sideBySide, game169)
         assertEquals(DualScreenRect(0, 130, 1458, 820), layout.gameRect)
@@ -233,7 +233,7 @@ class DualScreenGeometryTest {
         assertTrue(layout.companionRect.h < 1080) // letterboxed: bars above/below within the budget
     }
 
-    // ---- Beta 3: an explicit layout is exempt from the per-pane floor (owner decision) ----
+    // ---- Beta 3: an explicit layout is exempt from the per-pane floor ----
 
     @Test
     fun explicitStackedOnTheThorTopScreenStaysVisibleAtTheDefaultDivider() {
@@ -290,7 +290,7 @@ class DualScreenGeometryTest {
         // The fold cover window (904x2316, density 420) from
         // [foldCoverCollapsesRegardlessOfController] -- its own short edge (344.4 dp) is under
         // MIN_WINDOW_SHORT_EDGE_DP regardless of the per-pane floor exemption, so an explicit
-        // Stacked choice still collapses here: the owner's Beta 3 decision exempts explicit
+        // Stacked choice still collapses here: the Beta 3 rule exempts explicit
         // layouts from the per-pane floor only, not the window-itself floor.
         val window = DualScreenWindow(widthPx = 904, heightPx = 2316, densityDpi = 420)
         val stacked = DualScreenUserLayout(DualScreenLayoutChoice.STACKED)

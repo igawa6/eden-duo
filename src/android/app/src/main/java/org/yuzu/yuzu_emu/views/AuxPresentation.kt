@@ -96,15 +96,15 @@ class AuxPresentation(outerContext: Context, display: Display) :
          * callers must fall back down the list.
          *
          * Stage 2 hardening: a non-simulated candidate must also carry FLAG_PRESENTATION and not
-         * FLAG_PRIVATE (RESEARCH.md E6 -- a public virtual display such as `scrcpy --new-display`
-         * must not pass as a second screen just because it matches the plain union above). A
-         * simulated/overlay display (the name heuristic below) is exempt from that flag check,
-         * same as before, but is only returned at all when
+         * FLAG_PRIVATE -- a public virtual display such as `scrcpy --new-display` must not pass as
+         * a second screen just because it matches the plain union above. A simulated/overlay
+         * display (the name heuristic below) is exempt from that flag check, same as before, but
+         * is only returned at all when
          * [SecondScreenDetection.countsSimulatedDisplays] is on -- off by default, so Cuttlefish
          * and the developer-options overlay display no longer count as a second screen unless a
          * developer opts in, while that workflow still works the moment they do, regardless of
-         * what that display's own flags turn out to be. A display [showOnBestDisplay] saw throw
-         * is dropped from every later candidate list.
+         * what that display's own flags turn out to be. A display [showOnBestDisplay] saw refuse
+         * its window is dropped from later candidate lists until it is added or removed again.
          */
         fun auxDisplayCandidates(context: Context, ownDisplayId: Int): List<Display> {
             val dm = context.getSystemService(Context.DISPLAY_SERVICE) as DisplayManager

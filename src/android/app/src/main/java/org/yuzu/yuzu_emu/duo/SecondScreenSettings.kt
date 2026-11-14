@@ -54,12 +54,12 @@ object SecondScreenSettings {
             }
             if (effectiveMode == DualScreenMode.SIMULATED) {
                 add(HeaderSetting(R.string.dual_screen_mode_simulated))
-                // 1.4.0: the Divider position slider is gone (owner request, superseded by the
-                // in-game freeform layout editor) -- Stacked/Side by side now use a fixed split
+                // 1.4.0: the Divider position slider is gone (superseded by the in-game
+                // freeform layout editor) -- Stacked/Side by side now use a fixed split
                 // (see DualScreenFragmentHost.updateLayout); IntSetting.DIVIDER_POSITION itself
                 // is untouched so an old .ini that still has the key keeps loading harmlessly,
                 // it is just never read here any more. Custom shows where to edit it instead of
-                // a second, settings-page preview editor (no beta needs one yet).
+                // a second, settings-page preview editor.
                 add(
                     SingleChoiceSetting(
                         IntSetting.COMPANION_LAYOUT,

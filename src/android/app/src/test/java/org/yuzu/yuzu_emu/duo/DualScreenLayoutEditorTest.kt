@@ -7,7 +7,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** LAYOUT-EDITOR-SPEC.md item 4: pure, unit-tested geometry for the freeform layout editor. */
+/** Pure, unit-tested geometry for the freeform layout editor. */
 class DualScreenLayoutEditorTest {
     private val game169 = DualScreenAspect(16, 9)
     private val canvas = DualScreenAspect(1240, 1080)

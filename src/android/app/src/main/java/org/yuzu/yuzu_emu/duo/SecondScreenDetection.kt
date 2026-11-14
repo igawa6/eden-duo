@@ -31,7 +31,7 @@ object SecondScreenDetection {
     /**
      * Developer setting, default off: count the developer-options overlay display (or another
      * virtual/"Simulated" display, e.g. Cuttlefish) as a second screen too. Off by default so a
-     * stray virtual display never doubles as an unintended companion target (RESEARCH.md E6);
+     * stray virtual display never doubles as an unintended companion target;
      * on, so Cuttlefish and the overlay-display developer workflow keep working regardless of
      * whether that display happens to carry FLAG_PRESENTATION. No UI for it yet -- Settings UI
      * for dual screen is already a large surface this stage; set with:
@@ -50,7 +50,7 @@ object SecondScreenDetection {
      * ([isSimulatedName]), belong in the candidate list, given [countSimulated]
      * ([countsSimulatedDisplays])? A simulated-named display is exempt from the flag check (as
      * before) but only counts at all when the developer opted in; any other display must carry
-     * FLAG_PRESENTATION and not FLAG_PRIVATE (RESEARCH.md E6).
+     * FLAG_PRESENTATION and not FLAG_PRIVATE.
      */
     fun isAcceptableCandidate(flags: Int, isSimulatedName: Boolean, countSimulated: Boolean): Boolean {
         if (isSimulatedName) {
