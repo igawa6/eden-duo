@@ -124,17 +124,17 @@ object CompanionApp {
             return Result.NOT_USED
         }
         if (sessionLaunched == flat) {
-            Log.info("[CompanionApp] $flat already started for this game session")
+            Log.info("[CompanionApp] the chosen app already started for this game session")
             return Result.ALREADY_LAUNCHED
         }
         val component = ComponentName.unflattenFromString(flat)
         if (component == null) {
-            Log.warning("[CompanionApp] stored app \"$flat\" is not a component; Icon instead")
+            Log.warning("[CompanionApp] the stored app is not a component; Icon instead")
             return Result.FAILED
         }
         if (component.packageName == game.packageName) {
             // Eden Duo itself (a stale or hand-edited value): it would start over the game.
-            Log.warning("[CompanionApp] stored app \"$flat\" is Eden Duo itself; Icon instead")
+            Log.warning("[CompanionApp] the stored app is Eden Duo itself; Icon instead")
             return Result.FAILED
         }
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
@@ -143,7 +143,7 @@ object CompanionApp {
         }
         val displayId = targetDisplay(game)
         if (displayId == null) {
-            Log.warning("[CompanionApp] no second display for $flat; Icon instead")
+            Log.warning("[CompanionApp] no second display for the chosen app; Icon instead")
             return Result.FAILED
         }
         val intent = Intent(Intent.ACTION_MAIN)
@@ -151,7 +151,7 @@ object CompanionApp {
             .setComponent(component)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) // never MULTIPLE_TASK: reuse a running app
         if (intent.resolveActivityInfo(game.packageManager, 0) == null) {
-            Log.warning("[CompanionApp] $flat is not installed; Icon instead")
+            Log.warning("[CompanionApp] the chosen app is not installed; Icon instead")
             return Result.FAILED
         }
         val options = ActivityOptions.makeBasic().setLaunchDisplayId(displayId)
@@ -159,11 +159,14 @@ object CompanionApp {
             game.startActivity(intent, options.toBundle())
         } catch (e: Exception) {
             // SecurityException (a private display), ActivityNotFoundException, ...
-            Log.warning("[CompanionApp] launch of $flat on display $displayId refused: $e")
+            Log.warning(
+                "[CompanionApp] launch of the chosen app on display $displayId refused: " +
+                    e.javaClass.simpleName
+            )
             return Result.FAILED
         }
         sessionLaunched = flat
-        Log.info("[CompanionApp] started $flat on display $displayId")
+        Log.info("[CompanionApp] started the chosen app on display $displayId")
         armFocusReturn(game, flat, displayId)
         return Result.LAUNCHED
     }
@@ -250,7 +253,7 @@ object CompanionApp {
             // over the game, on its display, not on the chosen one.
             if (game != null && !game.isFinishing && !game.isDestroyed) {
                 Log.warning(
-                    "[CompanionApp] the game stopped right after ${pending.app} started: it " +
+                    "[CompanionApp] the game stopped right after the chosen app started: it " +
                         "probably opened on the game's display, not display " +
                         "${pending.displayId}. Set No Companion to Icon or Off if this repeats."
                 )

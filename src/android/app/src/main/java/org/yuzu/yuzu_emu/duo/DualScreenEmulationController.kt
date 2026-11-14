@@ -589,7 +589,7 @@ class DualScreenEmulationController(
         val now = noCompanionNow()
         if (now == before) return
         noCompanionApplied = now
-        Log.info("[EmulationFragment] No Companion changed in game: ${now.first} ${now.second ?: ""}")
+        Log.info("[EmulationFragment] No Companion changed in game: ${now.first}")
         NativeLibrary.setNoCompanionOverride(NoCompanion.perGameValue(secondScreenTitle()) ?: -1)
         auxOff = false
         auxOffChecked = false
