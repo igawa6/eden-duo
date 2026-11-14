@@ -942,6 +942,17 @@ void ModRuntime::PublishUi(const StateSnapshot& snapshot) {
     }
     const u64 sig = UiSignature(snapshot, target_w, target_h);
     map_lock.unlock();
+    // A module font that was not ready yet (LoadFont's bounded retry, or the module loader lock
+    // busy on the asset worker -- runtime 25) is asked again on its due tick, and only a font
+    // that actually landed repaints the page: the text on screen was laid out with the old one,
+    // and nothing the signature or the dirty scan reads changes with it.
+    if (!font_ready && (font_module_attempts > 0 || font_retry_tick != 0) &&
+        tick_count >= font_retry_tick) {
+        LoadFont();
+        if (font_ready) {
+            ui_signature_valid = false;
+        }
+    }
     // Gates WidgetDependencyHash's per-widget scan in BuildRenderExtras: only run it on a tick
     // where the cheap top-level signature already says "something changed" -- zero extra cost on
     // the common idle tick, which UiSignature already reduces to 0 redraws/s on its own. Computed
@@ -970,12 +981,7 @@ void ModRuntime::PublishUi(const StateSnapshot& snapshot) {
     map_lock.unlock();
     const bool groups_dirty = anim_dirty[2] > 0 && anim_dirty[3] > 0;
     const bool same = !sig_changed;
-    // A module font that was not ready yet (LoadFont's bounded retry, or the module loader lock
-    // busy on the asset worker -- runtime 25) redraws a still page too.
-    const bool font_retry_due = !font_ready &&
-                                (font_module_attempts > 0 || font_retry_tick != 0) &&
-                                tick_count >= font_retry_tick;
-    if (same && !groups_dirty && !font_retry_due) {
+    if (same && !groups_dirty) {
         return;
     }
     last_ui_signature = sig;
