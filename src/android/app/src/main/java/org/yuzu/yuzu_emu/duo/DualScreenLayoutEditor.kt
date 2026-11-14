@@ -419,12 +419,17 @@ object DualScreenCustomLayoutStore {
         val cy = f("cy")
         val cw = f("cw")
         val ch = f("ch")
-        if (gx.isNaN() || gy.isNaN() || gw.isNaN() || gh.isNaN() ||
-            cx.isNaN() || cy.isNaN() || cw.isNaN() || ch.isNaN()
-        ) {
-            return null
-        }
-        return DualScreenCustomLayout(DualScreenNormRect(gx, gy, gw, gh), DualScreenNormRect(cx, cy, cw, ch))
+        return fromFractions(DualScreenNormRect(gx, gy, gw, gh), DualScreenNormRect(cx, cy, cw, ch))
+    }
+
+    /** The stored pair as a layout, or null when anything is missing (NaN) or out of range: every
+     *  value must lie in 0..1 and both sizes must be non-zero, else the saved entry is ignored
+     *  (Custom then uses Automatic's arrangement, as when nothing is saved). */
+    internal fun fromFractions(game: DualScreenNormRect, companion: DualScreenNormRect): DualScreenCustomLayout? {
+        fun valid(r: DualScreenNormRect) =
+            listOf(r.x, r.y, r.w, r.h).all { it in 0f..1f } && r.w > 0f && r.h > 0f
+        if (!valid(game) || !valid(companion)) return null
+        return DualScreenCustomLayout(game, companion)
     }
 
     private fun write(context: Context, base: String, landscape: Boolean, layout: DualScreenCustomLayout) {
