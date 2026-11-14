@@ -730,12 +730,17 @@ CanvasChoice ModRuntime::SelectCanvas(u32 panel_w, u32 panel_h) {
         SelectCanvasAspect(panel_w, panel_h, manifest.canvas_w, manifest.canvas_h,
                            manifest.canvas_alt_w, manifest.canvas_alt_h, manifest.canvas_alt_when);
     const auto now = std::chrono::steady_clock::now();
-    if (raw.alt != canvas_alt_pending) {
+    // The first known pane (nothing pending yet): no layout is on screen to protect from a resize
+    // in flight, so its choice commits at once -- debouncing it drew the default canvas for one
+    // debounce period first (a portrait pane flashed the landscape layout).
+    const bool first = canvas_alt_pending_since == std::chrono::steady_clock::time_point{} &&
+                       panel_w != 0 && panel_h != 0;
+    if (raw.alt != canvas_alt_pending || first) {
         canvas_alt_pending = raw.alt;
         canvas_alt_pending_since = now;
     }
     if (canvas_alt_pending != canvas_alt_active &&
-        now - canvas_alt_pending_since >= CanvasAltDebounce) {
+        (first || now - canvas_alt_pending_since >= CanvasAltDebounce)) {
         canvas_alt_active = canvas_alt_pending;
         ApplyCanvasVariant(canvas_alt_active);
     }
