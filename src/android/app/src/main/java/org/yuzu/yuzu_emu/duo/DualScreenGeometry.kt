@@ -3,8 +3,6 @@
 
 package org.yuzu.yuzu_emu.duo
 
-import android.content.Context
-import androidx.core.content.edit
 import kotlin.math.roundToInt
 
 /** A window's size in pixels, plus the density needed to convert to dp. Android-free. */
@@ -12,15 +10,6 @@ data class DualScreenWindow(val widthPx: Int, val heightPx: Int, val densityDpi:
     val widthDp: Float get() = if (densityDpi <= 0) widthPx.toFloat() else widthPx * 160f / densityDpi
     val heightDp: Float get() = if (densityDpi <= 0) heightPx.toFloat() else heightPx * 160f / densityDpi
     val isLandscape: Boolean get() = widthPx >= heightPx
-}
-
-/** Material-style width breakpoints, used only to key persisted geometry (see [DualScreenGeometryStore]). */
-enum class DualScreenWindowSizeClass { COMPACT, MEDIUM, EXPANDED }
-
-fun DualScreenWindow.sizeClass(): DualScreenWindowSizeClass = when {
-    widthDp < 600f -> DualScreenWindowSizeClass.COMPACT
-    widthDp < 840f -> DualScreenWindowSizeClass.MEDIUM
-    else -> DualScreenWindowSizeClass.EXPANDED
 }
 
 enum class DualScreenHingeOrientation { VERTICAL, HORIZONTAL }
@@ -447,28 +436,5 @@ object DualScreenGeometry {
         val x1 = maxOf(a.x + a.w, b.x + b.w)
         val y1 = maxOf(a.y + a.h, b.y + b.h)
         return DualScreenRect(x0, y0, x1 - x0, y1 - y0)
-    }
-}
-
-/**
- * Persists the user's divider drag per (orientation x window size class) -- RESEARCH.md's
- * melonDS-pattern cascade is not attempted (Stage 2's exact spec drops the hinge dimension and
- * the similarity fallback PLAN.md proposed); an exact bucket miss falls back to [default].
- */
-object DualScreenGeometryStore {
-    private const val PREFS = "eden_duo_dual_screen_geometry"
-
-    private fun prefs(context: Context) = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-
-    private fun key(window: DualScreenWindow): String {
-        val orientation = if (window.isLandscape) "landscape" else "portrait"
-        return "divider_${orientation}_${window.sizeClass()}"
-    }
-
-    fun dividerPercent(context: Context, window: DualScreenWindow, default: Int = 60): Int =
-        prefs(context).getInt(key(window), default)
-
-    fun setDividerPercent(context: Context, window: DualScreenWindow, percent: Int) {
-        prefs(context).edit { putInt(key(window), percent.coerceIn(1, 99)) }
     }
 }

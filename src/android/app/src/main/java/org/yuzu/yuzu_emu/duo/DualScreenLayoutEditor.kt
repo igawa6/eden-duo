@@ -378,11 +378,8 @@ object DualScreenLayoutEditor {
  * (landscape/portrait x optional per-title id) -- the same "<key>@<16-digit title id>", absent =
  * inherit-global shape [org.yuzu.yuzu_emu.utils.NoCompanion]/[DualScreenModeSetting] already use
  * ([SecondScreenPerGame.key]), sharing their own preferences file rather than opening a new one.
- * A simpler shape than [DualScreenGeometryStore]'s window-size-class buckets (the old divider):
- * Custom is a deliberate, named per-title choice far more often than the divider ever was, and
- * whatever window it next meets is handled by [DualScreenLayoutEditor.refitOnWindowChange]
- * regardless of its size, so bucketing by size class would add a dimension this feature does not
- * need.
+ * Not bucketed by window size: whatever window a saved layout next meets is handled by
+ * [DualScreenLayoutEditor.refitOnWindowChange] regardless of its size.
  */
 object DualScreenCustomLayoutStore {
     private const val BASE_KEY = "custom_layout"
