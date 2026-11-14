@@ -313,22 +313,7 @@ class DualScreenFragmentHost(
         val window = DualScreenWindow(windowW, windowH, fragment.resources.displayMetrics.densityDpi)
         val gameAspect = DualScreenGeometry.aspectForRendererSetting(IntSetting.RENDERER_ASPECT_RATIO.getInt())
         val companionAspect = DualScreenGeometry.CANVAS_ASPECT
-        var current = DualScreenGeometry.compute(
-            window, currentHinge, hasPhysicalControllerConnected(), currentUserLayout(window), gameAspect
-        )
-        if (current.companionRect.isEmpty) {
-            // The companion is collapsed (today's Automatic pane floor, or the toggle) -- there
-            // would be nothing to see or drag. Seed from the exempt-from-the-floor explicit
-            // arrangement instead (same shape "Reset" uses), so the editor always opens with a
-            // visible, draggable companion rect.
-            current = DualScreenGeometry.compute(
-                window, null, hasPhysicalControllerConnected(),
-                DualScreenUserLayout(
-                    if (window.isLandscape) DualScreenLayoutChoice.SIDE_BY_SIDE else DualScreenLayoutChoice.STACKED
-                ),
-                gameAspect
-            )
-        }
+        val current = editorSeed(window, currentUserLayout(window), gameAspect)
         // Lock orientation while editing, same as EmulationFragment's own controls editor
         // (startConfiguringControls) -- a rotation mid-edit would invalidate the window this
         // editor was seeded from.
@@ -377,6 +362,30 @@ class DualScreenFragmentHost(
         fragment.activity?.onBackPressedDispatcher?.addCallback(fragment.viewLifecycleOwner, backCallback)
     }
 
+    /**
+     * [userLayout] computed for [window], as the editor's starting rects. When that leaves the
+     * companion collapsed (Automatic's pane floor, or a fold without a controller) there would be
+     * nothing to see or drag, so the explicit Side by side/Stacked arrangement -- exempt from
+     * that floor -- is used instead. Shared by opening the editor and its Reset button.
+     */
+    private fun editorSeed(
+        window: DualScreenWindow,
+        userLayout: DualScreenUserLayout,
+        gameAspect: DualScreenAspect?
+    ): DualScreenLayout {
+        val layout = DualScreenGeometry.compute(
+            window, currentHinge, hasPhysicalControllerConnected(), userLayout, gameAspect
+        )
+        if (!layout.companionRect.isEmpty) return layout
+        return DualScreenGeometry.compute(
+            window, null, hasPhysicalControllerConnected(),
+            DualScreenUserLayout(
+                if (window.isLandscape) DualScreenLayoutChoice.SIDE_BY_SIDE else DualScreenLayoutChoice.STACKED
+            ),
+            gameAspect
+        )
+    }
+
     private fun wireToolbar(
         toolbar: View,
         editorView: DualScreenLayoutEditorView,
@@ -388,11 +397,9 @@ class DualScreenFragmentHost(
             ?.setOnClickListener { editorView.swap() }
         toolbar.findViewById<View>(R.id.dual_screen_layout_editor_reset)
             ?.setOnClickListener {
-                val automatic = DualScreenGeometry.compute(
-                    window, currentHinge, hasPhysicalControllerConnected(),
-                    DualScreenUserLayout(DualScreenLayoutChoice.AUTOMATIC), gameAspect
+                editorView.reset(
+                    editorSeed(window, DualScreenUserLayout(DualScreenLayoutChoice.AUTOMATIC), gameAspect)
                 )
-                editorView.reset(automatic)
             }
         toolbar.findViewById<View>(R.id.dual_screen_layout_editor_cancel)
             ?.setOnClickListener { stopEditingLayout(save = false) }
@@ -413,6 +420,9 @@ class DualScreenFragmentHost(
      */
     private fun stopEditingLayout(save: Boolean) {
         val editorView = layoutEditorView ?: return
+        if (save && (editorView.gameRect.isEmpty || editorView.companionRect.isEmpty)) {
+            return // Nothing valid to save (a collapsed pane); Done is ignored, Cancel still closes.
+        }
         val b = binding()
         layoutEditorBackCallback?.remove()
         layoutEditorBackCallback = null
