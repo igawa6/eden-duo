@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <thread>
 #include <catch2/catch_test_macros.hpp>
 #include "video_core/dsmod/aux_routing.h"
 
@@ -737,4 +738,40 @@ TEST_CASE("Inline layout: switching Simulated off takes the inline panel back", 
     REQUIRE(out[0].finger_id == 3);
     REQUIRE((out[0].attributes & 2u) != 0);
     REQUIRE(aux.GetTouch(out) == 0);
+}
+
+TEST_CASE("Inline layout: a live layout change is never read half-applied", "[dsmod]") {
+    using VideoCore::DSMod::FracRect;
+    AuxRouting aux;
+    // Two layouts that share no rect value, so any mix of old and new shows up in the read.
+    const FracRect a_game{0.0f, 0.0f, 0.6f, 1.0f}, a_comp{0.6f, 0.0f, 0.4f, 1.0f};
+    const FracRect b_game{0.0f, 0.25f, 1.0f, 0.5f}, b_comp{0.0f, 0.75f, 1.0f, 0.25f};
+    aux.SetInlineLayout(true, a_game, a_comp);
+    std::atomic<bool> stop{false};
+    std::thread writer([&] {
+        for (int i = 0; i < 20000; ++i) {
+            if (i % 2 == 0) {
+                aux.SetInlineLayout(true, b_game, b_comp);
+            } else {
+                aux.SetInlineLayout(true, a_game, a_comp);
+            }
+        }
+        stop.store(true);
+    });
+    u64 mixed = 0;
+    u64 reads = 0;
+    while (!stop.load()) {
+        const auto r = aux.GetInlineRects(1000, 1000);
+        const bool is_a = r.game.x == 0 && r.game.y == 0 && r.game.w == 600 && r.game.h == 1000 &&
+                          r.companion.x == 600 && r.companion.y == 0 && r.companion.w == 400 &&
+                          r.companion.h == 1000;
+        const bool is_b = r.game.x == 0 && r.game.y == 250 && r.game.w == 1000 &&
+                          r.game.h == 500 && r.companion.x == 0 && r.companion.y == 750 &&
+                          r.companion.w == 1000 && r.companion.h == 250;
+        mixed += (is_a || is_b) ? 0 : 1;
+        ++reads;
+    }
+    writer.join();
+    REQUIRE(reads > 0);
+    REQUIRE(mixed == 0);
 }

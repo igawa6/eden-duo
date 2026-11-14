@@ -507,31 +507,25 @@ public:
     std::atomic<float> mirror_h{1.0f};
 
     // --- Stage 1: Simulated (single-surface) dual screen; see FracRect/FracToPixelRect above ---
-    // Set once by the frontend (desktop --aux-inline, Android's hidden inline-dual-screen switch)
-    // before/while the renderer runs; read every frame by DSModAuxPresenter::Route and
-    // RendererVulkan::Composite. `inline_enabled` is the user's wish; whether it actually applies
-    // this frame also depends on no real aux window being attached (decided by the presenter,
-    // which alone knows that).
+    // Set by the frontend (desktop --aux-inline, Android's layout editor, rotation, resize, fold
+    // and divider drag) before and while the renderer runs; read every frame by
+    // DSModAuxPresenter::Route and RendererVulkan::Composite, and per touch by the Android
+    // window. `inline_enabled` is the user's wish; whether it actually applies this frame also
+    // depends on no real aux window being attached (decided by the presenter, which alone knows
+    // that).
     std::atomic<bool> inline_enabled{false};
-    std::atomic<float> inline_game_x{0.0f}, inline_game_y{0.0f}, inline_game_w{1.0f},
-        inline_game_h{1.0f};
-    std::atomic<float> inline_companion_x{0.0f}, inline_companion_y{0.0f}, inline_companion_w{0.0f},
-        inline_companion_h{0.0f};
 
     /// `game` and `companion` are fractions (0..1) of the main window each will occupy. Not
     /// required to be disjoint or to cover the window -- that is the caller's layout policy, not
-    /// this storage's job. Order: write the rects first (relaxed), flip `inline_enabled` last
-    /// (release), so a reader that only checks `inline_enabled` first (acquire) never observes a
-    /// half-written rect pair; fine for a setting applied once per session, not every frame.
+    /// this storage's job. The two rects are published together under inline_layout_mutex (this
+    /// is called live, so a reader must never see one rect from the old layout and one from the
+    /// new, or a half-written rect); `inline_enabled` flips after them (release).
     void SetInlineLayout(bool enabled, FracRect game, FracRect companion) {
-        inline_game_x.store(game.x, std::memory_order_relaxed);
-        inline_game_y.store(game.y, std::memory_order_relaxed);
-        inline_game_w.store(game.w, std::memory_order_relaxed);
-        inline_game_h.store(game.h, std::memory_order_relaxed);
-        inline_companion_x.store(companion.x, std::memory_order_relaxed);
-        inline_companion_y.store(companion.y, std::memory_order_relaxed);
-        inline_companion_w.store(companion.w, std::memory_order_relaxed);
-        inline_companion_h.store(companion.h, std::memory_order_relaxed);
+        {
+            std::scoped_lock lk{inline_layout_mutex};
+            inline_game = game;
+            inline_companion = companion;
+        }
         inline_enabled.store(enabled, std::memory_order_release);
     }
 
@@ -556,18 +550,15 @@ public:
     /// `inline_enabled` (loaded separately) is known true: this does not re-check it, so a caller
     /// that wants the "is inline on" answer too should load `inline_enabled` itself first.
     [[nodiscard]] InlineRects GetInlineRects(u32 window_w, u32 window_h) const {
-        return InlineRects{
-            FracToPixelRect(window_w, window_h,
-                            FracRect{inline_game_x.load(std::memory_order_relaxed),
-                                     inline_game_y.load(std::memory_order_relaxed),
-                                     inline_game_w.load(std::memory_order_relaxed),
-                                     inline_game_h.load(std::memory_order_relaxed)}),
-            FracToPixelRect(window_w, window_h,
-                            FracRect{inline_companion_x.load(std::memory_order_relaxed),
-                                     inline_companion_y.load(std::memory_order_relaxed),
-                                     inline_companion_w.load(std::memory_order_relaxed),
-                                     inline_companion_h.load(std::memory_order_relaxed)}),
-        };
+        FracRect game;
+        FracRect companion;
+        {
+            std::scoped_lock lk{inline_layout_mutex};
+            game = inline_game;
+            companion = inline_companion;
+        }
+        return InlineRects{FracToPixelRect(window_w, window_h, game),
+                           FracToPixelRect(window_w, window_h, companion)};
     }
 
     /// Stage 1: Simulated stopped applying (the switch went off) while no real aux window is
@@ -1353,6 +1344,11 @@ private:
     /// written under comp_mutex's critical section and read under ui_mutex's, two different locks,
     /// so it needs its own independent synchronization rather than borrowing either one's.
     std::atomic<bool> ui_composite_pending{false};
+
+    /// Stage 1: the inline rect pair (SetInlineLayout/GetInlineRects), one consistent layout.
+    mutable std::mutex inline_layout_mutex;
+    FracRect inline_game{};
+    FracRect inline_companion{0.0f, 0.0f, 0.0f, 0.0f};
 
     std::mutex touch_mutex;
     std::array<AuxTouchPoint, MaxTouch> touch_points{};

@@ -417,6 +417,9 @@ void Java_org_yuzu_yuzu_1emu_NativeLibrary_setDualScreenInlineLayout(
     JNIEnv* env, jobject instance, jboolean enabled, jfloat game_x, jfloat game_y, jfloat game_w,
     jfloat game_h, jfloat companion_x, jfloat companion_y, jfloat companion_w,
     jfloat companion_h) {
+    // Store the nine values under the same lock ApplyInlineLayoutLocked reads them under, so a
+    // concurrent apply (OnRendererReady) never mixes this layout with the previous one.
+    std::scoped_lock lock(g_aux_mutex);
     g_duo_layout_enabled.store(enabled != JNI_FALSE);
     g_duo_layout_game_x.store(game_x);
     g_duo_layout_game_y.store(game_y);
@@ -426,7 +429,6 @@ void Java_org_yuzu_yuzu_1emu_NativeLibrary_setDualScreenInlineLayout(
     g_duo_layout_companion_y.store(companion_y);
     g_duo_layout_companion_w.store(companion_w);
     g_duo_layout_companion_h.store(companion_h);
-    std::scoped_lock lock(g_aux_mutex);
     ApplyInlineLayoutLocked();
 }
 
