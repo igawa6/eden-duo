@@ -277,6 +277,10 @@ struct MapWidgetExtras {
         /// a masked overlay).
         std::string mask_bind;
         float detail_threshold{210.0f}; ///< projected edge length above which detail is requested
+        /// Runtime 25: false = no last-known-good hold for this overlay's picture or mask -- a
+        /// replacement still decoding (or failed) draws nothing instead of the previous one.
+        /// For overlays whose source changes identity. true (default) = hold, as before.
+        bool src_hold{true};
         float x0{}, y0{}, x1{}, y1{};
         PointGate show;
         float opacity{1.0f};

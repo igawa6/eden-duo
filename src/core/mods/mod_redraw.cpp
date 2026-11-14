@@ -790,7 +790,7 @@ void ModRuntime::ApplyCanvasVariant(bool alt) {
             }
         }
     }
-    // Bugfix (runtime 25, the Sandrock portrait pilot): every widget/scroll-region rect on every
+    // Bugfix (runtime 25, the portrait-canvas pilot): every widget/scroll-region rect on every
     // page just moved under whatever page is currently open, not just the one a future page
     // action switches to -- yet nothing above touches a single one of the caches a PAGE SWITCH
     // (or a resize) already invalidates (DrivePageTransition's "switched again without a

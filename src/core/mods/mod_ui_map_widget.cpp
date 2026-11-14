@@ -937,7 +937,7 @@ void GeometryMapDraw::DrawOverlays() {
         }
         if (!pic)
             pic = images(*key); // keep the overview while detail loads
-        if (image_fallback != nullptr) {
+        if (image_fallback != nullptr && ov.src_hold) {
             // A replacement picture (a fresh src/src_detail key) still decoding: show this
             // overlay slot's last actually-drawn picture instead of blanking for a frame. The
             // very first load has nothing held yet (slot.image is null), so it stays off below,
@@ -965,7 +965,7 @@ void GeometryMapDraw::DrawOverlays() {
             const auto m = snapshot.texts.find(ov.mask_bind);
             if (m != snapshot.texts.end() && !m->second.empty()) {
                 std::shared_ptr<const Image> mask = images(m->second);
-                if (image_fallback != nullptr) {
+                if (image_fallback != nullptr && ov.src_hold) {
                     std::scoped_lock lock{image_fallback->mutex};
                     ImageFallbackEntry& slot =
                         image_fallback

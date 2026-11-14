@@ -415,6 +415,9 @@ std::string R(const MapWidgetExtras::Overlay& o) {
     if (o.detail_threshold != 210.0f) {
         F(detail_threshold);
     }
+    if (!o.src_hold) {
+        F(src_hold);
+    }
     if (!o.mask_bind.empty()) {
         F(mask_bind); // runtime 24; omitted when unset so older goldens stay byte-identical
     }

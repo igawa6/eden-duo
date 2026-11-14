@@ -826,3 +826,31 @@ TEST_CASE("DSMod map overlay src_bind: the very first picture missing stays off 
     s.texts["ov.src"] = "img.unknown"; // never resolves in this fixture's pics
     REQUIRE(Px(map.Draw(s, &fallback), 50, 50) == Blue);
 }
+
+TEST_CASE("DSMod map overlay src_hold: false draws nothing while a replacement picture decodes",
+          "[dsmod][runtime25][mask_bind]") {
+    PicOverlayMap map;
+    ImageFallbackState fallback;
+    StateSnapshot s;
+    s.texts["ov.src"] = "img.green";
+    REQUIRE(Px(map.Draw(s, &fallback), 50, 50) == Green);
+    // Default (src_hold true): the replacement key has not landed, the held picture stays.
+    s.texts["ov.src"] = "img.pending";
+    REQUIRE(Px(map.Draw(s, &fallback), 50, 50) == Green);
+    // Opted out: the same pending key shows the base map, never the previous overlay picture.
+    auto extras = std::make_shared<MapWidgetExtras>(*map.page.widgets[0].map_extras);
+    extras->overlays[0].src_hold = false;
+    map.page.widgets[0].map_extras = extras;
+    REQUIRE(Px(map.Draw(s, &fallback), 50, 50) == Blue);
+    // Manifest key: boolean only, default true.
+    const auto json = nlohmann::json::parse(R"({"format":1,"pages":[{"id":"p","widgets":[
+        {"type":"map","rect":[0,0,10,10],
+         "overlays":[{"src":"a.png","src_hold":false,"x0":0,"y0":0,"x1":5,"y1":5},
+                     {"src":"b.png","x0":0,"y0":0,"x1":5,"y1":5}]}]}]})");
+    Manifest m;
+    REQUIRE(ParseDualScreenManifest(json, m));
+    const auto& mx = m.pages[0].widgets[0].map_extras;
+    REQUIRE(mx);
+    REQUIRE_FALSE(mx->overlays[0].src_hold);
+    REQUIRE(mx->overlays[1].src_hold);
+}
