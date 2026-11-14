@@ -438,15 +438,6 @@ class DualScreenEmulationController(
     /** True while the user hid the second-screen window (CompanionToggle). */
     val isCompanionHiddenByUser: Boolean get() = toggleState.hiddenByUser
 
-    /**
-     * 1.4.0: the title whose per-game Second Screen values apply to the running game, or null for
-     * global -- identical to [secondScreenTitle] (every other per-game Second Screen value's own
-     * title), exposed so [DualScreenFragmentHost] can key the layout editor's save the same way
-     * (mirrors how Eden's own per-game settings decide global vs. per-title, see
-     * LAYOUT-EDITOR-SPEC.md item 3).
-     */
-    fun currentSecondScreenTitle(): String? = secondScreenTitle()
-
     /** The game screen's touch filter for the companion toggle gesture (InputOverlay). */
     val gameTouch: CompanionToggle.GameTouch by lazy {
         val density = fragment.context?.resources?.displayMetrics?.density ?: 1f

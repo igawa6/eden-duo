@@ -283,13 +283,22 @@ class DualScreenFragmentHost(
         ) { DualScreenLayoutChoice.AUTOMATIC }
         val customLayout = if (choice == DualScreenLayoutChoice.CUSTOM) {
             fragment.context?.let {
-                DualScreenCustomLayoutStore.load(it, window.isLandscape, dualScreen().currentSecondScreenTitle())
+                DualScreenCustomLayoutStore.load(it, window.isLandscape, customLayoutTitle())
             }
         } else {
             null
         }
         return DualScreenUserLayout(choice = choice, customLayout = customLayout)
     }
+
+    /**
+     * The title whose own Custom layout is read and written: per-title exactly when this game
+     * runs on its own per-game settings file (where its Layout = Custom also lives), else null
+     * for the global one. The one predicate both [currentUserLayout] and the editor's Done use,
+     * so a saved layout is always the one read back; a title id of 0 never gets its own key
+     * ([DualScreenCustomLayoutStore] goes through SecondScreenPerGame.key).
+     */
+    private fun customLayoutTitle(): String? = perGameConfigGame()?.programId
 
     // ---- 1.4.0: the freeform layout editor (LAYOUT-EDITOR-SPEC.md) ----
 
@@ -410,13 +419,12 @@ class DualScreenFragmentHost(
     /**
      * Closes the editor; [save] (Done, true) persists its current rects as the saved Custom
      * layout and sets Layout = Custom, mirroring how Eden's own per-game settings decide global
-     * vs. per-title (LAYOUT-EDITOR-SPEC.md item 3): per-title exactly when this game session has
-     * a per-game config loaded ([NativeConfig.isPerGameConfigLoaded]), global otherwise -- the
-     * same condition the app's own per-game settings save path already uses. Cancel (false) --
-     * including via the back button/gesture, which [startEditingLayout]'s own callback routes
-     * here too (steward review, beta.4: back must act as Cancel, never leave the editor
-     * half-open or exit the game) -- discards the in-progress edit; the live native layout was
-     * never touched either way, so "discard" is simply "do nothing further", not a restore.
+     * vs. per-title: per-title exactly when this game runs on its own per-game settings file
+     * ([customLayoutTitle]), global otherwise. Cancel (false) -- including via the back
+     * button/gesture, which [startEditingLayout]'s own callback routes here too (back must act
+     * as Cancel, never leave the editor half-open or exit the game) -- discards the in-progress
+     * edit; the live native layout was never touched either way, so "discard" is simply "do
+     * nothing further", not a restore.
      */
     private fun stopEditingLayout(save: Boolean) {
         val editorView = layoutEditorView ?: return
@@ -429,13 +437,12 @@ class DualScreenFragmentHost(
         if (save) {
             val context = fragment.context
             // Same rule as QuickSettings.saveSettings: a game with its own settings file keeps
-            // its own Layout, so Custom must land in that file (beta.5 Thor QA: Done wrote the
-            // global value while Sandrock's per-game Layout = Stacked kept winning).
+            // its own Layout, so Custom must land in that file (writing the global value would
+            // leave that game's own per-game Layout winning).
             val customGame = perGameConfigGame()
-            val gameId = if (customGame != null) dualScreen().currentSecondScreenTitle() else null
             if (context != null) {
                 DualScreenCustomLayoutStore.save(
-                    context, editorView.window.isLandscape, gameId,
+                    context, editorView.window.isLandscape, customLayoutTitle(),
                     DualScreenCustomLayout(
                         editorView.gameRect.toNormRect(editorView.window),
                         editorView.companionRect.toNormRect(editorView.window)
@@ -443,11 +450,16 @@ class DualScreenFragmentHost(
                 )
             }
             if (customGame != null && !NativeConfig.isPerGameConfigLoaded()) {
-                // EmulationFragment.withPerGameConfig's pattern: load, change, save, unload.
-                SettingsFile.loadCustomConfig(customGame)
-                IntSetting.COMPANION_LAYOUT.setInt(DualScreenLayoutChoice.CUSTOM.ordinal)
-                NativeConfig.savePerGameConfig()
-                NativeConfig.unloadPerGameConfig()
+                // EmulationFragment.withPerGameConfig's pattern: load, change, save, unload --
+                // the unload in a finally, so a failure never leaves this game's file loaded
+                // for the rest of the session.
+                try {
+                    SettingsFile.loadCustomConfig(customGame)
+                    IntSetting.COMPANION_LAYOUT.setInt(DualScreenLayoutChoice.CUSTOM.ordinal)
+                    NativeConfig.savePerGameConfig()
+                } finally {
+                    NativeConfig.unloadPerGameConfig()
+                }
             } else if (customGame != null) {
                 IntSetting.COMPANION_LAYOUT.setInt(DualScreenLayoutChoice.CUSTOM.ordinal)
                 NativeConfig.savePerGameConfig()
