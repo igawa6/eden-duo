@@ -62,19 +62,10 @@ std::shared_ptr<Common::DynamicLibrary> g_vulkan_library; // the session's, whil
 // Kept in the Kotlin per-game store, since Off must be known before the game window opens.
 std::atomic<s32> g_no_companion_override{-1};
 
-// Eden Duo Stage 1 (Simulated/inline dual screen): the hidden developer switch's wish, set by
-// Kotlin (NativeLibrary.setInlineDualScreen) at any time and applied once the renderer/GPU exist
-// (OnRendererReady) -- same "override atomic, pulled later" shape as g_no_companion_override
-// above, because AuxRouting lives inside GPU and calling GPU() before it exists would crash.
-std::atomic<bool> g_inline_dual_screen_enabled{false};
-std::atomic<bool> g_inline_dual_screen_landscape{true};
-
 // Eden Duo Stage 2: the geometry-driven inline layout (DualScreenGeometry, Kotlin) -- the real
 // Simulated layout, recomputed on rotation/resize/fold change/divider drag while a game runs.
-// Same "store the wish, applied when the renderer exists" shape as the hidden switch above, but
-// also re-applied immediately when the renderer already exists, since this one changes live.
-// The hidden switch still wins when it is on (a developer override), checked first in
-// ApplyInlineLayoutLocked.
+// The wish is stored and applied once the renderer exists, and re-applied immediately when it
+// already does, since this one changes live.
 std::atomic<bool> g_duo_layout_enabled{false};
 std::atomic<float> g_duo_layout_game_x{0.0f};
 std::atomic<float> g_duo_layout_game_y{0.0f};
@@ -139,8 +130,7 @@ void AttachAuxWindowLocked() {
     LOG_INFO(Frontend, "DSMod aux surface attached");
 }
 
-// Eden Duo Stage 2: applies whichever inline-layout wish is current (the hidden developer switch
-// wins when it is on) to AuxRouting. g_aux_mutex held; a no-op before the renderer exists --
+// Eden Duo Stage 2: applies the current inline-layout wish to AuxRouting. g_aux_mutex held; a no-op before the renderer exists --
 // OnRendererReady calls this once it does, and the two JNI setters below call it again on every
 // later change so rotation/resize/fold/divider-drag updates reach a live game immediately.
 void ApplyInlineLayoutLocked() {
@@ -148,10 +138,6 @@ void ApplyInlineLayoutLocked() {
         return;
     }
     auto& aux = SessionSystem().GPU().DSModAux();
-    if (g_inline_dual_screen_enabled.load()) {
-        aux.SetInlineLayoutSideSplit(true, g_inline_dual_screen_landscape.load());
-        return;
-    }
     using VideoCore::DSMod::FracRect;
     aux.SetInlineLayout(
         g_duo_layout_enabled.load(),
@@ -335,10 +321,7 @@ void OnRendererReady(std::shared_ptr<Common::DynamicLibrary> vulkan_library) {
     AttachAuxWindowLocked();
     // Eden Duo Stage 1/2: the GPU (and AuxRouting inside it) exists from here on too.
     ApplyInlineLayoutLocked();
-    if (g_inline_dual_screen_enabled.load()) {
-        LOG_INFO(Frontend, "DSMod inline dual screen enabled (hidden switch, landscape={})",
-                 g_inline_dual_screen_landscape.load());
-    } else if (g_duo_layout_enabled.load()) {
+    if (g_duo_layout_enabled.load()) {
         LOG_INFO(Frontend, "DSMod inline dual screen enabled (geometry-driven layout)");
     }
 }
@@ -395,22 +378,9 @@ void Java_org_yuzu_yuzu_1emu_NativeLibrary_setNoCompanionOverride(JNIEnv* env, j
     g_no_companion_override.store(value >= 0 && value <= 3 ? static_cast<s32>(value) : -1);
 }
 
-// Eden Duo Stage 1: see g_inline_dual_screen_enabled above. Safe to call any time -- stores the
-// wish and, if the renderer already exists, applies it immediately too (Stage 2: a developer may
-// flip this mid-session); OnRendererReady applies it otherwise once it exists.
-void Java_org_yuzu_yuzu_1emu_NativeLibrary_setInlineDualScreen(JNIEnv* env, jobject instance,
-                                                                jboolean enabled,
-                                                                jboolean landscape) {
-    g_inline_dual_screen_enabled.store(enabled != JNI_FALSE);
-    g_inline_dual_screen_landscape.store(landscape != JNI_FALSE);
-    std::scoped_lock lock(g_aux_mutex);
-    ApplyInlineLayoutLocked();
-}
-
 // Eden Duo Stage 2: DualScreenGeometry's own game/companion rects, as fractions (0..1) of the
-// main window on each axis -- see FracRect/SetInlineLayout (aux_routing.h). Replaces the fixed
-// 60/40 split above for Simulated's real, per-orientation/fold/divider layout; the hidden
-// developer switch still overrides it when that is on (ApplyInlineLayoutLocked). Safe to call any
+// main window on each axis -- see FracRect/SetInlineLayout (aux_routing.h): Simulated's real,
+// per-orientation/fold/divider layout. Safe to call any
 // time, including live while a game runs -- rotation, resize, fold change and divider drag all
 // go through this on every change.
 void Java_org_yuzu_yuzu_1emu_NativeLibrary_setDualScreenInlineLayout(

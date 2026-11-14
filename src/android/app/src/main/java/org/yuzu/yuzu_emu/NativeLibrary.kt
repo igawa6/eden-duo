@@ -784,16 +784,6 @@ object NativeLibrary {
     external fun setNoCompanionOverride(value: Int)
 
     /**
-     * Eden Duo Stage 1 (Simulated/inline dual screen): a hidden developer switch, not a user
-     * setting -- see duo.InlineDualScreen. [enabled] turns it on for the next renderer; when on,
-     * [landscape] picks the fixed split (game left ~60% / companion right ~40% in landscape,
-     * game top / companion below in portrait). Applied once the renderer exists
-     * (DSModSession::OnRendererReady), so it is safe to call any time before or during boot. It
-     * overrides [setDualScreenInlineLayout] below while it is on (a developer override).
-     */
-    external fun setInlineDualScreen(enabled: Boolean, landscape: Boolean)
-
-    /**
      * Eden Duo Stage 2: the real Simulated layout -- [org.yuzu.yuzu_emu.duo.DualScreenGeometry]'s
      * game/companion rects, each a fraction (0..1) of the main window on both axes. Safe to call
      * any time, including live while a game runs: rotation, resize, fold change and divider drag
