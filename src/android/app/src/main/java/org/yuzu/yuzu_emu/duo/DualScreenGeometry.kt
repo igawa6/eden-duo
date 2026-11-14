@@ -144,9 +144,9 @@ data class DualScreenAspect(val w: Int, val h: Int)
  *    collapses under [MIN_WINDOW_SHORT_EDGE_DP] (the window itself is too small to use at all).
  */
 object DualScreenGeometry {
-    /** The project's default companion canvas (CLAUDE.md "default new companion work"). Internal
-     *  visibility: the 1.4.0 layout editor ([DualScreenFragmentHost]) reads it too, so both the
-     *  engine and the editor that seeds/saves its Custom layout agree on one aspect. */
+    /** The project's default companion canvas, 1240x1080. Internal visibility: the 1.4.0
+     *  layout editor ([DualScreenFragmentHost]) reads it too, so both the engine and the editor
+     *  that seeds/saves its Custom layout agree on one aspect. */
     internal val CANVAS_ASPECT = DualScreenAspect(1240, 1080)
 
     /** Only for budgeting the no-controller 3-band split when the game itself is unlocked
