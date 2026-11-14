@@ -143,11 +143,12 @@ class DualScreenLayoutEditorView(context: Context, attrs: AttributeSet?) : View(
     private fun resizeFromPinch(pane: Pane, scaleFactor: Float): DualScreenRect =
         DualScreenLayoutEditor.resizeFromPinch(rectFor(pane), scaleFactor, aspectFor(pane), minWFor(pane), minHFor(pane))
 
-    /** Clamp + no-overlap pass every gesture result goes through before it is shown (spec item 2). */
-    private fun constrain(pane: Pane, candidate: DualScreenRect): DualScreenRect {
-        val clamped = DualScreenLayoutEditor.clampToBox(candidate, boxFor(pane))
-        return DualScreenLayoutEditor.resolveOverlap(clamped, otherRect(pane))
-    }
+    /** Clamp + no-overlap pass every gesture result goes through before it is shown;
+     *  a step that cannot satisfy both keeps the pane where it was. */
+    private fun constrain(pane: Pane, candidate: DualScreenRect, snap: Boolean = false): DualScreenRect =
+        DualScreenLayoutEditor.constrain(
+            candidate, boxFor(pane), otherRect(pane), rectFor(pane), if (snap) window else null
+        )
 
     private fun applyAndPropagate(pane: Pane, candidate: DualScreenRect) {
         setRect(pane, constrain(pane, candidate))
@@ -224,19 +225,15 @@ class DualScreenLayoutEditorView(context: Context, attrs: AttributeSet?) : View(
                 val dx = (event.getX(idx) - dragStartX).toInt()
                 val dy = (event.getY(idx) - dragStartY).toInt()
                 val handle = activeHandle
-                var candidate = if (handle != null) {
+                val candidate = if (handle != null) {
                     DualScreenLayoutEditor.resizeFromHandle(
                         dragStartRect, handle, dx, dy, aspectFor(pane), minWFor(pane), minHFor(pane)
                     )
                 } else {
                     DualScreenLayoutEditor.move(dragStartRect, dx, dy)
                 }
-                candidate = DualScreenLayoutEditor.clampToBox(candidate, boxFor(pane))
-                if (handle == null) {
-                    // Snapping only applies to a move; a resize honours the finger exactly.
-                    candidate = DualScreenLayoutEditor.snap(candidate, window, otherRect(pane))
-                }
-                setRect(pane, DualScreenLayoutEditor.resolveOverlap(candidate, otherRect(pane)))
+                // Snapping only applies to a move; a resize honours the finger exactly.
+                setRect(pane, constrain(pane, candidate, snap = handle == null))
                 onChanged?.invoke()
                 return true
             }

@@ -121,8 +121,58 @@ class DualScreenLayoutEditorTest {
         val box = DualScreenRect(0, 0, 100, 80)
         val rect = DualScreenRect(0, 0, 500, 500)
         val clamped = DualScreenLayoutEditor.clampToBox(rect, box)
-        assertEquals(100, clamped.w)
+        // Scaled down together (square stays square) until it fits the box's short side.
+        assertEquals(80, clamped.w)
         assertEquals(80, clamped.h)
+    }
+
+    @Test
+    fun clampToBoxKeepsTheAspectOfAnAspectLockedRectWhenShrinking() {
+        val box = DualScreenRect(0, 0, 1000, 1000)
+        val rect = DualScreenRect(0, 0, 1600, 900) // 16:9, too wide for the box
+        val clamped = DualScreenLayoutEditor.clampToBox(rect, box)
+        assertEquals(1000, clamped.w)
+        assertEquals(562, clamped.h)
+        assertAspectLocked(clamped, game169)
+    }
+
+    // ---- constrain: the full per-gesture pass ----
+
+    @Test
+    fun constrainNeverPushesADraggedRectOutsideTheWindow() {
+        // Dragging the companion across the game: the shorter push (down, past the window's
+        // bottom edge, or left to a negative x) would leave the window, so the pass picks the
+        // nearest push that keeps it inside -- here back to the right of the game.
+        val window = DualScreenWindow(2400, 1080, 420)
+        val box = DualScreenRect(0, 0, 2400, 1080)
+        val game = DualScreenRect(0, 129, 1461, 822)
+        val lastValid = DualScreenRect(1461, 131, 939, 818)
+        val dragged = DualScreenLayoutEditor.move(lastValid, -1261, 0) // x = 200
+        val result = DualScreenLayoutEditor.constrain(dragged, box, game, lastValid, window)
+        assertInsideWindow(result, window)
+        assertNoOverlap(result, game)
+        assertEquals(939, result.w)
+        assertEquals(818, result.h)
+    }
+
+    @Test
+    fun constrainKeepsTheLastValidRectWhenNoPlacementFits() {
+        // A resize that grows the companion past the only free strip beside the game: no
+        // translation keeps it inside and clear, so the step is not applied.
+        val box = DualScreenRect(0, 0, 1000, 500)
+        val game = DualScreenRect(0, 0, 700, 500)
+        val lastValid = DualScreenRect(700, 0, 300, 261)
+        val grown = DualScreenRect(600, 0, 400, 348)
+        val result = DualScreenLayoutEditor.constrain(grown, box, game, lastValid)
+        assertEquals(lastValid, result)
+    }
+
+    @Test
+    fun separateIsANoOpForAnAlreadyValidPlacement() {
+        val box = DualScreenRect(0, 0, 1000, 500)
+        val game = DualScreenRect(0, 0, 600, 338)
+        val companion = DualScreenRect(650, 0, 300, 261)
+        assertEquals(companion, DualScreenLayoutEditor.separate(companion, game, box))
     }
 
     @Test
@@ -315,6 +365,37 @@ class DualScreenLayoutEditorTest {
         val layout = DualScreenLayoutEditor.refitOnWindowChange(custom, portrait, game169, canvas)
         assertInsideWindow(layout.gameRect, portrait)
         assertInsideWindow(layout.companionRect, portrait)
+        assertNoOverlap(layout.gameRect, layout.companionRect)
+    }
+
+    @Test
+    fun refitOnWindowChangeSeparatesAnOverlappingSavedLayoutInsideTheWindow() {
+        // A saved companion box sitting mostly on top of the game: the preferred push would
+        // leave the window, so it must land on the free side instead -- never outside.
+        val window = DualScreenWindow(2400, 1080, 420)
+        val custom = DualScreenCustomLayout(
+            DualScreenNormRect(0f, 0.12f, 0.61f, 0.76f),
+            DualScreenNormRect(0.08f, 0.12f, 0.39f, 0.76f)
+        )
+        val layout = DualScreenLayoutEditor.refitOnWindowChange(custom, window, game169, canvas)
+        assertInsideWindow(layout.gameRect, window)
+        assertInsideWindow(layout.companionRect, window)
+        assertNoOverlap(layout.gameRect, layout.companionRect)
+    }
+
+    @Test
+    fun refitOnWindowChangeFallsBackToAFreeStripWhenNoPushFits() {
+        // The game fills the window's full height; the saved companion sits in its middle and no
+        // push clears it inside the window, so it is re-fit into the larger free side strip.
+        val window = DualScreenWindow(2400, 1080, 420)
+        val custom = DualScreenCustomLayout(
+            DualScreenNormRect(0.1f, 0f, 0.8f, 1f),
+            DualScreenNormRect(0.4f, 0.2f, 0.2f, 0.5f)
+        )
+        val layout = DualScreenLayoutEditor.refitOnWindowChange(custom, window, game169, canvas)
+        assertTrue(!layout.companionRect.isEmpty)
+        assertAspectLocked(layout.companionRect, canvas)
+        assertInsideWindow(layout.companionRect, window)
         assertNoOverlap(layout.gameRect, layout.companionRect)
     }
 

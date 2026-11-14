@@ -155,13 +155,77 @@ object DualScreenLayoutEditor {
 
     // ---- clamp / no-overlap ----
 
-    /** [rect], translated and shrunk only as much as needed to fit entirely inside [box]. */
+    /** [rect], translated and shrunk only as much as needed to fit entirely inside [box]. A
+     *  shrink scales both dimensions together, so an aspect-locked rect stays (to the pixel)
+     *  aspect-locked. */
     fun clampToBox(rect: DualScreenRect, box: DualScreenRect): DualScreenRect {
-        val w = rect.w.coerceIn(0, box.w)
-        val h = rect.h.coerceIn(0, box.h)
+        var w = rect.w.coerceIn(0, box.w)
+        var h = rect.h.coerceIn(0, box.h)
+        if (rect.w > 0 && rect.h > 0 && (rect.w > box.w || rect.h > box.h)) {
+            val scale = minOf(box.w.toDouble() / rect.w, box.h.toDouble() / rect.h)
+            w = (rect.w * scale).toInt().coerceIn(0, box.w)
+            h = (rect.h * scale).toInt().coerceIn(0, box.h)
+        }
         val x = rect.x.coerceIn(box.x, box.x + box.w - w)
         val y = rect.y.coerceIn(box.y, box.y + box.h - h)
         return DualScreenRect(x, y, w, h)
+    }
+
+    /** True when [rect] lies entirely inside [box]. */
+    private fun isInside(rect: DualScreenRect, box: DualScreenRect): Boolean =
+        rect.x >= box.x && rect.y >= box.y &&
+            rect.x + rect.w <= box.x + box.w && rect.y + rect.h <= box.y + box.h
+
+    private fun overlaps(a: DualScreenRect, b: DualScreenRect): Boolean {
+        if (a.isEmpty || b.isEmpty) return false
+        val overlapX = minOf(a.x + a.w, b.x + b.w) - maxOf(a.x, b.x)
+        val overlapY = minOf(a.y + a.h, b.y + b.h) - maxOf(a.y, b.y)
+        return overlapX > 0 && overlapY > 0
+    }
+
+    /** True when [rect] is inside [box] and does not overlap [other] -- the editor's invariant. */
+    fun isValidPlacement(rect: DualScreenRect, box: DualScreenRect, other: DualScreenRect): Boolean =
+        isInside(rect, box) && !overlaps(rect, other)
+
+    /**
+     * [moving] placed inside [box] without overlapping [other]: as it is when that already
+     * holds, else [resolveOverlap]'s own push, else the push along the other axis or the other
+     * direction (shortest first). Null when no translation-only push satisfies both rules (the
+     * caller then keeps its last valid rect, or picks its own fallback).
+     */
+    fun separate(moving: DualScreenRect, other: DualScreenRect, box: DualScreenRect): DualScreenRect? {
+        if (isValidPlacement(moving, box, other)) return moving
+        val preferred = resolveOverlap(moving, other)
+        if (isValidPlacement(preferred, box, other)) return preferred
+        if (moving.isEmpty || other.isEmpty) return null
+        val pushes = listOf(
+            moving.copy(x = other.x - moving.w),
+            moving.copy(x = other.x + other.w),
+            moving.copy(y = other.y - moving.h),
+            moving.copy(y = other.y + other.h)
+        ).sortedBy { abs(it.x - moving.x) + abs(it.y - moving.y) }
+        return pushes.firstOrNull { isValidPlacement(it, box, other) }
+    }
+
+    /**
+     * The full constraint pass for one gesture step of the editor: [candidate] clamped into
+     * [box], snapped against [snapWindow]'s edges and [other] when given (a move; a resize passes
+     * null and honours the finger exactly), re-clamped, then separated from [other]
+     * ([separate]). When no placement keeps it inside [box] and clear of [other], [lastValid]
+     * (the rect before this step) is kept, so a drag can never push a rect out of the window.
+     */
+    fun constrain(
+        candidate: DualScreenRect,
+        box: DualScreenRect,
+        other: DualScreenRect,
+        lastValid: DualScreenRect,
+        snapWindow: DualScreenWindow? = null
+    ): DualScreenRect {
+        var rect = clampToBox(candidate, box)
+        if (snapWindow != null) {
+            rect = clampToBox(snap(rect, snapWindow, other), box)
+        }
+        return separate(rect, other, box) ?: lastValid
     }
 
     /**
@@ -251,7 +315,9 @@ object DualScreenLayoutEditor {
             DualScreenGeometry.fitWithinBox(game.x, game.y, game.w, game.h, companionAspect),
             windowBox
         )
-        return newGame to resolveOverlap(newCompanion, newGame)
+        // A swap that cannot be placed inside the window without overlap is not applied.
+        val separated = separate(newCompanion, newGame, windowBox) ?: return game to companion
+        return newGame to separated
     }
 
     // ---- re-fit a stored (fractional) layout onto a (possibly different) window ----
@@ -283,7 +349,27 @@ object DualScreenLayoutEditor {
             ),
             windowBox
         )
-        return DualScreenLayout(game, resolveOverlap(companion, game), DualScreenRect.EMPTY)
+        val placed = separate(companion, game, windowBox) ?: fitBeside(game, window, companionAspect)
+        return DualScreenLayout(game, placed, DualScreenRect.EMPTY)
+    }
+
+    /**
+     * The largest [aspect]-shaped rect in whichever free strip of [window] beside [game] (left,
+     * right, above or below it) holds the biggest one -- [refitOnWindowChange]'s fallback when
+     * the saved companion cannot be pushed clear of the game inside the window. EMPTY when the
+     * game leaves no strip at all.
+     */
+    private fun fitBeside(game: DualScreenRect, window: DualScreenWindow, aspect: DualScreenAspect): DualScreenRect {
+        val w = window.widthPx
+        val h = window.heightPx
+        val right = game.x + game.w
+        val bottom = game.y + game.h
+        return listOf(
+            DualScreenGeometry.fitWithinBox(0, 0, game.x, h, aspect),
+            DualScreenGeometry.fitWithinBox(right, 0, w - right, h, aspect),
+            DualScreenGeometry.fitWithinBox(0, 0, w, game.y, aspect),
+            DualScreenGeometry.fitWithinBox(0, bottom, w, h - bottom, aspect)
+        ).filterNot { it.isEmpty }.maxByOrNull { it.w.toLong() * it.h } ?: DualScreenRect.EMPTY
     }
 }
 
