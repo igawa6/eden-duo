@@ -1296,6 +1296,9 @@ void DSModAuxPresenter::EnsureInlineCompositeImage(u32 w, u32 h) {
     });
     aux_inline_w = w;
     aux_inline_h = h;
+    // The new image holds nothing yet: composite into it this frame even when the quad list is
+    // unchanged (it may already have been presented physically, which clears aux_c_dirty).
+    aux_c_dirty = true;
 }
 
 // Eden Duo Stage 1: the GPU-composite path's analogue of RenderAuxModUiGpu above, minus the parts
