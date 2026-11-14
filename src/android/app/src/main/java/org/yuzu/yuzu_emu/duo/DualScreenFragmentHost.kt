@@ -8,6 +8,7 @@ import android.content.pm.ActivityInfo
 import android.content.res.Configuration
 import android.util.Rational
 import android.view.LayoutInflater
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import androidx.activity.OnBackPressedCallback
@@ -79,8 +80,33 @@ class DualScreenFragmentHost(
     private var orientationLockedForEditor = false
     private var layoutEditorBackCallback: OnBackPressedCallback? = null
 
-    /** Routes touches inside the companion pane to NativeInput instead of the emulated input. */
-    val companionPaneTouch = CompanionPaneTouch { currentLayout?.companionRect }
+    /**
+     * Routes touches inside the companion pane to NativeInput instead of the emulated input. Fed
+     * by InputOverlay, so the pane is moved into the overlay's own coordinates: the overlay sits
+     * in input_container, which [applyControlsBand] shrinks to the bottom band.
+     */
+    val companionPaneTouch = CompanionPaneTouch {
+        binding()?.let {
+            companionPaneAt(
+                it.inputContainer.left + it.surfaceInputOverlay.left,
+                it.inputContainer.top + it.surfaceInputOverlay.top
+            )
+        }
+    }
+
+    /**
+     * The same routing for touches that InputOverlay never sees: above the controls band (the
+     * 3-band layout, where the companion pane sits outside input_container), or anywhere while
+     * the overlay is hidden. Fed by emulation_container, which covers the game and companion.
+     */
+    private val companionPaneTouchOutsideOverlay = CompanionPaneTouch {
+        binding()?.let { companionPaneAt(it.emulationContainer.left, it.emulationContainer.top) }
+    }
+
+    /** [currentLayout]'s companion rect in the coordinates of a view whose top-left corner sits
+     *  at ([originX], [originY]) of the full area the layout is computed for. */
+    private fun companionPaneAt(originX: Int, originY: Int): DualScreenRect? =
+        currentLayout?.companionRect?.let { it.copy(x = it.x - originX, y = it.y - originY) }
 
     override fun pushLayout() = updateLayout()
     override fun onModeChangedAcrossOff() = showModeRestartPrompt()
@@ -92,8 +118,15 @@ class DualScreenFragmentHost(
 
     /** EmulationFragment.onResume: wires the companion pane's touch routing into the overlay and
      *  (1.4.0) keeps the in-game menu's "Edit dual screen layout" entry's visibility current. */
+    @SuppressLint("ClickableViewAccessibility")
     fun onResume() {
         binding()?.surfaceInputOverlay?.companionPaneTouch = companionPaneTouch
+        binding()?.emulationContainer?.setOnTouchListener { _, event ->
+            companionPaneTouchOutsideOverlay.onEvent(event)
+            // Keep the gesture only when its first finger went down on the companion pane.
+            event.actionMasked != MotionEvent.ACTION_DOWN ||
+                companionPaneTouchOutsideOverlay.isOwned(event.getPointerId(0))
+        }
         binding()?.inGameMenu?.menu?.findItem(R.id.menu_edit_dual_screen_layout)?.isVisible =
             dualScreen().isSimulatedActive() && !isEditingLayout
     }
@@ -102,7 +135,9 @@ class DualScreenFragmentHost(
      *  tears down the layout editor if it was still open (no save -- same as Cancel). */
     fun onDestroyView() {
         binding()?.surfaceInputOverlay?.companionPaneTouch = null
+        binding()?.emulationContainer?.setOnTouchListener(null)
         companionPaneTouch.clear()
+        companionPaneTouchOutsideOverlay.clear()
         currentLayout = null
         if (isEditingLayout) stopEditingLayout(save = false)
     }
@@ -179,8 +214,7 @@ class DualScreenFragmentHost(
             applyControlsBand(DualScreenRect.EMPTY)
             return
         }
-        val windowW = b.surfaceEmulation.width
-        val windowH = b.surfaceEmulation.height
+        val (windowW, windowH) = layoutWindowSize(b)
         if (windowW <= 0 || windowH <= 0) {
             return // Not measured yet; the next trigger (surfaceChanged, a later layout pass) retries.
         }
@@ -203,14 +237,36 @@ class DualScreenFragmentHost(
             )
         }
         currentLayout = layout
-        val gameFrac = layout.gameRect.toFrac(windowW, windowH)
-        val companionFrac = layout.companionRect.toFrac(windowW, windowH)
+        // The native split is a fraction of the surface, which the controls band (when there is
+        // one) shrinks to the bands above it.
+        val surfaceH = if (!layout.controlsRect.isEmpty && currentHinge?.isSeparating != true) {
+            layout.controlsRect.y
+        } else {
+            windowH
+        }
+        val gameFrac = layout.gameRect.toFrac(windowW, surfaceH)
+        val companionFrac = layout.companionRect.toFrac(windowW, surfaceH)
         NativeLibrary.setDualScreenInlineLayout(
             true,
             gameFrac[0], gameFrac[1], gameFrac[2], gameFrac[3],
             companionFrac[0], companionFrac[1], companionFrac[2], companionFrac[3]
         )
         applyControlsBand(layout.controlsRect)
+    }
+
+    /**
+     * The size the Simulated layout is computed for: the emulation container's parent (the full
+     * fragment area), which keeps its size while [applyControlsBand] shrinks the container
+     * itself. Sizing from the surface fed that shrunk size back in, which dropped the controls
+     * band, restored the full size and so on. While a separating fold is up, the fold code owns
+     * the containers, so the surface's own size is used, as before.
+     */
+    private fun layoutWindowSize(b: FragmentEmulationBinding): Pair<Int, Int> {
+        val full = b.emulationContainer.parent as? View
+        if (currentHinge?.isSeparating == true || full == null) {
+            return b.surfaceEmulation.width to b.surfaceEmulation.height
+        }
+        return full.width to full.height
     }
 
     /**
@@ -252,8 +308,7 @@ class DualScreenFragmentHost(
         if (isEditingLayout) return
         val b = binding() ?: return
         val context = fragment.context ?: return
-        val windowW = b.surfaceEmulation.width
-        val windowH = b.surfaceEmulation.height
+        val (windowW, windowH) = layoutWindowSize(b)
         if (windowW <= 0 || windowH <= 0) return
         val window = DualScreenWindow(windowW, windowH, fragment.resources.displayMetrics.densityDpi)
         val gameAspect = DualScreenGeometry.aspectForRendererSetting(IntSetting.RENDERER_ASPECT_RATIO.getInt())
