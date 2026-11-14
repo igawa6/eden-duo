@@ -75,10 +75,17 @@ class AuxPresentation(outerContext: Context, display: Display) :
     }
 
     companion object {
-        // Eden Duo Stage 2 (I4/E6 hardening): a display that threw out of show() below, for the
-        // rest of this process's life -- WindowManager keeps refusing the same display, so
-        // retrying it on every later call just repeats the same failure and delays a real one.
+        // Eden Duo Stage 2: a display whose window show() below refused with
+        // InvalidDisplayException -- WindowManager keeps refusing the same display, so retrying
+        // it on every later call just repeats the same failure and delays a real one. Kept until
+        // that display is added or removed again ([forgetQuarantine]); any other failure is
+        // not remembered, so a one-off error never blacklists the real panel.
         private val quarantined = java.util.concurrent.ConcurrentHashMap.newKeySet<Int>()
+
+        /** [displayId] was added or removed: offer it again (see [quarantined]). */
+        fun forgetQuarantine(displayId: Int) {
+            quarantined.remove(displayId)
+        }
 
         /**
          * Candidate aux displays, best first. Physical second panels come first and simulated or
@@ -142,8 +149,8 @@ class AuxPresentation(outerContext: Context, display: Display) :
         /**
          * Shows the aux presentation on the first candidate display that accepts a window.
          * WindowManager throws InvalidDisplayException ("the specified display can not be found")
-         * for displays that refuse app windows, so try them in order; a display that throws here
-         * is quarantined (see [quarantined]) so later calls stop offering it.
+         * for displays that refuse app windows, so try them in order; a display that throws that
+         * here is quarantined (see [quarantined]) so later calls stop offering it.
          */
         fun showOnBestDisplay(context: Context): AuxPresentation? {
             val ownDisplayId = try {
@@ -167,12 +174,18 @@ class AuxPresentation(outerContext: Context, display: Display) :
                         "[AuxPresentation] shown on display ${display.displayId} (${display.name})"
                     )
                     return presentation
-                } catch (e: Exception) {
+                } catch (e: WindowManager.InvalidDisplayException) {
                     presentation?.cleanupAfterFailedShow()
                     quarantined += display.displayId
                     Log.warning(
                         "[AuxPresentation] display ${display.displayId} (${display.name}) " +
-                            "refused the window and is quarantined for this session: ${e.message}"
+                            "refused the window and is quarantined until it is re-added: ${e.message}"
+                    )
+                } catch (e: Exception) {
+                    presentation?.cleanupAfterFailedShow()
+                    Log.warning(
+                        "[AuxPresentation] display ${display.displayId} (${display.name}) " +
+                            "could not show the window: ${e.message}"
                     )
                 }
             }

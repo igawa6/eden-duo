@@ -135,12 +135,14 @@ class DualScreenEmulationController(
     private val auxDisplayStates = HashMap<Int, Int>()
     private val auxDisplayListener = object : DisplayManager.DisplayListener {
         override fun onDisplayAdded(displayId: Int) {
+            AuxPresentation.forgetQuarantine(displayId)
             displayState(displayId)?.let { auxDisplayStates[displayId] = it }
             scheduleAuxRetry()
             reapplyModeForDisplayEvent()
         }
 
         override fun onDisplayRemoved(displayId: Int) {
+            AuxPresentation.forgetQuarantine(displayId)
             auxDisplayStates.remove(displayId)
             // Eden Duo Stage 4 (RESEARCH.md §0 decision 3): a display hosting the companion or
             // the game going away is an eject -- pause and ask, never auto-resume. Never for an
