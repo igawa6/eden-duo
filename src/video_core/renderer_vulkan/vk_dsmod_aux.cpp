@@ -568,7 +568,8 @@ bool DSModAuxPresenter::UpdateAuxUiImage() {
     const auto recreate_if_needed = [&](u32 tw, u32 th) {
         const bool recreated = !aux_ui_image || aux_ui_w != tw || aux_ui_h != th;
         if (recreated) {
-            scheduler.Wait(std::max(aux_ui_upload_tick, aux_ui_blit_tick));
+            // Inline mode samples the image in WindowAdaptPass (inline_sample_tick), after both.
+            scheduler.Wait(std::max({aux_ui_upload_tick, aux_ui_blit_tick, inline_sample_tick}));
             aux_ui_image =
                 CreateWrappedImage(memory_allocator, VkExtent2D{tw, th}, VK_FORMAT_B8G8R8A8_UNORM);
             aux_ui_view = CreateWrappedImageView(device, aux_ui_image, VK_FORMAT_B8G8R8A8_UNORM);
@@ -1269,9 +1270,9 @@ void DSModAuxPresenter::EnsureInlineCompositeImage(u32 w, u32 h) {
     if (aux_inline_image && aux_inline_w == w && aux_inline_h == h) {
         return;
     }
-    // The previous image may still be read by WindowAdaptPass's companion quad (last frame's
-    // sample); the draw that wrote it is the last thing that could still be reading it too.
-    scheduler.Wait(aux_c_draw_tick);
+    // The previous image may still be read by WindowAdaptPass's companion quad (the last frame
+    // that sampled it, inline_sample_tick) or written by the last composite draw.
+    scheduler.Wait(std::max(aux_c_draw_tick, inline_sample_tick));
     constexpr VkFormat fmt = VK_FORMAT_B8G8R8A8_UNORM;
     aux_inline_image = CreateWrappedImage(memory_allocator, VkExtent2D{w, h}, fmt);
     aux_inline_view = CreateWrappedImageView(device, aux_inline_image, fmt);

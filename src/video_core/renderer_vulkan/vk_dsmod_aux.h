@@ -80,6 +80,16 @@ public:
     /// resolving to nothing.
     [[nodiscard]] const CompanionQuad& GetInlineCompanionQuad() const { return inline_companion; }
 
+    /// Eden Duo Stage 1: `tick` is the scheduler tick whose recording just sampled this frame's
+    /// companion quad (RendererVulkan::Composite, right after WindowAdaptPass recorded it).
+    /// Recreating the image behind it (a canvas or pane size change) waits for that tick first:
+    /// the draw that wrote the image is not the last reader, the companion quad is.
+    void NoteInlineSampled(u64 tick) {
+        if (inline_companion.view != VK_NULL_HANDLE) {
+            inline_sample_tick = tick;
+        }
+    }
+
     /// Eden Duo Stage 1: the game's rect in main-window pixels this frame, or nullopt when inline
     /// is not in effect (the caller should then leave its own default layout alone).
     [[nodiscard]] std::optional<VideoCore::DSMod::CompanionRect> GetInlineGameRect() const {
@@ -258,6 +268,7 @@ private:
     /// RendererVulkan::Composite on the same (GPU) thread.
     CompanionQuad inline_companion;
     std::optional<VideoCore::DSMod::CompanionRect> inline_game_rect;
+    u64 inline_sample_tick{}; ///< last frame that sampled inline_companion (NoteInlineSampled)
 };
 
 } // namespace Vulkan

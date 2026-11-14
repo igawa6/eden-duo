@@ -253,6 +253,7 @@ void RendererVulkan::Composite(std::span<const Tegra::FramebufferConfig> framebu
     blit_swapchain.DrawToFrame(device, rasterizer, frame, primary, layout,
                                present_manager.SwapchainImageCount(),
                                swapchain.GetImageViewFormat(), &companion_quad);
+    dsmod_aux->NoteInlineSampled(scheduler.CurrentTick()); // Eden Duo Stage 1
 
 #ifdef HAS_LSFG
     // Eden Duo Stage 1: skip LSFG generation while inline is active -- see
