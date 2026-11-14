@@ -566,15 +566,15 @@ class DualScreenFragmentHost(
     }
 
     /**
-     * Eden Duo Stage 4 item 1 (RESEARCH.md §0 decision 3): the display hosting the companion or
-     * the game was just removed. Pauses emulation (unless the user had already paused it
-     * themselves -- [pausedForDisplayEject] remembers which) and shows the three-choice dialog,
-     * non-cancelable so it can never be dismissed without a choice ("Never auto-resume without a
-     * choice"). [kind] only decides the log line here; all three choices behave the same
-     * regardless of whether the companion's own display or the game's (Swap Screens) was lost.
+     * Eden Duo Stage 4: the display hosting the companion or the game was just removed. Pauses
+     * emulation (unless the user had already paused it themselves -- [pausedForDisplayEject]
+     * remembers which) and shows the three-choice dialog, non-cancelable so it can never be
+     * dismissed without a choice (never auto-resume without one). [kind] only decides the log
+     * line here; all three choices behave the same regardless of whether the companion's own
+     * display or the game's (Swap Screens) was lost. True when the dialog is showing.
      */
-    private fun showEjectDialog(kind: DisplayHotplugRules.RemovedDisplayKind) {
-        if (!fragment.isAdded || binding() == null) return
+    private fun showEjectDialog(kind: DisplayHotplugRules.RemovedDisplayKind): Boolean {
+        if (!fragment.isAdded || binding() == null) return false
         Log.info("[EmulationFragment] DSMod: eject dialog for $kind")
         pausedForDisplayEject = isEmulationRunning()
         if (pausedForDisplayEject) {
@@ -598,6 +598,7 @@ class DualScreenFragmentHost(
                 dualScreen().ejectChoiceWaitForReconnect()
             }
             .show()
+        return true
     }
 
     /** Resumes emulation only if [showEjectDialog] was the one that paused it. */

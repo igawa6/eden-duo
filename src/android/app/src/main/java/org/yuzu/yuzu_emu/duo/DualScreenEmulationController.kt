@@ -39,8 +39,9 @@ interface DualScreenFragmentHooks {
     /** True while [pointerId] already belongs to the Simulated companion pane (RESEARCH.md I2). */
     fun companionPaneOwns(pointerId: Int): Boolean = false
 
-    /** The display hosting the companion or the game was just removed (RESEARCH.md §0 decision 3). */
-    fun onDisplayEjected(kind: DisplayHotplugRules.RemovedDisplayKind) {}
+    /** The display hosting the companion or the game was just removed: shows the eject dialog;
+     *  true when it is actually showing (false when the fragment cannot show one right now). */
+    fun onDisplayEjected(kind: DisplayHotplugRules.RemovedDisplayKind): Boolean = false
 
     /** The "Wait for reconnect" eject choice just resolved on its own. */
     fun onEjectReconnected() {}
@@ -163,9 +164,12 @@ class DualScreenEmulationController(
             val ejects = modeApplied?.let { DisplayHotplugRules.isEject(kind, it) } == true
             if (ejects && !ejectPending) {
                 Log.info("[EmulationFragment] DSMod: pausing and asking ($kind, display $displayId)")
-                ejectPending = true
-                hooks.onDisplayEjected(kind)
-                return
+                // Pending only while a dialog is really up -- one that could not be shown must
+                // not block every later eject for the rest of the session.
+                if (hooks.onDisplayEjected(kind)) {
+                    ejectPending = true
+                    return
+                }
             }
             if (kind == DisplayHotplugRules.RemovedDisplayKind.COMPANION) {
                 scheduleAuxRetry()
@@ -430,6 +434,7 @@ class DualScreenEmulationController(
 
     fun onDestroyView() {
         CompanionToggle.unregister(this)
+        ejectPending = false
         auxWanted = false
         auxHandler.removeCallbacks(auxRetry)
         auxHandler.removeCallbacks(idleRecheck)
