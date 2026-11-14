@@ -10,9 +10,9 @@ import org.yuzu.yuzu_emu.utils.SecondScreenPerGame
 
 /**
  * Eden Duo Stage 2: the dual-screen mode -- Physical (a real second screen/Presentation),
- * Simulated (the companion drawn into a pane of the game's own window, see [InlineDualScreen]
- * for the Stage 1 prototype this replaces for real use) or Off (no companion package selected
- * for the launch at all, see `Core::Mods::SetCompanionsDisabledForLaunch`).
+ * Simulated (the companion drawn into a pane of the game's own window, see
+ * [DualScreenFragmentHost]) or Off (no companion package selected for the launch at all, see
+ * `Core::Mods::SetCompanionsDisabledForLaunch`).
  */
 enum class DualScreenMode(val value: Int) {
     PHYSICAL(0),

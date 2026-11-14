@@ -33,9 +33,8 @@ object SecondScreenDetection {
      * virtual/"Simulated" display, e.g. Cuttlefish) as a second screen too. Off by default so a
      * stray virtual display never doubles as an unintended companion target (RESEARCH.md E6);
      * on, so Cuttlefish and the overlay-display developer workflow keep working regardless of
-     * whether that display happens to carry FLAG_PRESENTATION. No UI for it yet (see
-     * [InlineDualScreen] for the sibling hidden switch and its adb recipe) -- Settings UI for
-     * dual screen is already a large surface this stage; set with:
+     * whether that display happens to carry FLAG_PRESENTATION. No UI for it yet -- Settings UI
+     * for dual screen is already a large surface this stage; set with:
      *   adb shell settings put global eden_duo_count_simulated_displays 1
      */
     fun countsSimulatedDisplays(context: Context): Boolean = try {

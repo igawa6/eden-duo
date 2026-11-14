@@ -108,21 +108,25 @@ class DualScreenFragmentHost(
     }
 
     /**
-     * Eden Duo Stage 1: while the hidden developer switch ([InlineDualScreen]) is on, the
-     * SurfaceView must fill the whole window -- the native renderer does its own game/companion
-     * split and fits the game inside its own rect (RendererVulkan::Composite), so a Top/Bottom
-     * [normal] alignment with a fixed aspect ratio would otherwise shrink the surface (and the
-     * Vulkan swapchain behind it) to that shape before the native split ever sees it. EmulationFragment's
-     * updateScreenLayout feeds this (and [aspectRatioOverride]) its normal, switch-off answer.
+     * While Simulated is active the SurfaceView must fill its container -- the native renderer
+     * does its own game/companion split and fits the game inside its own rect
+     * (RendererVulkan::Composite), so a Top/Bottom [normal] alignment with a fixed aspect ratio
+     * would otherwise shrink the surface (and the Vulkan swapchain behind it) to the game's shape
+     * before the split ever sees it. EmulationFragment's updateScreenLayout feeds this (and
+     * [aspectRatioOverride]) its normal answer; [updateLayout] re-runs that path when Simulated
+     * turns on or off mid-game.
      */
     fun verticalAlignmentOverride(normal: EmulationVerticalAlignment): EmulationVerticalAlignment =
-        if (inlineActive()) EmulationVerticalAlignment.Center else normal
+        if (surfaceShapedForSimulated()) EmulationVerticalAlignment.Center else normal
 
-    /** See [verticalAlignmentOverride]: the matching aspect-ratio override (none while inline). */
-    fun aspectRatioOverride(normal: Rational?): Rational? = if (inlineActive()) null else normal
+    /** See [verticalAlignmentOverride]: the matching aspect-ratio override (none while Simulated). */
+    fun aspectRatioOverride(normal: Rational?): Rational? = if (surfaceShapedForSimulated()) null else normal
 
-    private fun inlineActive(): Boolean =
-        fragment.context?.let { InlineDualScreen.isEnabled(it) } == true
+    /** Whether the surface was last shaped for Simulated (null before updateScreenLayout ran). */
+    private var surfaceShapedForSimulated: Boolean? = null
+
+    private fun surfaceShapedForSimulated(): Boolean =
+        dualScreen().isSimulatedActive().also { surfaceShapedForSimulated = it }
 
     /**
      * EmulationFragment.updateFoldableLayout: DualScreenGeometry's own hinge split (book posture,
@@ -158,7 +162,18 @@ class DualScreenFragmentHost(
      */
     fun updateLayout() {
         val b = binding() ?: return
-        if (!dualScreen().isSimulatedActive()) {
+        val simulated = dualScreen().isSimulatedActive()
+        val shaped = surfaceShapedForSimulated
+        if (shaped != null && shaped != simulated && fragment.isAdded) {
+            // Mode switched between Simulated and something else mid-game: reshape the surface
+            // through EmulationFragment's own path (onConfigurationChanged -> updateScreenLayout,
+            // the same call its fold handling makes), which applies the overrides above and ends
+            // in this function again with the new shape recorded.
+            surfaceShapedForSimulated = simulated
+            fragment.onConfigurationChanged(fragment.resources.configuration)
+            return
+        }
+        if (!simulated) {
             currentLayout = null
             NativeLibrary.setDualScreenInlineLayout(false, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f)
             applyControlsBand(DualScreenRect.EMPTY)

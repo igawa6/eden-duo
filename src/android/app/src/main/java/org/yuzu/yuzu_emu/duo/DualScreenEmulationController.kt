@@ -258,9 +258,7 @@ class DualScreenEmulationController(
 
     /**
      * True when the resolved Mode is Simulated: EmulationFragment should drive the native inline
-     * layout from [DualScreenGeometry] instead of leaving it disabled. The Stage 1 hidden
-     * developer switch ([InlineDualScreen]) is unaffected either way -- it is applied natively
-     * and wins over whatever this reports (see dsmod_native.cpp's ApplyInlineLayoutLocked).
+     * layout from [DualScreenGeometry] instead of leaving it disabled.
      */
     fun isSimulatedActive(): Boolean = resolvedMode() == DualScreenMode.SIMULATED
 
@@ -307,23 +305,8 @@ class DualScreenEmulationController(
             for (display in dm.displays) auxDisplayStates[display.displayId] = display.state
             dm.registerDisplayListener(auxDisplayListener, auxHandler)
         }
-        applyInlineDualScreen()
         showAuxPresentation()
         hooks.pushLayout()
-    }
-
-    /**
-     * Eden Duo Stage 1: tells the native renderer whether Simulated (inline) dual screen is on
-     * for this boot (hidden developer switch, see [InlineDualScreen]) -- applied once the
-     * renderer exists (DSModSession::OnRendererReady), so calling it here, ahead of that, is
-     * fine. [showAuxPresentation] below is what actually skips opening a second window for it.
-     */
-    private fun applyInlineDualScreen() {
-        val context = fragment.context ?: return
-        NativeLibrary.setInlineDualScreen(
-            InlineDualScreen.isEnabled(context),
-            InlineDualScreen.isLandscape(context)
-        )
     }
 
     fun onStop() {
@@ -641,11 +624,7 @@ class DualScreenEmulationController(
         refreshGameDisplayId()
         if (!toggleState.allowsAutoShow()) return
         if (isAuxOff()) return
-        // Eden Duo Stage 1: the hidden developer switch always wins (a developer override);
-        // Simulated (inline) dual screen then draws the companion into the game's own surface --
-        // no second window or Activity for it (see InlineDualScreen).
-        fragment.context?.let { if (InlineDualScreen.isEnabled(it)) return }
-        // Eden Duo Stage 2: Simulated (the real, geometry-driven version of the above) and Off
+        // Eden Duo Stage 2: Simulated (the companion drawn into the game's own surface) and Off
         // (no companion runtime at all) equally open no Presentation/AuxCompanionActivity here;
         // Physical is the only mode this function's own logic applies to.
         if (resolvedMode() != DualScreenMode.PHYSICAL) return
