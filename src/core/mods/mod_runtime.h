@@ -2030,7 +2030,10 @@ private:
     /// formats when it is present -- takes precedence over any in-core parser. False when no
     /// module is loaded, the module declares no font decoder, or it rejected `bytes` as
     /// malformed/unrecognised; LoadFont() then falls back to ParseMfnt/ParseSosFont in core.
-    bool ModuleDecodeFont(std::span<const u8> bytes, FontMetrics& out); // mod_assets.cpp
+    /// `busy` (optional) is set when the module loader lock was held by the asset worker: no
+    /// attempt was made, try again shortly (the publication path never waits on that lock).
+    bool ModuleDecodeFont(std::span<const u8> bytes, FontMetrics& out,
+                          bool* busy = nullptr); // mod_assets.cpp
     FontMetrics font_metrics;
     bool font_ready{false};
     /// A module font decoder may read the running game (metric tables read from main),

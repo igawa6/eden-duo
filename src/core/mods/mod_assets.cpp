@@ -326,7 +326,7 @@ bool ModRuntime::DecodeDds(std::span<const u8> file, Image& out) {
     return true;
 }
 
-bool ModRuntime::ModuleDecodeFont(std::span<const u8> bytes, FontMetrics& out) {
+bool ModRuntime::ModuleDecodeFont(std::span<const u8> bytes, FontMetrics& out, bool* busy) {
     if (!game_module || !game_module_instance) {
         return false;
     }
@@ -338,7 +338,15 @@ bool ModRuntime::ModuleDecodeFont(std::span<const u8> bytes, FontMetrics& out) {
         FontMetrics* out;
         bool filled{false};
     } receiver{&out};
-    std::scoped_lock loader_lock{module_loader_mutex};
+    // Runtime 25: LoadFont runs on the publication path (PublishUi, page transitions) while the
+    // asset worker holds this lock for a whole load_image callback; never wait behind it.
+    std::unique_lock loader_lock{module_loader_mutex, std::try_to_lock};
+    if (!loader_lock.owns_lock()) {
+        if (busy) {
+            *busy = true;
+        }
+        return false;
+    }
     const auto accepted =
         font_ext->decode_font(game_module_instance, bytes.data(), bytes.size(), &receiver,
                               [](void* r, u32 line_height, u32 first_codepoint,
@@ -399,7 +407,17 @@ void ModRuntime::LoadFont() {
         return;
     }
     FontMetrics decoded;
-    if (!ModuleDecodeFont(bytes, decoded)) {
+    bool module_busy = false;
+    const bool module_decoded = ModuleDecodeFont(bytes, decoded, &module_busy);
+    if (!module_decoded && module_busy) {
+        // The asset worker is inside the module: not a decline, so no fallback parsers and no
+        // attempt counted -- just come back in a few ticks (text stays as it is meanwhile).
+        constexpr u64 ModuleFontBusyRetryTicks = 2;
+        font_ready = false;
+        font_retry_tick = tick_count + ModuleFontBusyRetryTicks;
+        return;
+    }
+    if (!module_decoded) {
         font_source = "core MFNT fallback";
         if (redecode || !ParseMfnt(bytes, decoded)) {
             font_source = "core SoS fallback";

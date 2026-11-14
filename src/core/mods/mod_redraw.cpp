@@ -965,9 +965,11 @@ void ModRuntime::PublishUi(const StateSnapshot& snapshot) {
     map_lock.unlock();
     const bool groups_dirty = anim_dirty[2] > 0 && anim_dirty[3] > 0;
     const bool same = !sig_changed;
-    // A module font that was not ready yet (LoadFont's bounded retry) redraws a still page too.
-    const bool font_retry_due =
-        !font_ready && font_module_attempts > 0 && tick_count >= font_retry_tick;
+    // A module font that was not ready yet (LoadFont's bounded retry, or the module loader lock
+    // busy on the asset worker -- runtime 25) redraws a still page too.
+    const bool font_retry_due = !font_ready &&
+                                (font_module_attempts > 0 || font_retry_tick != 0) &&
+                                tick_count >= font_retry_tick;
     if (same && !groups_dirty && !font_retry_due) {
         return;
     }
