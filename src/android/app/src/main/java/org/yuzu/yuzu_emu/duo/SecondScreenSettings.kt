@@ -150,7 +150,8 @@ object SecondScreenSettings {
      * of the choice list entirely (rather than shown disabled -- IntSingleChoiceSetting has no
      * per-item disabled state, and excluding it keeps the dialog simple) whenever
      * [hasSecondScreen] is false; its own note is appended to the description instead, so the
-     * option is still discoverable.
+     * option is still discoverable. A Physical choice already saved stays listed then, labelled
+     * as unavailable, so the row's summary still names it instead of going blank.
      */
     private fun modeSetting(
         context: Context,
@@ -161,8 +162,13 @@ object SecondScreenSettings {
         val values = ArrayList<Int>(4)
         choices.add(context.getString(R.string.dual_screen_mode_automatic))
         values.add(-1)
+        val current =
+            if (gameId != null) DualScreenModeSetting.requested(gameId) else DualScreenModeSetting.global()
         if (hasSecondScreen) {
             choices.add(context.getString(R.string.dual_screen_mode_physical))
+            values.add(DualScreenMode.PHYSICAL.value)
+        } else if (current == DualScreenMode.PHYSICAL) {
+            choices.add(context.getString(R.string.dual_screen_mode_physical_unavailable))
             values.add(DualScreenMode.PHYSICAL.value)
         }
         choices.add(context.getString(R.string.dual_screen_mode_simulated))
