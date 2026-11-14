@@ -35,7 +35,7 @@ enum class DualScreenMode(val value: Int) {
  */
 object DualScreenModeSetting {
     const val KEY = "dual_screen_mode"
-    private const val UNSET = -1
+    internal const val UNSET = -1
 
     /** Mode decides which Dual screen rows exist (Simulated/Physical groups), so a change must
      *  rebuild the settings list right away (beta.5 Thor QA: the Layout row stayed missing). */
@@ -50,17 +50,31 @@ object DualScreenModeSetting {
     fun setGlobal(mode: DualScreenMode?) =
         prefs.edit { if (mode == null) remove(KEY) else putInt(KEY, mode.value) }
 
-    /** [programId]'s own requested value, or null when it has none (uses the global one). */
-    fun perGameValue(programId: String?): DualScreenMode? {
+    /** [programId]'s own stored value: null when it has none (it uses the global one), [UNSET]
+     *  when it explicitly picked Automatic, else the mode's value. */
+    private fun perGameStored(programId: String?): Int? {
         val key = SecondScreenPerGame.key(KEY, programId) ?: return null
-        return if (prefs.contains(key)) DualScreenMode.fromValue(prefs.getInt(key, UNSET)) else null
+        return if (prefs.contains(key)) prefs.getInt(key, UNSET) else null
     }
 
     /**
-     * The requested mode for [programId]: its own override if it has one, else the global value.
-     * Either (or both) may be null, meaning no explicit choice was made at that level.
+     * The requested mode for [programId]: its own choice if it has one, else the global value.
+     * Null means Automatic -- either picked explicitly (for this game or globally) or no
+     * explicit choice at either level.
      */
-    fun requested(programId: String?): DualScreenMode? = perGameValue(programId) ?: global()
+    fun requested(programId: String?): DualScreenMode? = requestedFrom(perGameStored(programId), global())
+
+    /**
+     * Android-free core of [requested] (unit tested): [perGameStored] is the per-game stored value
+     * (null = no per-game key, inherit [global]; [UNSET] = Automatic for this game, regardless of
+     * the global choice).
+     */
+    internal fun requestedFrom(perGameStored: Int?, global: DualScreenMode?): DualScreenMode? =
+        if (perGameStored != null) DualScreenMode.fromValue(perGameStored) else global
+
+    /** What a per-game pick of [value] stores: the mode's own value, or [UNSET] for Automatic --
+     *  kept as an explicit per-game choice, unlike "use global", which removes the key. */
+    internal fun perGameStoredValue(value: Int): Int = DualScreenMode.fromValue(value)?.value ?: UNSET
 
     /** The per-game choice for [programId] in that game's settings; see NoCompanion's own. */
     fun perGameSetting(programId: String): AbstractIntSetting = object : AbstractIntSetting {
@@ -70,8 +84,7 @@ object DualScreenModeSetting {
             (if (needsGlobal) global() else requested(programId))?.value ?: UNSET
 
         override fun setInt(value: Int) {
-            val mode = DualScreenMode.fromValue(value)
-            prefs.edit { if (mode == null) remove(gameKey) else putInt(gameKey, mode.value) }
+            prefs.edit { putInt(gameKey, perGameStoredValue(value)) }
         }
 
         override val key: String = KEY
