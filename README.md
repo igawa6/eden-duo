@@ -5,7 +5,7 @@
 <h1 align="center">Eden Duo</h1>
 
 <p align="center">
-  A Nintendo Switch emulator for Android dual-screen handhelds, with live companion screens on the second display.
+  A Nintendo Switch emulator for Android with live companion screens: on the second display of a dual-screen handheld, or next to the game on a single screen.
 </p>
 
 <div align="center">
@@ -14,7 +14,7 @@
 
 ---
 
-Eden Duo is a fork of the [Eden](https://git.eden-emu.dev/eden-emu/eden) Switch emulator for Android devices with two screens, such as the AYN Thor. The game runs on the top screen as usual. The bottom screen shows a touch **companion** for the game you are playing: maps, party and inventory menus, status, and more, all driven by the running game's live state.
+Eden Duo is a fork of the [Eden](https://git.eden-emu.dev/eden-emu/eden) Switch emulator for Android. On a device with two screens, such as the AYN Thor, the game runs on the top screen as usual and the bottom screen shows a touch **companion** for the game you are playing. On a phone, tablet or foldable, the game and the companion share one screen. A companion shows maps, party and inventory menus, status, and more, all driven by the running game's live state.
 
 Companions are separate, installable **`.dsmod.zip` packages**, one per game, so a companion can be updated without updating the emulator. This repository holds the emulator source code and the Eden Duo APK. Companion packages, their documentation and screenshots live in **[Eden Duo Companions](https://github.com/igawa6/eden-duo-companions)**.
 
@@ -51,6 +51,10 @@ Companions are separate, installable **`.dsmod.zip` packages**, one per game, so
 | 27 | [Pokémon Shield](https://github.com/igawa6/eden-duo-companions#pokemon-shield) | `01008DB008C2C000` | 1.3.2 | 🥇<br><a href="https://ko-fi.com/Y1Q8291E0L"><img src="https://img.shields.io/badge/Khaz_Otter-F16061?style=flat-square&logo=ko-fi&logoColor=white" style="vertical-align: middle;" alt="Khaz Otter"></a> |
 | 28 | [Cult of the Lamb](https://github.com/igawa6/eden-duo-companions#cult-of-the-lamb) | `01002E7016C46000` | 1.5.27, 1.5.28 | ⭐<br><a href="https://github.com/AlterDigga"><img src="https://img.shields.io/badge/AlterDigga-181717?style=flat-square&logo=github&logoColor=white" style="vertical-align: middle;" alt="AlterDigga"></a> |
 | 29 | [Kirby's Return to Dream Land Deluxe](https://github.com/igawa6/eden-duo-companions#kirbys-return-to-dream-land-deluxe) | `01006B601380E000` | 1.0.0 | ⭐<br><img src="https://img.shields.io/badge/fabvx-5865F2?style=flat-square&logo=discord&logoColor=white" style="vertical-align: middle;" alt="fabvx"> |
+| 30 | [Monster Sanctuary](https://github.com/igawa6/eden-duo-companions#monster-sanctuary) | `0100A0F00DA68000` | 2.1.0.32 | |
+| 31 | [My Time at Sandrock](https://github.com/igawa6/eden-duo-companions#my-time-at-sandrock) | `0100B63016916000` | 1.4.2 | |
+| 32 | [Resident Evil 4](https://github.com/igawa6/eden-duo-companions#resident-evil-4) | `010099A00BC1E000` | 1.0.2 | |
+| 33 | [The Legend of Zelda: Skyward Sword HD](https://github.com/igawa6/eden-duo-companions#the-legend-of-zelda-skyward-sword-hd) | `01002DA013484000` | 1.0.1 | |
 
 ⭐ Companion contributor. Big thanks for your mods creation!
 
@@ -68,6 +72,7 @@ Details, screenshots and downloads for each companion: **[Eden Duo Companions](h
 ## Features
 
 - **Second-screen companion.** The game on the main screen, and a touch companion page on the second display.
+- **One screen works too.** Simulated mode draws the game and the companion together on a single display, with a layout editor to place and size both, and a portrait layout with touch controls for phones.
 - **Live game state.** Companions read the running game's memory every frame. There are no save-file snapshots and no polling delays.
 - **Installable packages.** Add a companion from the game's *Add-ons* menu with its `.dsmod.zip`. Packages are validated (title, build, file layout and module checksums) before they are installed.
 - **Native companion modules.** A package can carry a small native module for games whose data is too complex for a declarative manifest. Modules talk to the emulator through a small, versioned C interface and never ship inside the APK.
@@ -82,7 +87,7 @@ See the [changelog](CHANGELOG.md).
 ## Requirements
 
 - Android 13 or newer, arm64 (`arm64-v8a`).
-- A device with a second display (developed and tested on the AYN Thor).
+- Any Android phone, tablet, foldable or handheld. A second display is optional: without one, the companion is shown next to the game (developed and tested on the AYN Thor).
 - Your own legally obtained game dump, the matching update, and your console's keys and firmware.
 - The exact game version listed in [Supported Games](#supported-games).
 
@@ -92,7 +97,7 @@ See the [changelog](CHANGELOG.md).
 2. Set up the emulator as usual: keys, firmware, and your games folder.
 3. Download a companion package from [Eden Duo Companions](https://github.com/igawa6/eden-duo-companions).
 4. In Eden Duo, long-press the game, open **Add-ons** and tap **Install**. In the **Content type** dialog choose **Dual screen mods**, tap **OK**, then select the `.dsmod.zip` file. The companion appears in the Add-ons list as `<Name>-<version>`, for example `MetroidDreadDS-1.0.0`.
-5. Launch the game. The companion appears on the second screen once the game reaches gameplay.
+5. Launch the game. The companion appears on the second screen, or next to the game on a single screen, once the game reaches gameplay.
 
 ![Installing a companion: Add-ons, Install, Dual screen mods](dist/screenshots/addons_dualscreen.png)
 
@@ -107,12 +112,14 @@ Eden Duo uses its own app ID (`dev.igawa6.edenduo`), so it installs alongside ot
 
 The ES-DE files are the upstream files from [es-de-android-custom-systems](https://github.com/GlazedBelmont/es-de-android-custom-systems), with only the Eden Duo entries added.
 
-## Second Screen
+## Dual Screen
 
-Second-screen options are in **Settings → Graphics → Second Screen**. Each game can also have its own values: long-press the game, open **Settings → Graphics → Second Screen**. A game's own value overrides the global one. Long-press a setting there to reset it to the global value.
+Dual-screen options are in **Settings → Graphics → Dual screen**. Each game can also have its own values: long-press the game, open **Settings → Graphics → Dual screen**. A game's own value overrides the global one. Long-press a setting there to reset it to the global value.
 
 | Setting | Options | What it does |
 |---------|---------|--------------|
+| **Mode** | Automatic (default) / Physical / Simulated / Off | Physical shows the companion on a real second screen. Simulated draws it on the same screen as the game. Automatic uses Physical when a second screen is detected, otherwise Simulated. Off loads no companion for the game and applies on the next launch. |
+| **Layout** | Automatic (default) / Stacked / Side by side / Custom | For Simulated mode. Automatic fits as much of the game and the companion as possible. Stacked and Side by side use a fixed split. Custom is what you placed in the layout editor. |
 | **Swap Screens** | On / Off | Switch which display runs the game and which shows the companion. Choose the layout that suits your dual-screen handheld, including Retroid or AYANEO Android devices with an extra display. Works from the game list and from frontends. |
 | **Companion Ratio** | Fit (default) / Stretch | Fit keeps the companion's shape and adds bars if needed. Stretch fills the screen. |
 | **No Companion** | Icon (default) / Black / Off / App | What the second screen does for a game without a companion. Icon shows the game icon dimmed on black. Black leaves it black. Off opens no window, so the second screen is free for other apps. App launches your chosen guide app, browser, media player or another installed app on the second/bottom screen when the game starts; pick it in the **App** row below, with search. Until you choose one, App works like Off. |
@@ -120,28 +127,38 @@ Second-screen options are in **Settings → Graphics → Second Screen**. Each g
 - No Companion can be changed while a game runs. It applies when you return to the game (Icon and Black from the next start).
 - With Swap Screens on and a game that has no companion, Off (or App with no app chosen) keeps the game on the main screen.
 
+### Play on One Screen (Simulated Mode)
+
+On a device without a second display, Eden Duo shows the companion next to the game by itself. On a dual-screen device you can choose it too.
+
+1. Open **Settings → Graphics → Dual screen** and set **Mode** to **Simulated**, or leave it on **Automatic**.
+2. Start a game that has a companion. Held sideways, the game and the companion sit side by side. Held upright without a controller, the screen splits into game, companion and touch controls.
+3. To place them yourself, open the in-game menu and choose **Edit dual screen layout**. Drag the game or the companion to move it, drag a corner to resize it, then press **Done**. The layout is saved for that game.
+
+If a second display disconnects while you play, the game pauses and asks whether to continue on one screen.
+
 ### Set Swap Screens for a Game
 
 Put gameplay on the display you prefer and keep the companion within easy reach on the other. This is especially useful when a Retroid or AYANEO Android handheld's extra display gives you a different layout from a built-in dual-screen device.
 
 1. In the game list, **long-press the game** and open **Settings**.
-2. Open **Graphics → Second Screen**.
+2. Open **Graphics → Dual screen**.
 3. Set **Swap Screens** to **On** to put the game on the second display and the companion on the main display. Set it to **Off** to keep the game on the main display.
 4. Start the game from Eden Duo or your frontend. It uses that game's saved screen layout.
 
-This choice is **per game**. To use one layout as the default, change **Settings → Graphics → Second Screen → Swap Screens** from Eden Duo's main settings. Long-press the per-game setting to restore the global default.
+This choice is **per game**. To use one layout as the default, change **Settings → Graphics → Dual screen → Swap Screens** from Eden Duo's main settings. Long-press the per-game setting to restore the global default.
 
 ### Open Another App on the Bottom Screen for a Game
 
 A game without a companion can still make good use of both screens. Keep a walkthrough in a guide app or browser, play media, or open another installed app on the second/bottom screen alongside the game.
 
 1. In the game list, **long-press the game** and open **Settings**.
-2. Open **Graphics → Second Screen**.
+2. Open **Graphics → Dual screen**.
 3. Set **No Companion** to **App**.
 4. Open the **App** row and search for the installed guide app, browser, media player or other app you want to launch.
 5. Start the game. Eden Duo launches the chosen app on the second/bottom display for games without a companion. In a browser, open the guide you want to use.
 
-The app choice is **per game**: choose a guide app for one game and a media player for another. You can also set a default from Eden Duo's main **Settings → Graphics → Second Screen** settings. Long-press a per-game setting to inherit the global choice.
+The app choice is **per game**: choose a guide app for one game and a media player for another. You can also set a default from Eden Duo's main **Settings → Graphics → Dual screen** settings. Long-press a per-game setting to inherit the global choice.
 
 For a quiet screen, choose **Icon** or **Black**; choose **Off** to leave it available for apps you open yourself. Icon/Black changes during play take full effect on the next game start.
 
