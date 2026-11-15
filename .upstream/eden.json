@@ -11,6 +11,12 @@
       "pr": "#4548",
       "title": "Fix [core, gpu, threads] Multithreading refactor (#4254)",
       "date": "2026-10-23"
+    },
+    {
+      "commit": "6647b49ccc",
+      "pr": "#4728",
+      "title": "[tests] Fix test build with old YUZU_NON_* macros",
+      "date": "2026-11-15"
     }
   ]
 }
