@@ -212,6 +212,12 @@ object DualScreenLayoutEditor {
      * null and honours the finger exactly), re-clamped, then separated from [other]
      * ([separate]). When no placement keeps it inside [box] and clear of [other], [lastValid]
      * (the rect before this step) is kept, so a drag can never push a rect out of the window.
+     *
+     * [box] is first widened to also hold [lastValid]: a rect that already overhangs it may keep
+     * that overhang but never grow it. The editor opens on DualScreenGeometry's rects, which do
+     * not know the companion's safe-drawing box, so side by side the companion can start flush
+     * against a window edge with an inset; with no room left beside the game, no step could
+     * then be placed and the companion could not be moved at all.
      */
     fun constrain(
         candidate: DualScreenRect,
@@ -220,11 +226,21 @@ object DualScreenLayoutEditor {
         lastValid: DualScreenRect,
         snapWindow: DualScreenWindow? = null
     ): DualScreenRect {
-        var rect = clampToBox(candidate, box)
+        val room = boundingBox(box, lastValid)
+        var rect = clampToBox(candidate, room)
         if (snapWindow != null) {
-            rect = clampToBox(snap(rect, snapWindow, other), box)
+            rect = clampToBox(snap(rect, snapWindow, other), room)
         }
-        return separate(rect, other, box) ?: lastValid
+        return separate(rect, other, room) ?: lastValid
+    }
+
+    /** The smallest rect holding both [a] and [b]; the other one alone when either is empty. */
+    private fun boundingBox(a: DualScreenRect, b: DualScreenRect): DualScreenRect {
+        if (b.isEmpty) return a
+        if (a.isEmpty) return b
+        val left = minOf(a.x, b.x)
+        val top = minOf(a.y, b.y)
+        return DualScreenRect(left, top, maxOf(a.x + a.w, b.x + b.w) - left, maxOf(a.y + a.h, b.y + b.h) - top)
     }
 
     /**

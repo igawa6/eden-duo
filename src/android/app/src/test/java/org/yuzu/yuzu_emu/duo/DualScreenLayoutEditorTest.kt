@@ -167,6 +167,63 @@ class DualScreenLayoutEditorTest {
         assertEquals(lastValid, result)
     }
 
+    // ---- the companion body drag on a 1920x1080 window (Thor top screen), side by side ----
+
+    private val thor = DualScreenWindow(widthPx = 1920, heightPx = 1080, densityDpi = 400)
+    private val thorSeed = DualScreenGeometry.compute(
+        thor, null, false, DualScreenUserLayout(DualScreenLayoutChoice.AUTOMATIC), game169
+    )
+
+    /** One body drag of [start] by ([dx],[dy]) in ten steps, as the editor view applies it. */
+    private fun drag(start: DualScreenRect, dx: Int, dy: Int, box: DualScreenRect, other: DualScreenRect): DualScreenRect {
+        var rect = start
+        for (step in 1..10) {
+            val candidate = DualScreenLayoutEditor.move(start, dx * step / 10, dy * step / 10)
+            rect = DualScreenLayoutEditor.constrain(candidate, box, other, rect, thor)
+        }
+        return rect
+    }
+
+    @Test
+    fun companionBodyDragMovesItWhenItsSafeBoxClipsTheSeed() {
+        // The seed fills the width (game 0..1167, companion 1167..1920) and knows nothing of the
+        // companion's safe box. With any inset on the companion's side, every step used to need
+        // a placement inside that box clear of the game, which does not exist, so the companion
+        // never moved while the game still did.
+        assertEquals(DualScreenRect(1167, 212, 753, 656), thorSeed.companionRect)
+        val insetBox = DualScreenRect(0, 0, 1920 - 48, 1080)
+        val moved = drag(thorSeed.companionRect, 0, 100, insetBox, thorSeed.gameRect)
+        assertEquals(DualScreenRect(1167, 312, 753, 656), moved)
+        assertNoOverlap(moved, thorSeed.gameRect)
+    }
+
+    @Test
+    fun companionOverhangOfItsSafeBoxNeverGrows() {
+        val insetBox = DualScreenRect(48, 48, 1920 - 96, 1080 - 96)
+        val start = thorSeed.companionRect.copy(y = 0) // overhangs the right and the top inset
+        val right = drag(start, 200, 0, insetBox, thorSeed.gameRect)
+        assertEquals(start, right) // already as far right as it was: no further out
+        val up = drag(start, 0, -100, insetBox, thorSeed.gameRect)
+        assertEquals(start, up)
+        val down = drag(start, 0, 300, insetBox, thorSeed.gameRect)
+        assertEquals(start.copy(y = 300), down)
+        assertInsideWindow(down, thor)
+    }
+
+    @Test
+    fun sideBySideSeedOnlyLeavesVerticalRoomForEitherBody() {
+        // With no inset the companion moves vertically like the game; neither can move sideways
+        // because the two panes already fill the window's width (intended: no overlap, no shrink
+        // on a move).
+        val box = DualScreenRect(0, 0, 1920, 1080)
+        val game = thorSeed.gameRect
+        val companion = thorSeed.companionRect
+        assertEquals(companion.copy(y = 112), drag(companion, 0, -100, box, game))
+        assertEquals(companion, drag(companion, -200, 0, box, game))
+        assertEquals(game.copy(y = 312), drag(game, 0, 100, box, companion))
+        assertEquals(game, drag(game, 200, 0, box, companion))
+    }
+
     @Test
     fun separateIsANoOpForAnAlreadyValidPlacement() {
         val box = DualScreenRect(0, 0, 1000, 500)
