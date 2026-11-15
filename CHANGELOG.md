@@ -1,5 +1,25 @@
 # Changelog
 
+## 1.4.0
+
+**New**
+
+- Companions on one screen: a new Simulated mode shows the game and its companion together on a single display, so phones, tablets and foldables can use companions without a second screen. Settings → Advanced settings → Graphics → Dual screen → Mode offers Automatic (the second display when there is one, otherwise Simulated), Physical (the second display, as before), Simulated and Off. With Off, no companion is loaded at all.
+- Layout editor: in Simulated mode the in-game menu has "Edit dual screen layout" to move and resize the game and the companion freely. The layout is saved per game.
+- Portrait layout with touch controls: on a phone held upright without a controller, the screen splits into game, companion and touch controls. Touches on the game picture reach the game's touchscreen.
+- If the second display goes away while a game runs, the game pauses and asks what to do instead of carrying on without the companion.
+- Dual-screen runtime 25 for companion makers: pane size values (`@screen.pane_w`, `@screen.pane_h`, orientation and mode), a second canvas (`canvas_alt`, `rect_alt`) so one companion fits both a second display and a shared screen, stick clicks (`L3`, `R3`) as button actions, a `view_zoom_step` action, the gesture's live finger position for modules, and `src_hold` on images and map overlays. Module ABI 1 stays compatible with existing companions.
+- The companion list that comes with the app adds Kirby's Return to Dream Land Deluxe, My Time at Sandrock, Monster Sanctuary, Resident Evil 4 and The Legend of Zelda: Skyward Sword HD.
+
+**Updated**
+
+- Based on Eden nightly ([v1794693050.6828dc59dc](https://git.eden-emu.dev/eden-ci/nightly/releases/tag/v1794693050.6828dc59dc), 2026-11-14), with upstream's emulation fixes and improvements since 1.3.5.1. The loading screen now stays until shaders are built. All companions keep working.
+
+**Fixed**
+
+- A companion that loads its own font no longer holds up the first frames of a game while the font is read.
+- A companion's header no longer shows the previous game's values for a moment after switching games.
+
 ## 1.3.5.1
 
 **New**
