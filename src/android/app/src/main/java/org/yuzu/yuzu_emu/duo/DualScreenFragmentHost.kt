@@ -107,6 +107,35 @@ class DualScreenFragmentHost(
     private fun companionPaneAt(originX: Int, originY: Int): DualScreenRect? =
         currentLayout?.companionRect?.let { it.copy(x = it.x - originX, y = it.y - originY) }
 
+    /**
+     * The emulated touchscreen for game-pane touches in the 3-band layout, where InputOverlay is
+     * shrunk to the controls band. Fed by emulation_container like [companionPaneTouchOutsideOverlay],
+     * with its own companion toggle gesture filter: the overlay's one follows the overlay's own
+     * touch stream.
+     */
+    private val gamePaneTouch by lazy {
+        val gesture = CompanionToggle.GameTouch(
+            fragment.resources.displayMetrics.density, companionPaneTouchOutsideOverlay::isOwned
+        ) { fragment.context?.let { CompanionToggle.toggle(it) } }
+        GamePaneTouch(::gamePaneFrame, companionPaneTouchOutsideOverlay::isOwned, gesture::filter)
+    }
+
+    /** Where the game pane sits for [gamePaneTouch]; null unless the controls band is applied. */
+    private fun gamePaneFrame(): PaneTouchFrame? {
+        val layout = currentLayout?.takeIf { controlsBandApplied(it) } ?: return null
+        val b = binding() ?: return null
+        val surface = b.surfaceEmulation
+        return PaneTouchFrame(
+            layout, b.emulationContainer.left, b.emulationContainer.top,
+            surface.left, surface.top, surface.width, surface.height
+        )
+    }
+
+    /** True when [applyControlsBand] shrinks the containers for [layout] (a separating fold
+     *  leaves them to EmulationFragment's own fold code). */
+    private fun controlsBandApplied(layout: DualScreenLayout): Boolean =
+        !layout.controlsRect.isEmpty && currentHinge?.isSeparating != true
+
     override fun pushLayout() = updateLayout()
     override fun onModeChangedAcrossOff() = showModeRestartPrompt()
     override fun onFirstSimulatedCompanion() = showFirstRunNotice()
@@ -115,16 +144,19 @@ class DualScreenFragmentHost(
     override fun onEjectReconnected() = resumeAfterDisplayEjectIfPaused()
     override fun onSimulatedStaysHint() = showSimulatedStaysHint()
 
-    /** EmulationFragment.onResume: wires the companion pane's touch routing into the overlay and
-     *  (1.4.0) keeps the in-game menu's "Edit dual screen layout" entry's visibility current. */
+    /** EmulationFragment.onResume: wires the companion pane's touch routing into the overlay, the
+     *  panes' routing outside it into emulation_container, and (1.4.0) keeps the in-game menu's "Edit dual screen layout" entry's visibility current. */
     @SuppressLint("ClickableViewAccessibility")
     fun onResume() {
         binding()?.surfaceInputOverlay?.companionPaneTouch = companionPaneTouch
         binding()?.emulationContainer?.setOnTouchListener { _, event ->
             companionPaneTouchOutsideOverlay.onEvent(event)
-            // Keep the gesture only when its first finger went down on the companion pane.
+            gamePaneTouch.onEvent(event)
+            // Keep the gesture only when its first finger went down on one of the panes; later
+            // fingers go to whichever pane they land on.
             event.actionMasked != MotionEvent.ACTION_DOWN ||
-                companionPaneTouchOutsideOverlay.isOwned(event.getPointerId(0))
+                companionPaneTouchOutsideOverlay.isOwned(event.getPointerId(0)) ||
+                gamePaneTouch.isOwned(event.getPointerId(0))
         }
         binding()?.inGameMenu?.menu?.findItem(R.id.menu_edit_dual_screen_layout)?.isVisible =
             dualScreen().isSimulatedActive() && !isEditingLayout
@@ -137,6 +169,7 @@ class DualScreenFragmentHost(
         binding()?.emulationContainer?.setOnTouchListener(null)
         companionPaneTouch.clear()
         companionPaneTouchOutsideOverlay.clear()
+        gamePaneTouch.clear()
         currentLayout = null
         if (isEditingLayout) stopEditingLayout(save = false)
     }
@@ -238,7 +271,7 @@ class DualScreenFragmentHost(
         currentLayout = layout
         // The native split is a fraction of the surface, which the controls band (when there is
         // one) shrinks to the bands above it.
-        val surfaceH = if (!layout.controlsRect.isEmpty && currentHinge?.isSeparating != true) {
+        val surfaceH = if (controlsBandApplied(layout)) {
             layout.controlsRect.y
         } else {
             windowH
