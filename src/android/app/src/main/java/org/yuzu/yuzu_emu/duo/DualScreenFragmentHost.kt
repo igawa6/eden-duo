@@ -149,6 +149,14 @@ class DualScreenFragmentHost(
     @SuppressLint("ClickableViewAccessibility")
     fun onResume() {
         binding()?.surfaceInputOverlay?.companionPaneTouch = companionPaneTouch
+        // In the 3-band layout the overlay only covers the controls band, whose coordinates are
+        // not the surface's: an empty spot there must not press the emulated touchscreen.
+        binding()?.surfaceInputOverlay?.let { overlay ->
+            val filter = overlay.touchscreenFilter
+            overlay.touchscreenFilter = { event ->
+                (filter?.invoke(event) ?: true) && currentLayout?.let(::controlsBandApplied) != true
+            }
+        }
         binding()?.emulationContainer?.setOnTouchListener { _, event ->
             companionPaneTouchOutsideOverlay.onEvent(event)
             gamePaneTouch.onEvent(event)
