@@ -21,7 +21,7 @@ ProgramMetadata::~ProgramMetadata() = default;
 
 Loader::ResultStatus ProgramMetadata::Load(VirtualFile file) {
     const std::size_t total_size = file->GetSize();
-    if (total_size < sizeof(Header)) {
+    if (total_size < sizeof(Header) || total_size > 16 * 1024 * 1024) {
         return Loader::ResultStatus::ErrorBadNPDMHeader;
     }
 
@@ -29,17 +29,80 @@ Loader::ResultStatus ProgramMetadata::Load(VirtualFile file) {
         return Loader::ResultStatus::ErrorBadNPDMHeader;
     }
 
-    if (sizeof(AcidHeader) != file->ReadObject(&acid_header, npdm_header.acid_offset)) {
+    if (npdm_header.magic != std::array{'M', 'E', 'T', 'A'}) {
+        return Loader::ResultStatus::ErrorBadNPDMHeader;
+    }
+
+    const auto contains = [](std::size_t total, std::size_t offset, std::size_t size) {
+        return offset <= total && size <= total - offset;
+    };
+    const std::size_t acid_offset = npdm_header.acid_offset;
+    const std::size_t acid_size = npdm_header.acid_size;
+    const std::size_t aci_offset = npdm_header.aci_offset;
+    const std::size_t aci_size = npdm_header.aci_size;
+    if (acid_offset < sizeof(Header) || !contains(total_size, acid_offset, acid_size)) {
+        return Loader::ResultStatus::ErrorBadACIDHeader;
+    }
+    if (aci_offset < sizeof(Header) || !contains(total_size, aci_offset, aci_size) ||
+        aci_size < sizeof(AciHeader)) {
+        return Loader::ResultStatus::ErrorBadACIHeader;
+    }
+    if (acid_offset < aci_offset + aci_size && aci_offset < acid_offset + acid_size) {
+        return Loader::ResultStatus::ErrorBadNPDMHeader;
+    }
+
+    struct AcidLayout {
+        ContentMetaPlatform platform;
+        std::size_t body_offset;
+    };
+    constexpr std::array layouts{
+        AcidLayout{ContentMetaPlatform::Nx, 0x200},
+        AcidLayout{ContentMetaPlatform::Ounce, 0x300},
+    };
+    bool found_acid = false;
+    std::size_t acid_body_end = 0;
+    for (const auto& layout : layouts) {
+        AcidHeader candidate{};
+        if (!contains(acid_size, layout.body_offset, sizeof(candidate)) ||
+            file->ReadObject(&candidate, acid_offset + layout.body_offset) != sizeof(candidate) ||
+            candidate.magic != std::array{'A', 'C', 'I', 'D'}) {
+            continue;
+        }
+        if (found_acid) {
+            return Loader::ResultStatus::ErrorBadACIDHeader;
+        }
+        found_acid = true;
+        acid_header = candidate;
+        platform = layout.platform;
+        acid_body_end = layout.body_offset + sizeof(candidate);
+    }
+    if (!found_acid) {
         return Loader::ResultStatus::ErrorBadACIDHeader;
     }
 
-    if (sizeof(AciHeader) != file->ReadObject(&aci_header, npdm_header.aci_offset)) {
+    if (sizeof(AciHeader) != file->ReadObject(&aci_header, aci_offset) ||
+        aci_header.magic != std::array{'A', 'C', 'I', '0'}) {
         return Loader::ResultStatus::ErrorBadACIHeader;
+    }
+    if (acid_header.fac_offset < acid_body_end || acid_header.fac_size < 0x2C ||
+        !contains(acid_size, acid_header.fac_offset, acid_header.fac_size) ||
+        !contains(acid_size, acid_header.sac_offset, acid_header.sac_size) ||
+        !contains(acid_size, acid_header.kac_offset, acid_header.kac_size)) {
+        return Loader::ResultStatus::ErrorBadFileAccessControl;
+    }
+    if (aci_header.fah_offset < sizeof(AciHeader) || aci_header.fah_size < 0x1C ||
+        !contains(aci_size, aci_header.fah_offset, aci_header.fah_size) ||
+        !contains(aci_size, aci_header.sac_offset, aci_header.sac_size)) {
+        return Loader::ResultStatus::ErrorBadFileAccessHeader;
+    }
+    if (!contains(aci_size, aci_header.kac_offset, aci_header.kac_size) ||
+        aci_header.kac_size % sizeof(u32) != 0) {
+        return Loader::ResultStatus::ErrorBadKernelCapabilityDescriptors;
     }
 
     // Load acid_file_access per-component instead of the entire struct, since this struct does not
     // reflect the layout of the real data.
-    std::size_t current_offset = acid_header.fac_offset;
+    std::size_t current_offset = acid_offset + acid_header.fac_offset;
     if (sizeof(FileAccessControl::version) != file->ReadBytes(&acid_file_access.version,
                                                               sizeof(FileAccessControl::version),
                                                               current_offset)) {
@@ -57,7 +120,7 @@ Loader::ResultStatus ProgramMetadata::Load(VirtualFile file) {
     }
 
     // Load aci_file_access per-component instead of the entire struct, same as acid_file_access
-    current_offset = aci_header.fah_offset;
+    current_offset = aci_offset + aci_header.fah_offset;
     if (sizeof(FileAccessHeader::version) != file->ReadBytes(&aci_file_access.version,
                                                              sizeof(FileAccessHeader::version),
                                                              current_offset)) {
@@ -128,6 +191,8 @@ void ProgramMetadata::LoadManual(bool is_64_bit, ProgramAddressSpaceType address
                                  u32 main_thread_stack_size, u64 title_id,
                                  u64 filesystem_permissions, u32 system_resource_size,
                                  KernelCapabilityDescriptors capabilities) {
+    platform = ContentMetaPlatform::Nx;
+    npdm_header.remote_memory_size = 0;
     npdm_header.has_64_bit_instructions.Assign(is_64_bit);
     npdm_header.address_space_type.Assign(address_space);
     npdm_header.main_thread_priority = static_cast<u8>(main_thread_prio);
@@ -169,6 +234,14 @@ u64 ProgramMetadata::GetFilesystemPermissions() const {
 
 u32 ProgramMetadata::GetSystemResourceSize() const {
     return npdm_header.system_resource_size;
+}
+
+ContentMetaPlatform ProgramMetadata::GetPlatform() const {
+    return platform;
+}
+
+u32 ProgramMetadata::GetRemoteMemorySize() const {
+    return npdm_header.remote_memory_size;
 }
 
 PoolPartition ProgramMetadata::GetPoolPartition() const {

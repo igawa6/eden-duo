@@ -110,6 +110,11 @@ import java.nio.ByteBuffer
 import kotlin.coroutines.resume
 import kotlin.coroutines.suspendCoroutine
 import kotlin.or
+import android.graphics.BitmapFactory
+import android.graphics.ImageDecoder
+import android.graphics.drawable.AnimatedImageDrawable
+import kotlinx.coroutines.flow.combine
+import org.yuzu.yuzu_emu.utils.GameMetadata
 
 class EmulationFragment : Fragment(), SurfaceHolder.Callback {
     private lateinit var emulationState: EmulationState
@@ -136,6 +141,7 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
     private val driverViewModel: DriverViewModel by activityViewModels()
 
     private var isInFoldableLayout = false
+    private var startupAnimationDrawable: AnimatedImageDrawable? = null
     private var emulationStarted = false
 
     // Eden Duo Stage 2/4: dual-screen geometry push, controls-band sizing, companion-pane touch
@@ -786,6 +792,53 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
         requireActivity().finish()
     }
 
+    private fun loadBootAssets(gamePath: String) {
+        viewLifecycleOwner.lifecycleScope.launch(Dispatchers.IO) {
+            val logoBytes = runCatching { GameMetadata.getLogo(gamePath) }.getOrNull()
+            val bannerBytes = runCatching { GameMetadata.getBanner(gamePath) }.getOrNull()
+
+            val logoBitmap = if (logoBytes != null && logoBytes.isNotEmpty()) {
+                BitmapFactory.decodeByteArray(logoBytes, 0, logoBytes.size)
+            } else {
+                null
+            }
+
+            val animDrawable = if (bannerBytes != null && bannerBytes.isNotEmpty()) {
+                runCatching {
+                    val source = ImageDecoder.createSource(ByteBuffer.wrap(bannerBytes))
+                    ImageDecoder.decodeDrawable(source)
+                }.getOrNull()
+            } else {
+                null
+            }
+
+            withContext(Dispatchers.Main) {
+                if (_binding == null) return@withContext
+
+                // Nintendo Logo
+                if (logoBitmap != null) {
+                    binding.loadingNintendoLogo.setImageBitmap(logoBitmap)
+                    binding.loadingNintendoLogo.visibility = View.VISIBLE
+                } else {
+                    binding.loadingNintendoLogo.visibility = View.GONE
+                }
+
+                // Switch Animation
+                if (animDrawable != null) {
+                    binding.loadingSwitchAnimation.setImageDrawable(animDrawable)
+                    binding.loadingSwitchAnimation.visibility = View.VISIBLE
+                    if (animDrawable is AnimatedImageDrawable) {
+                        startupAnimationDrawable = animDrawable
+                        animDrawable.repeatCount = AnimatedImageDrawable.REPEAT_INFINITE
+                        animDrawable.start()
+                    }
+                } else {
+                    binding.loadingSwitchAnimation.visibility = View.GONE
+                }
+            }
+        }
+    }
+
     private fun completeViewSetup() {
         if (_binding == null || game == null) {
             return
@@ -1064,6 +1117,8 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
             }
         )
 
+        game?.let { loadBootAssets(it.path) }
+
         game?.let {
             GameIconUtils.loadGameIcon(it, binding.loadingImage)
             binding.loadingTitle.text = it.title
@@ -1100,11 +1155,20 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
             }
         }
 
-        emulationViewModel.emulationStarted.collect(viewLifecycleOwner) {
-            if (it) {
+        combine(emulationViewModel.emulationStarted,
+            emulationViewModel.areShadersBuilt
+        ) { started, shadersBuilt -> started && shadersBuilt }.collect(viewLifecycleOwner)
+        { isReady ->
+            if (isReady) {
                 binding.drawerLayout.setDrawerLockMode(IntSetting.LOCK_DRAWER.getInt())
                 ViewUtils.showView(binding.surfaceInputOverlay)
+                binding.loadingText.setText(R.string.loading)
+                binding.loadingProgressIndicator.isIndeterminate = true
                 ViewUtils.hideView(binding.loadingIndicator)
+                startupAnimationDrawable?.stop()
+                startupAnimationDrawable = null
+                ViewUtils.hideView(binding.loadingNintendoLogo)
+                ViewUtils.hideView(binding.loadingSwitchAnimation)
 
                 emulationState.updateSurface()
                 dualScreen.onEmulationStarted()
@@ -1140,6 +1204,7 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
                 ViewUtils.showView(binding.loadingIndicator)
                 ViewUtils.hideView(binding.inputContainer)
                 ViewUtils.hideView(binding.showStatsOverlayText)
+                ViewUtils.hideView(binding.showSocOverlayText)
             } else if (deferGameSetupUntilStopCompletes) {
                 if (!isAdded) {
                     return@collect
@@ -1163,11 +1228,14 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
             if (it != 0) {
                 dualScreen.onProgramChanged()
                 emulationViewModel.setEmulationStarted(false)
+                emulationViewModel.setAreShadersBuilt(false)
                 binding.drawerLayout.close()
                 binding.drawerLayout
                     .setDrawerLockMode(DrawerLayout.LOCK_MODE_LOCKED_CLOSED)
                 ViewUtils.hideView(binding.surfaceInputOverlay)
                 ViewUtils.showView(binding.loadingIndicator)
+
+                game?.let { loadBootAssets(it.path) }
             }
         }
 
@@ -1670,6 +1738,8 @@ class EmulationFragment : Fragment(), SurfaceHolder.Callback {
     override fun onDestroyView() {
         super.onDestroyView()
         dualScreen.onDestroyView()
+        startupAnimationDrawable?.stop()
+        startupAnimationDrawable = null
         amiiboLoadJob?.cancel()
         amiiboLoadJob = null
         perfStatsRunnable?.let { perfStatsUpdateHandler.removeCallbacks(it) }

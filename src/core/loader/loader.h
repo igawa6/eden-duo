@@ -157,6 +157,7 @@ enum class ResultStatus : u16 {
     ErrorINITooManyKIPs,
     ErrorIntegrityVerificationNotImplemented,
     ErrorIntegrityVerificationFailed,
+    ErrorUnsupportedSwitch2,
 };
 
 std::string GetResultStatusString(ResultStatus status);

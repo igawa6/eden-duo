@@ -206,6 +206,10 @@ extern "C" SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv) {
 
     Core::ApplyLaunchParams(lp);
 
+    if (lp.print_help || lp.print_version) {
+        return SDL_APP_SUCCESS;
+    }
+
     if (lp.filepath.empty()) {
         LOG_CRITICAL(Frontend, "Failed to load ROM: No ROM specified");
         return SDL_APP_FAILURE;
@@ -272,7 +276,7 @@ extern "C" SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv) {
             "While attempting to load the ROM requested, an error occurred. Please "
             "refer to the Eden wiki for more information or the Eden discord for "
             "additional help.\n\nError Code: {:04X}-{:04X}\nError Description: {}",
-            loader_id, error_id, Loader::ResultStatus(error_id));
+            loader_id, error_id, Loader::GetResultStatusString(Loader::ResultStatus(error_id)));
         return SDL_APP_FAILURE;
     }
 

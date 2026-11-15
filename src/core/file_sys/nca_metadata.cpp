@@ -35,6 +35,7 @@ CNMT::CNMT(VirtualFile file) {
     for (u16 i = 0; i < header.number_meta_entries; ++i) {
         auto& next = meta_records.emplace_back(MetaRecord{});
         if (file->ReadObject(&next, sizeof(CNMTHeader) + i * sizeof(MetaRecord) +
+                                        header.number_content_entries * sizeof(ContentRecord) +
                                         header.table_offset) != sizeof(MetaRecord)) {
             meta_records.erase(meta_records.end() - 1);
         }
@@ -64,6 +65,10 @@ TitleType CNMT::GetType() const {
     return header.type;
 }
 
+ContentMetaPlatform CNMT::GetPlatform() const {
+    return ContentMetaPlatform(header.reserved);
+}
+
 const std::vector<ContentRecord>& CNMT::GetContentRecords() const {
     return content_records;
 }
@@ -73,6 +78,10 @@ const std::vector<MetaRecord>& CNMT::GetMetaRecords() const {
 }
 
 bool CNMT::UnionRecords(const CNMT& other) {
+    if (GetPlatform() != other.GetPlatform()) {
+        return false;
+    }
+
     bool change = false;
     for (const auto& rec : other.content_records) {
         const auto iter = std::find_if(content_records.begin(), content_records.end(),

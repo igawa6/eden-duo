@@ -971,7 +971,7 @@ InstallResult RegisteredCache::InstallEntry(const NCA& nca, const CNMTHeader& ba
         .title_id = nca.GetTitleId(),
         .title_version = base_header.title_version,
         .type = base_header.type,
-        .reserved = {},
+        .reserved = base_header.reserved,
         .table_offset = 0x10,
         .number_content_entries = 1,
         .number_meta_entries = 0,
@@ -1125,6 +1125,9 @@ bool RegisteredCache::RawInstallYuzuMeta(const CNMT& cnmt) {
     } else {
         auto out = meta_dir->GetFile(filename);
         CNMT old_cnmt(out);
+        if (old_cnmt.GetPlatform() != cnmt.GetPlatform()) {
+            return false;
+        }
         // Returns true on change
         if (old_cnmt.UnionRecords(cnmt)) {
             out->Resize(0);
@@ -1135,7 +1138,8 @@ bool RegisteredCache::RawInstallYuzuMeta(const CNMT& cnmt) {
     }
     Refresh();
     return std::find_if(yuzu_meta.begin(), yuzu_meta.end(), [&cnmt](const std::pair<u64, CNMT>& kv) {
-        return kv.second.GetType() == cnmt.GetType() && kv.second.GetTitleID() == cnmt.GetTitleID();
+        return kv.second.GetType() == cnmt.GetType() && kv.second.GetTitleID() == cnmt.GetTitleID() &&
+               kv.second.GetPlatform() == cnmt.GetPlatform();
     }) != yuzu_meta.end();
 }
 

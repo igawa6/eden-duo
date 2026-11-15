@@ -57,6 +57,7 @@ add_library(core STATIC
     file_sys/common_funcs.h
     file_sys/content_archive.cpp
     file_sys/content_archive.h
+    file_sys/content_meta_platform.h
     file_sys/control_metadata.cpp
     file_sys/control_metadata.h
     file_sys/errors.h

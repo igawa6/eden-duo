@@ -226,7 +226,7 @@ std::string GetFileTypeString(FileType type) {
     return "unknown";
 }
 
-constexpr std::array<const char*, 68> RESULT_MESSAGES{
+constexpr std::array<const char*, 69> RESULT_MESSAGES{
     "The operation completed successfully.",
     "The loader requested to load is already loaded.",
     "The operation is not implemented.",
@@ -295,6 +295,8 @@ constexpr std::array<const char*, 68> RESULT_MESSAGES{
     "The INI file contains more than the maximum allowable number of KIP files.",
     "Integrity verification could not be performed for this file.",
     "Integrity verification failed.",
+    "Switch 2 (Ounce) games are not supported by this Eden build. Package metadata can be read, "
+    "but Switch 2 game execution is not implemented.",
 };
 
 std::string GetResultStatusString(ResultStatus status) {

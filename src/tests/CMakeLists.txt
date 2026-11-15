@@ -17,6 +17,9 @@ add_executable(tests
     common/undefined_fix.cpp
     common/unique_function.cpp
     core/core_timing.cpp
+    core/file_sys/nca_metadata.cpp
+    core/file_sys/program_metadata.cpp
+    core/loader/extracted_nsp.cpp
     core/internal_network/network.cpp
     video_core/memory_tracker.cpp
     input_common/calibration_configuration_job.cpp

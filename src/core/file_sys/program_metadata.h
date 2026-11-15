@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 // SPDX-FileCopyrightText: Copyright 2018 yuzu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
@@ -10,6 +13,7 @@
 #include "common/common_funcs.h"
 #include "common/common_types.h"
 #include "common/swap.h"
+#include "core/file_sys/content_meta_platform.h"
 #include "core/file_sys/vfs/vfs_types.h"
 
 namespace Loader {
@@ -79,6 +83,8 @@ public:
     u64 GetTitleID() const;
     u64 GetFilesystemPermissions() const;
     u32 GetSystemResourceSize() const;
+    ContentMetaPlatform GetPlatform() const;
+    u32 GetRemoteMemorySize() const;
     PoolPartition GetPoolPartition() const;
     const KernelCapabilityDescriptors& GetKernelCapabilities() const;
     const std::array<u8, 0x10>& GetName() const {
@@ -101,7 +107,7 @@ private:
         u8 reserved_3;
         u8 main_thread_priority;
         u8 main_thread_cpu;
-        std::array<u8, 4> reserved_4;
+        u32_le remote_memory_size;
         u32_le system_resource_size;
         u32_le process_category;
         u32_le main_stack_size;
@@ -116,8 +122,6 @@ private:
     static_assert(sizeof(Header) == 0x80, "NPDM header structure size is wrong");
 
     struct AcidHeader {
-        std::array<u8, 0x100> signature;
-        std::array<u8, 0x100> nca_modulus;
         std::array<char, 4> magic;
         u32_le nca_size;
         std::array<u8, 0x4> reserved;
@@ -139,7 +143,7 @@ private:
         INSERT_PADDING_BYTES(0x8);
     };
 
-    static_assert(sizeof(AcidHeader) == 0x240, "ACID header structure size is wrong");
+    static_assert(sizeof(AcidHeader) == 0x40, "ACID body structure size is wrong");
 
     struct AciHeader {
         std::array<char, 4> magic;
@@ -179,6 +183,7 @@ private:
     Header npdm_header{};
     AciHeader aci_header{};
     AcidHeader acid_header{};
+    ContentMetaPlatform platform{ContentMetaPlatform::Nx};
 
     FileAccessControl acid_file_access{};
     FileAccessHeader aci_file_access{};

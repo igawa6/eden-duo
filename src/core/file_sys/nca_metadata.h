@@ -7,10 +7,12 @@
 #pragma once
 
 #include <array>
+#include <cstddef>
 #include <vector>
 #include "common/common_funcs.h"
 #include "common/common_types.h"
 #include "common/swap.h"
+#include "core/file_sys/content_meta_platform.h"
 #include "core/file_sys/vfs/vfs_types.h"
 
 namespace FileSys {
@@ -84,6 +86,7 @@ struct CNMTHeader {
     std::array<u8, 4> reserved3;
 };
 static_assert(sizeof(CNMTHeader) == 0x20, "CNMTHeader has incorrect size.");
+static_assert(offsetof(CNMTHeader, reserved) == 0xD, "CNMT platform has incorrect offset.");
 
 // A class representing the format used by NCA metadata files, typically named {}.cnmt.nca or
 // meta0.ncd. These describe which NCA's belong with which titles in the registered cache.
@@ -98,6 +101,7 @@ public:
     u64 GetTitleID() const;
     u32 GetTitleVersion() const;
     TitleType GetType() const;
+    ContentMetaPlatform GetPlatform() const;
 
     const std::vector<ContentRecord>& GetContentRecords() const;
     const std::vector<MetaRecord>& GetMetaRecords() const;
@@ -106,8 +110,8 @@ public:
     std::vector<u8> Serialize() const;
 
 private:
-    CNMTHeader header;
-    OptionalHeader opt_header;
+    CNMTHeader header{};
+    OptionalHeader opt_header{};
     std::vector<ContentRecord> content_records;
     std::vector<MetaRecord> meta_records;
 
