@@ -9,7 +9,7 @@
 </p>
 
 <div align="center">
-  <a href="https://discord.gg/r6vBWKAqCK"><img src="https://img.shields.io/badge/Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white" alt="Discord"></a>&nbsp;<a href="https://ko-fi.com/igawa6"><img src="https://img.shields.io/badge/Support_me_on_Ko--fi-F16061?style=for-the-badge&logo=ko-fi&logoColor=white" alt="Ko-fi"></a>&nbsp;<a href="https://ko-fi.com/polls/6th-Poll-Next-Switch-Game-on-Eden-Duo-C2K72A62LU"><img src="https://img.shields.io/badge/%F0%9F%97%B3%EF%B8%8F_Next_Game_Poll-1ABC9C?style=for-the-badge" alt="Poll"></a>
+  <a href="https://discord.gg/r6vBWKAqCK"><img src="https://img.shields.io/badge/Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white" alt="Discord"></a>&nbsp;<a href="https://ko-fi.com/igawa6"><img src="https://img.shields.io/badge/Support_me_on_Ko--fi-F16061?style=for-the-badge&logo=ko-fi&logoColor=white" alt="Ko-fi"></a>&nbsp;<a href="https://ko-fi.com/polls/7th-Poll-Next-Switch-Game-on-Eden-Duo-N2D42APT91"><img src="https://img.shields.io/badge/%F0%9F%97%B3%EF%B8%8F_Next_Game_Poll-1ABC9C?style=for-the-badge" alt="Poll"></a>
 </div>
 
 ---
@@ -51,10 +51,10 @@ Companions are separate, installable **`.dsmod.zip` packages**, one per game, so
 | 27 | [Pokémon Shield](https://github.com/igawa6/eden-duo-companions#pokemon-shield) | `01008DB008C2C000` | 1.3.2 | 🥇<br><a href="https://ko-fi.com/Y1Q8291E0L"><img src="https://img.shields.io/badge/Khaz_Otter-F16061?style=flat-square&logo=ko-fi&logoColor=white" style="vertical-align: middle;" alt="Khaz Otter"></a> |
 | 28 | [Cult of the Lamb](https://github.com/igawa6/eden-duo-companions#cult-of-the-lamb) | `01002E7016C46000` | 1.5.27, 1.5.28 | ⭐<br><a href="https://github.com/AlterDigga"><img src="https://img.shields.io/badge/AlterDigga-181717?style=flat-square&logo=github&logoColor=white" style="vertical-align: middle;" alt="AlterDigga"></a> |
 | 29 | [Kirby's Return to Dream Land Deluxe](https://github.com/igawa6/eden-duo-companions#kirbys-return-to-dream-land-deluxe) | `01006B601380E000` | 1.0.0 | ⭐<br><img src="https://img.shields.io/badge/fabvx-5865F2?style=flat-square&logo=discord&logoColor=white" style="vertical-align: middle;" alt="fabvx"> |
-| 30 | [Monster Sanctuary](https://github.com/igawa6/eden-duo-companions#monster-sanctuary) | `0100A0F00DA68000` | 2.1.0.32 | |
-| 31 | [My Time at Sandrock](https://github.com/igawa6/eden-duo-companions#my-time-at-sandrock) | `0100B63016916000` | 1.4.2 | |
-| 32 | [Resident Evil 4](https://github.com/igawa6/eden-duo-companions#resident-evil-4) | `010099A00BC1E000` | 1.0.2 | |
-| 33 | [The Legend of Zelda: Skyward Sword HD](https://github.com/igawa6/eden-duo-companions#the-legend-of-zelda-skyward-sword-hd) | `01002DA013484000` | 1.0.1 | |
+| 30 | [Monster Sanctuary](https://github.com/igawa6/eden-duo-companions#monster-sanctuary) | `0100A0F00DA68000` | 2.1.0.32 | 🥇<br><a href="https://ko-fi.com/igawa6/commissions"><img src="https://img.shields.io/badge/Anon.-F16061?style=flat-square&logo=ko-fi&logoColor=white" style="vertical-align: middle;" alt="Anon."></a> |
+| 31 | [My Time at Sandrock](https://github.com/igawa6/eden-duo-companions#my-time-at-sandrock) | `0100B63016916000` | 1.4.2 | 🥇<br><a href="https://ko-fi.com/U7U71VTM7K"><img src="https://img.shields.io/badge/Helen_Tracy-F16061?style=flat-square&logo=ko-fi&logoColor=white" style="vertical-align: middle;" alt="Helen Tracy"></a> |
+| 32 | [Resident Evil 4](https://github.com/igawa6/eden-duo-companions#resident-evil-4) | `010099A00BC1E000` | 1.0.2 | 🗳️<br><a href="https://ko-fi.com/polls/4rd-Poll-Next-Switch-Game-on-Eden-Duo-I7Z428XZNI"><img src="https://img.shields.io/badge/Poll_Winner-1ABC9C?style=flat-square&logo=ko-fi&logoColor=white" style="vertical-align: middle;" alt="Poll Winner"></a> |
+| 33 | [The Legend of Zelda: Skyward Sword HD](https://github.com/igawa6/eden-duo-companions#the-legend-of-zelda-skyward-sword-hd) | `01002DA013484000` | 1.0.1 | 🥇<br><a href="https://discord.gg/r6vBWKAqCK"><img src="https://img.shields.io/badge/eminham-5865F2?style=flat-square&logo=discord&logoColor=white" style="vertical-align: middle;" alt="eminham"></a> |
 
 ⭐ Companion contributor. Big thanks for your mods creation!
 
