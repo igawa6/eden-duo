@@ -1,22 +1,16 @@
 {
   "repository": "https://git.eden-emu.dev/eden-emu/eden",
   "channel": "nightly",
-  "source_commit": "6828dc59dc3dcc550c9f67675d4bcacae454f12b",
+  "source_commit": "b4e39d9ae412eebcc896759eedd58226d43a43c5",
   "original_base": "d9336ce6ce4c043a20862e567711c7b0bc1e11b6",
-  "release_tag": "v1794693050.6828dc59dc",
-  "release_url": "https://git.eden-emu.dev/eden-ci/nightly/releases/tag/v1794693050.6828dc59dc",
+  "release_tag": "v1794790665.b4e39d9ae4",
+  "release_url": "https://git.eden-emu.dev/eden-ci/nightly/releases/tag/v1794790665.b4e39d9ae4",
   "backports": [
     {
       "commit": "989768aa46",
       "pr": "#4548",
       "title": "Fix [core, gpu, threads] Multithreading refactor (#4254)",
       "date": "2026-10-23"
-    },
-    {
-      "commit": "6647b49ccc",
-      "pr": "#4728",
-      "title": "[tests] Fix test build with old YUZU_NON_* macros",
-      "date": "2026-11-15"
     }
   ]
 }
