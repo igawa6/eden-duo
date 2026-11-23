@@ -34,6 +34,8 @@
         <item>0100A0F00DA68000</item>
         <item>010099A00BC1E000</item>
         <item>01002DA013484000</item>
+        <item>01001F5010DFA000</item>
+        <item>0100453019AA8000</item>
     </string-array>
 
     <style name="Widget.Eden.DualScreenBadge" parent="">
