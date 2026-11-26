@@ -59,6 +59,7 @@ Companions are separate, installable **`.dsmod.zip` packages**, one per game, so
 | 35 | [Pokémon Legends: Z-A](https://github.com/igawa6/eden-duo-companions#pokemon-legends-za) | `0100F43008C44000` | 2.0.2 | ⭐<br><a href="https://ko-fi.com/sickops"><img src="https://img.shields.io/badge/Sickops-F16061?style=flat-square&logo=ko-fi&logoColor=white" style="vertical-align: middle;" alt="Support Sickops on Ko-fi"></a> |
 | 36 | [FINAL FANTASY RESONANCE](https://github.com/igawa6/eden-duo-companions#final-fantasy-resonance) | `0100606026F12000` | 1.0.1 | ⭐<br><a href="https://github.com/danielcamilo1"><img src="https://img.shields.io/badge/danielcamilo1-181717?style=flat-square&logo=github&logoColor=white" style="vertical-align: middle;" alt="danielcamilo1"></a> |
 | 37 | [The Legend of Zelda: Tears of the Kingdom](https://github.com/igawa6/eden-duo-companions#the-legend-of-zelda-tears-of-the-kingdom) | `0100F2C0115B6000` | 1.4.3 | ⭐<br><a href="https://github.com/aldotms89"><img src="https://img.shields.io/badge/aldotms89-181717?style=flat-square&logo=github&logoColor=white" style="vertical-align: middle;" alt="aldotms89"></a> |
+| 38 | [Digimon Story Time Stranger](https://github.com/igawa6/eden-duo-companions#digimon-story-time-stranger) | `010062E01FE0C000` | 1.2.2 | ⭐<br><a href="https://github.com/TorchicIsla"><img src="https://img.shields.io/badge/TorchicIsla-181717?style=flat-square&logo=github&logoColor=white" style="vertical-align: middle;" alt="TorchicIsla"></a> |
 
 ⭐ Companion contributor. Big thanks for your mods creation!
 
