@@ -40,6 +40,7 @@
         <item>0100F43008C44000</item>
         <item>0100606026F12000</item>
         <item>0100F2C0115B6000</item>
+        <item>010062E01FE0C000</item>
     </string-array>
 
     <style name="Widget.Eden.DualScreenBadge" parent="">
