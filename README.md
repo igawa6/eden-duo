@@ -58,6 +58,7 @@ Companions are separate, installable **`.dsmod.zip` packages**, one per game, so
 | 34 | [Star Ocean: The Second Story R](https://github.com/igawa6/eden-duo-companions#star-ocean-the-second-story-r) | `010065301A2E0000` | 1.1.0 | ⭐<br><a href="https://discord.gg/r6vBWKAqCK"><img src="https://img.shields.io/badge/jadesigns.-5865F2?style=flat-square&logo=discord&logoColor=white" style="vertical-align: middle;" alt="jadesigns."></a> |
 | 35 | [Pokémon Legends: Z-A](https://github.com/igawa6/eden-duo-companions#pokemon-legends-za) | `0100F43008C44000` | 2.0.2 | ⭐<br><a href="https://ko-fi.com/sickops"><img src="https://img.shields.io/badge/Sickops-F16061?style=flat-square&logo=ko-fi&logoColor=white" style="vertical-align: middle;" alt="Support Sickops on Ko-fi"></a> |
 | 36 | [FINAL FANTASY RESONANCE](https://github.com/igawa6/eden-duo-companions#final-fantasy-resonance) | `0100606026F12000` | 1.0.1 | ⭐<br><a href="https://github.com/danielcamilo1"><img src="https://img.shields.io/badge/danielcamilo1-181717?style=flat-square&logo=github&logoColor=white" style="vertical-align: middle;" alt="danielcamilo1"></a> |
+| 37 | [The Legend of Zelda: Tears of the Kingdom](https://github.com/igawa6/eden-duo-companions#the-legend-of-zelda-tears-of-the-kingdom) | `0100F2C0115B6000` | 1.4.3 | ⭐<br><a href="https://github.com/aldotms89"><img src="https://img.shields.io/badge/aldotms89-181717?style=flat-square&logo=github&logoColor=white" style="vertical-align: middle;" alt="aldotms89"></a> |
 
 ⭐ Companion contributor. Big thanks for your mods creation!
 
