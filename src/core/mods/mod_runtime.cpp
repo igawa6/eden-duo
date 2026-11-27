@@ -46,7 +46,7 @@
 #include "core/mods/mod_runtime_shared.h"
 #include "core/mods/mod_view_default.h"
 #include "core/perf_stats.h"
-#include "hid_core/resources/npad/dsmod_pad_gate.h"
+#include "core/hle/service/hid/resources/npad/dsmod_pad_gate.h"
 #include "input_common/drivers/virtual_gamepad.h"
 #include "input_common/main.h"
 #include "video_core/dsmod/aux_routing.h"

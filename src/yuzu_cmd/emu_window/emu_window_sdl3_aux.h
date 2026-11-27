@@ -14,7 +14,7 @@
 #include <SDL3/SDL.h>
 
 #include "common/common_types.h"
-#include "core/frontend/emu_window.h"
+#include "common/frontend/emu_window.h"
 #include "video_core/dsmod/aux_routing.h"
 
 namespace Core {

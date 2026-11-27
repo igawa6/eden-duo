@@ -4,7 +4,7 @@
 #include <array>
 #include <vector>
 
-#include "core/frontend/framebuffer_layout.h"
+#include "common/frontend/framebuffer_layout.h"
 #include "video_core/renderer_vulkan/present/dsmod_companion_quad.h"
 #include "video_core/renderer_vulkan/present/util.h"
 #include "video_core/vulkan_common/vulkan_device.h"

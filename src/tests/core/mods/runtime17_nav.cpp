@@ -9,7 +9,7 @@
 #include "core/mods/mod_nav.h"
 #include "core/mods/mod_runtime.h"
 #include "core/mods/mod_ui.h"
-#include "hid_core/resources/npad/dsmod_pad_gate.h"
+#include "core/hle/service/hid/resources/npad/dsmod_pad_gate.h"
 
 using namespace Core::Mods;
 using Nav::Dir;

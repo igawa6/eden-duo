@@ -14,7 +14,7 @@
 
 #include "common/dsmod_dev_tools.h"
 #include "common/logging.h"
-#include "core/frontend/emu_window.h"
+#include "common/frontend/emu_window.h"
 #include "video_core/gpu.h"
 #include "video_core/host_shaders/vulkan_dsmod_map_fade_frag_spv.h"
 #include "video_core/host_shaders/vulkan_dsmod_quad_frag_spv.h"

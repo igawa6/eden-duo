@@ -4,15 +4,9 @@
 #include <jni.h>
 #include <pthread.h> // Eden Duo
 
-#include "applets/software_keyboard.h"
-#include "applets/web_browser.h"
 #include "common/android/id_cache.h"
 #include "common/assert.h"
 #include "common/fs/fs_android.h"
-#include "video_core/rasterizer_interface.h"
-#include "common/android/multiplayer/multiplayer.h"
-#include <network/network.h>
-
 
 static JavaVM *s_java_vm;
 static jclass s_native_library_class;
@@ -100,8 +94,6 @@ static jmethodID s_yuzu_input_device_has_keys;
 
 static jmethodID s_add_netplay_message;
 static jmethodID s_clear_chat;
-
-static constexpr jint JNI_VERSION = JNI_VERSION_1_6;
 
 namespace Common::Android {
     // Eden Duo: whether the caller runs on its thread's own stack (not a fiber's). ART takes the
@@ -449,49 +441,27 @@ namespace Common::Android {
         return s_clear_chat;
     }
 
-#ifdef __cplusplus
-    extern "C" {
-#endif
-
-    jint InitFFmpegOnLoad(JavaVM *vm);
-
-    void JNI_OnUnload(JavaVM *vm, void *reserved) {
-        JNIEnv *env;
-        if (vm->GetEnv(reinterpret_cast<void **>(&env), JNI_VERSION) != JNI_OK) {
-            return;
-        }
-
-        // UnInitialize Android Storage
-        Common::FS::Android::UnRegisterCallbacks();
-        env->DeleteGlobalRef(s_native_library_class);
-        env->DeleteGlobalRef(s_disk_cache_progress_class);
-        env->DeleteGlobalRef(s_load_callback_stage_class);
-        env->DeleteGlobalRef(s_game_dir_class);
-        env->DeleteGlobalRef(s_game_class);
-        env->DeleteGlobalRef(s_string_class);
-        env->DeleteGlobalRef(s_pair_class);
-        env->DeleteGlobalRef(s_overlay_control_data_class);
-        env->DeleteGlobalRef(s_patch_class);
-        env->DeleteGlobalRef(s_double_class);
-        env->DeleteGlobalRef(s_integer_class);
-        env->DeleteGlobalRef(s_boolean_class);
-        env->DeleteGlobalRef(s_player_input_class);
-        env->DeleteGlobalRef(s_yuzu_input_device_interface);
-
-        // UnInitialize applets
-        SoftwareKeyboard::CleanupJNI(env);
-        WebBrowser::CleanupJNI(env);
-
-        AndroidMultiplayer::NetworkShutdown();
-    }
-
-#ifdef __cplusplus
-    }
-#endif
+void Shutdown(JNIEnv* env) {
+    // UnInitialize Android Storage
+    Common::FS::Android::UnRegisterCallbacks();
+    env->DeleteGlobalRef(s_native_library_class);
+    env->DeleteGlobalRef(s_disk_cache_progress_class);
+    env->DeleteGlobalRef(s_load_callback_stage_class);
+    env->DeleteGlobalRef(s_game_dir_class);
+    env->DeleteGlobalRef(s_game_class);
+    env->DeleteGlobalRef(s_string_class);
+    env->DeleteGlobalRef(s_pair_class);
+    env->DeleteGlobalRef(s_overlay_control_data_class);
+    env->DeleteGlobalRef(s_patch_class);
+    env->DeleteGlobalRef(s_double_class);
+    env->DeleteGlobalRef(s_integer_class);
+    env->DeleteGlobalRef(s_boolean_class);
+    env->DeleteGlobalRef(s_player_input_class);
+    env->DeleteGlobalRef(s_yuzu_input_device_interface);
+}
 
 void Initialize(JavaVM* vm, JNIEnv *env) {
     s_java_vm = vm;
-    InitFFmpegOnLoad(vm);
 
     if (env->ExceptionCheck()) {
         env->ExceptionClear();
@@ -662,10 +632,6 @@ void Initialize(JavaVM* vm, JNIEnv *env) {
 
     // Initialize Android Storage
     Common::FS::Android::RegisterCallbacks(env, s_native_library_class);
-
-    // Initialize applets
-    Common::Android::SoftwareKeyboard::InitJNI(env);
-    Common::Android::WebBrowser::InitJNI(env);
 }
 
 } // namespace Common::Android

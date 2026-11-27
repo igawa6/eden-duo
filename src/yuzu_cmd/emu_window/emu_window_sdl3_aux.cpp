@@ -7,7 +7,7 @@
 
 #include "common/logging.h"
 #include "core/core.h"
-#include "core/frontend/framebuffer_layout.h"
+#include "common/frontend/framebuffer_layout.h"
 #include "video_core/dsmod/aux_routing.h"
 #include "video_core/gpu.h"
 #include "yuzu_cmd/emu_window/emu_window_sdl3.h"

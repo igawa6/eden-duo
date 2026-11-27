@@ -40,7 +40,7 @@
 #include "core/file_sys/submission_package.h"
 #include "core/file_sys/vfs/vfs_real.h"
 #include "core/file_sys/vfs/vfs_vector.h"
-#include "core/frontend/framebuffer_layout.h"
+#include "common/frontend/framebuffer_layout.h"
 #include "core/hle/service/acc/profile_manager.h"
 #include "core/hle/service/filesystem/filesystem.h"
 #include "core/launch_params.h"

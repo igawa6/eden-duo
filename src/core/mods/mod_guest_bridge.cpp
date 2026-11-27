@@ -33,6 +33,7 @@
 #include "common/logging.h"
 #include "core/arm/debug.h"
 #include "core/core.h"
+#include "core/memory.h"
 #include "core/mods/mod_hooks.h"
 #include "core/mods/mod_runtime.h"
 #include "core/mods/mod_runtime_shared.h"

@@ -148,7 +148,7 @@ static FileSys::VirtualFile VfsDirectoryCreateFileWrapper(const FileSys::Virtual
 }
 
 // Frontend //
-#include "frontend_common/play_time_manager.h"
+#include "core/play_time_manager.h"
 
 #ifdef ENABLE_UPDATE_CHECKER
 #include "frontend_common/update_checker.h"
@@ -774,10 +774,15 @@ private:
 
 } // Anonymous namespace
 
-MainWindow::MainWindow(bool has_broken_vulkan)
+MainWindow::MainWindow(bool has_broken_vulkan, const QString &message, const QString &title)
     : ui{std::make_unique<Ui::MainWindow>()},
       input_subsystem{std::make_shared<InputCommon::InputSubsystem>()}, user_data_migrator{this} {
     QtCommon::Init(this);
+
+    // show msg if provided
+    if (!message.isEmpty()) {
+        QtCommon::Frontend::Information(title.isEmpty() ? tr("Message") : title, message);
+    }
 
     Common::FS::CreateEdenPaths();
     this->config = std::make_unique<QtConfig>();
@@ -10425,7 +10430,7 @@ bool MainWindow::CheckFirmwarePresence() {
 }
 
 void MainWindow::SetFirmwareVersion() {
-    const auto pair = FirmwareManager::GetFirmwareVersion(*QtCommon::system.get());
+    const auto pair = Service::Set::GetInstalledFirmwareVersion(*QtCommon::system.get());
     const auto firmware_data = pair.first;
     const auto result = pair.second;
 

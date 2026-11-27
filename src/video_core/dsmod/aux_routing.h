@@ -30,7 +30,7 @@
 #include "common/common_types.h"
 #include "common/dsmod_dev_tools.h"
 #include "common/logging.h"
-#include "core/frontend/framebuffer_layout.h"
+#include "common/frontend/framebuffer_layout.h"
 
 namespace VideoCore::DSMod {
 

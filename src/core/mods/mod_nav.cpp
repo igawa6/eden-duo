@@ -30,7 +30,7 @@
 #include "hid_core/frontend/emulated_controller.h"
 #include "hid_core/hid_core.h"
 #include "hid_core/hid_util.h"
-#include "hid_core/resources/npad/dsmod_pad_gate.h"
+#include "core/hle/service/hid/resources/npad/dsmod_pad_gate.h"
 
 namespace Core::Mods::Nav {
 

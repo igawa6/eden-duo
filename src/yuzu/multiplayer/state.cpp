@@ -8,7 +8,6 @@
 #include <QIcon>
 #include <QMessageBox>
 #include <QStandardItemModel>
-#include "common/announce_multiplayer_room.h"
 #include "common/logging.h"
 #include "core/core.h"
 #include "qt_common/config/uisettings.h"
@@ -21,7 +20,11 @@
 #include "yuzu/multiplayer/state.h"
 #include "yuzu/util/clickable_label.h"
 
-MultiplayerState::MultiplayerState(QWidget* parent, QStandardItemModel* game_list_model_,
+#ifdef ENABLE_WEB_SERVICE
+#include "web_service/announce_room_json.h"
+#endif
+
+MultiplayerState::MultiplayerState(QWidget* parent, GameListModel* game_list_model_,
                                    QAction* leave_room_, QAction* show_room_, Core::System& system_)
     : QWidget(parent), game_list_model(game_list_model_), leave_room(leave_room_),
       show_room(show_room_), system{system_} {
@@ -39,7 +42,12 @@ MultiplayerState::MultiplayerState(QWidget* parent, QStandardItemModel* game_lis
     qRegisterMetaType<Network::RoomMember::State>();
     qRegisterMetaType<Network::RoomMember::Error>();
     qRegisterMetaType<WebService::WebResult>();
+#ifdef ENABLE_WEB_SERVICE
+    announce_multiplayer_session = std::make_shared<Core::AnnounceMultiplayerSession>(
+        &WebService::MakeRoomJsonBackend);
+#else
     announce_multiplayer_session = std::make_shared<Core::AnnounceMultiplayerSession>();
+#endif
     announce_multiplayer_session->BindErrorCallback(
         [this](const WebService::WebResult& result) { emit AnnounceFailed(result); });
     connect(this, &MultiplayerState::AnnounceFailed, this, &MultiplayerState::OnAnnounceFailed);
@@ -327,7 +335,7 @@ void MultiplayerState::UpdateCredentials() {
     announce_multiplayer_session->UpdateCredentials();
 }
 
-void MultiplayerState::UpdateGameList(QStandardItemModel* game_list) {
+void MultiplayerState::UpdateGameList(GameListModel* game_list) {
     game_list_model = game_list;
     if (lobby) {
         lobby->UpdateGameList(game_list);

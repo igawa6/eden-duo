@@ -15,12 +15,9 @@
 #include "common/assert.h"
 #include "common/settings.h"
 #include "common/settings_enums.h"
-#include "core/core.h"
-#include "core/core_timing.h"
-#include "core/frontend/emu_window.h"
-#include "core/frontend/graphics_context.h"
-#include "core/hle/service/nvdrv/nvdata.h"
-#include "core/perf_stats.h"
+#include "common/frontend/emu_window.h"
+#include "common/frontend/graphics_context.h"
+#include "common/nvnflinger/nvdata.h"
 #include "video_core/cdma_pusher.h"
 #include "video_core/control/channel_state.h"
 #include "video_core/control/scheduler.h"
@@ -33,6 +30,7 @@
 #include "video_core/dsmod/texture_readback.h"
 #include "video_core/gpu.h"
 #include "video_core/gpu_thread.h"
+#include "video_core/host.h"
 #include "video_core/host1x/host1x.h"
 #include "video_core/host1x/syncpoint_manager.h"
 #include "video_core/memory_manager.h"
@@ -55,7 +53,7 @@ constexpr u64 GpuClockMultiplier(Settings::GpuClock clock) {
 } // Anonymous namespace
 
 struct GPU::Impl {
-    explicit Impl(Core::System& system_, bool is_async_, bool use_nvdec_)
+    explicit Impl(VideoCore::Host& system_, bool is_async_, bool use_nvdec_)
         : system{system_}
         , gpu_thread{system_}
         , use_nvdec{use_nvdec_}
@@ -166,12 +164,12 @@ struct GPU::Impl {
     }
 
     [[nodiscard]] u64 GetTicks() const {
-        const u64 gpu_tick = system.CoreTiming().GetGPUTicks();
+        const u64 gpu_tick = system.GPUTicks();
         return gpu_tick / GpuClockMultiplier(Settings::values.gpu_clock.GetValue());
     }
 
     void RendererFrameEndNotify() {
-        system.GetPerfStats().EndGameFrame();
+        system.EndGameFrame();
     }
 
     /// Performs any additional setup necessary in order to begin GPU emulation.
@@ -328,7 +326,7 @@ struct GPU::Impl {
         return out;
     }
 
-    Core::System& system;
+    VideoCore::Host& system;
 
     // Destruction of thread must be done before all (non trivial)
     // previous members has been destroyed
@@ -374,7 +372,7 @@ struct GPU::Impl {
     u64 pending_composite_fence{};
 };
 
-GPU::GPU(Core::System& system, bool is_async, bool use_nvdec)
+GPU::GPU(VideoCore::Host& system, bool is_async, bool use_nvdec)
     : impl{std::make_unique<Impl>(system, is_async, use_nvdec)}
 {}
 

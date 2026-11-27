@@ -14,7 +14,7 @@ CPMUtil is a wrapper around CPM that aims to reduce boilerplate and add useful u
   - [Usage](#usage)
   - [Addendum: Cache Storage](#addendum-cache-storage)
   - [Addendum: Making Patches](#addendum-making-patches)
-  - [Addendum: Package Identification Lists](#addendum-package-identification-lists)
+  - [Addendum: Package Identification](#addendum-package-identification)
   - [Addendum: Notes for Packagers](#addendum-notes-for-packagers)
     - [Network Sandbox](#network-sandbox)
     - [Unsandboxed](#unsandboxed)
@@ -120,7 +120,7 @@ The following are optional to define:
 - `bundled`: Force the usage of a bundled package. Useful for packages where the system package is broken or nonexistent; e.g. external fragment shaders or data archives.
   - Note that this will conflict with `CPMUTIL_FORCE_SYSTEM`; for this reason, when using non-library archives, it may be best to allow the user to download and extract the archive manually and specify a local directory to it.
 - `find_args`: Additional arguments passed to `find_package`, e.g. `MODULE`
-- `patches`: Array of in-tree patches to apply to the downloaded source code. See [#Patches](TODO).
+- `patches`: Array of in-tree patches to apply to the downloaded source code. See [Patches](#patches).
 - `options`: Array of CMake options to apply before configuring the package, e.g. `"FMT_TEST ON"`.
 
 ### Versioning
@@ -199,10 +199,7 @@ To use them, you must add `ci: true` to your package definition. Alongside the c
 
 - `name`: The artifacts' name prefix (required), e.g. `openssl`
 - `extension`: The artifacts' extension (default `tar.zst`)
-- `disabled_platforms`: CPMUtil-supported platforms that are not built into this repository.
-  - This is subject to change.
-
-**Note that `package` is subject to removal here.**
+- `package`: While CI packages will never attempt to find a system package, you should still include this so future calls to `find_package` will be overwritten with the bundled package.
 
 Example:
 
@@ -210,12 +207,13 @@ Example:
 "sdl2": {
     "repo": "crueter-ci/SDL2",
     "package": "SDL2",
-    "min_version": "2.26.4",
     "ci": true,
     "version": "2.32.10-a65111bd2d",
     "artifact": "SDL2"
 },
 ```
+
+CI packages also define a `hashes` map, mapping platform names (e.g. `linux-amd64`) to the corresponding artifact sha512sum. Using `package add` or `package version` in the CPMUtil script suite will handle this for you.
 
 ## Usage
 
@@ -243,15 +241,31 @@ CPMUtil has a dedicated command for making patches. You're recommended to have G
 
 And you're done! CPMUtil will automatically create and name the patch, and add it to the list of patches in the JSON definition.
 
-## Addendum: Package Identification Lists
+## Addendum: Package Identification
 
-CPMUtil will create three lists of dependencies where `AddPackage` or similar was used. Each is in order of addition.
+CPMUtil provides an internal cache variable, `CPMUTIL_PACKAGES`, that tracks *all* package names that have been added by `AddPackage` or any of its wrappers. This list is populated in the order of calling. Each package name then defines three properties stored in the cache, prefixed with `CPMUTIL_PACKAGE_${name}_`:
 
-- `CPM_PACKAGE_NAMES`: The names of packages included by CPMUtil
-- `CPM_PACKAGE_URLS`: The URLs to project/repo pages of packages
-- `CPM_PACKAGE_SHAS`: Short version identifiers for each package
-  - If the package was included as a system package, `(system)` is appended thereafter
-  - Packages whose versions can't be deduced will be left as `unknown`.
+- `VERSION`: The bundled or system version of the package.
+- `URL`: The upstream git or homepage URL of the package.
+- `SYSTEM`: Whether or not the package is a system package.
+- `SOURCE_DIR`: The bundled source directory of the package. You usually don't need to use this.
+- `BINARY_DIR`: The build directory of the package. You usually don't need to use this.
+
+You can then loop through all package names and grab their individual properties:
+
+```cmake
+foreach(pkg ${CPMUTIL_PACKAGES})
+    set(sys ${CPMUTIL_PACKAGE_${pkg}_SYSTEM})
+    set(url ${CPMUTIL_PACKAGE_${pkg}_URL})
+    set(version ${CPMUTIL_PACKAGE_${pkg}_VERSION})
+
+    if (sys)
+        set(version "${version} (system)")
+    endif()
+
+    message(STATUS "Package ${pkg} version ${version}: ${url}")
+endforeach()
+```
 
 For an example of how this might be implemented in an application, see Eden's implementation:
 
@@ -332,15 +346,17 @@ From here, calling `find_package(OpenSSL)` will use the bundled OpenSSL.
 
 ## Addendum: Adding Qt
 
-If you'd like to use customized Qt builds, CPMUtil provides a convenience function that allows you to add Qt builds. This usage and setup is subject to change.
+If you'd like to use customized Qt builds, CPMUtil provides a convenience script that lets you add any specialized build of Qt.
 
-See [crueter-ci/Qt](https://github.com/crueter-ci/Qt) for an example of how one might build customized Qt. To add a Qt build to your project, use `AddQt(<repository> <version>)`, e.g.:
+See [crueter-ci/Qt](https://github.com/crueter-ci/Qt) for an example of how one might build customized Qt. To add a Qt build to your project, use `cpmutil.sh package add-qt <repo> <version>`, e.g.:
 
-```cmake
-AddQt(QDash-CI/Qt 6.11.1)
+```sh
+$ tools/cpmutil.sh package add-qt Eden-CI/Qt 6.11.3-1795405713
+-- Added qt
+Added package qt to cpmfile.json. Include it in your project with AddJsonPackage(NAME qt MODULE_PATH)
 ```
 
-Then, call `find_package(Qt6 ...)` and it will pull Qt from your downloaded source.
+As the prompt says, call `AddJsonPackage(NAME qt MODULE_PATH)`. From there, calling `find_package(Qt6)` will redirect to the bundled download of Qt.
 
 ## Addendum: Package-Specific Overrides
 
