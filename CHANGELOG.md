@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.4.1
+
+**New**
+
+- Pokémon Legends: Arceus and Xenoblade Chronicles X: Definitive Edition companion support.
+- The companion list that comes with the app adds Pokémon Legends: Arceus, Xenoblade Chronicles X: Definitive Edition and the community companions released since 1.4.0: Star Ocean The Second Story R, Pokémon Legends: Z-A, FINAL FANTASY RESONANCE, The Legend of Zelda: Tears of the Kingdom and Digimon Story Time Stranger.
+
+**Updated**
+
+- Based on Eden nightly ([v1795656132.1cd2ecd562](https://git.eden-emu.dev/eden-ci/nightly/releases/tag/v1795656132.1cd2ecd562), 2026-11-26), with upstream's emulation fixes and improvements since 1.4.0, among them faster texture handling, fewer stalls after texture decoding and steadier multicore emulation. All companions keep working.
+
+**Fixed**
+
+- The "Loading..." box closes once the game starts, also when the disk shader cache is turned off.
+- Opening a game no longer briefly freezes the app while it looks the game up in a large library.
+
 ## 1.4.0
 
 **New**
